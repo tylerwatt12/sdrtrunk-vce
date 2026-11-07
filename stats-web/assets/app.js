@@ -20264,12 +20264,12 @@ function liveRemoteOriginBadge(origin) {
 }
 
 function liveChannelValue(row, showRemoteOrigin = true) {
-  const value = liveConventionalChannelValue(row);
+  const value = liveConventionalChannelValue(row, { actionFirst: true });
   const remote = showRemoteOrigin ? liveRemoteOriginBadge(row.remote_origin) : null;
   if (!remote) return value;
   const wrapper = node('span', 'live-channel-origin');
-  if (value) wrapper.append(value instanceof Node ? value : node('span', 'live-channel-label', value));
   wrapper.append(remote);
+  if (value) wrapper.append(value instanceof Node ? value : node('span', 'live-channel-label', value));
   return wrapper;
 }
 
@@ -20695,6 +20695,7 @@ function liveChannelsSection(onSelectionChange, options = {}) {
   host.setAttribute('role', 'tabpanel');
   const selectedViewCopy = node('div', 'live-selected-view-copy');
   const selectedViewTitle = node('h2', 'live-selected-view-title', 'Live Channels');
+  selectedViewTitle.id = 'live-selected-view-title';
   const selectedViewMeta = node('span', 'live-selected-view-meta', 'Waiting for channel activity…');
   selectedViewCopy.append(selectedViewTitle, selectedViewMeta);
   const pickerCollapse = iconButton('icon-chevron-down', 'Collapse live view picker',
@@ -20770,7 +20771,7 @@ function liveChannelsSection(onSelectionChange, options = {}) {
   };
   const updatePickerSummary = () => {
     const running = [...tables.values()].filter((value) => value.table_id !== 'classic' && value.channel_running !== false).length;
-    pickerSummary.textContent = `${number(tables.size)} view${tables.size === 1 ? '' : 's'} · ` +
+    pickerSummary.textContent = `${number(tabNodes.size)} view${tabNodes.size === 1 ? '' : 's'} · ` +
       `${number(running)} running`;
     updatePickerResults();
   };
@@ -20871,6 +20872,7 @@ function liveChannelsSection(onSelectionChange, options = {}) {
     }
     const currentControl = displayed.control_active ? liveCurrentControlRow(displayed) : null;
     if (currentControl) selectRow(displayed, currentControl);
+    host.setAttribute('aria-labelledby', selectedViewTitle.id);
     tabNodes.forEach((tab, id) => {
       const active = id === activeTableId;
       tab.classList.toggle('active', active);
@@ -20880,6 +20882,7 @@ function liveChannelsSection(onSelectionChange, options = {}) {
       if (active && button) host.setAttribute('aria-labelledby', button.id);
     });
     updateSelectedView(value);
+    updatePickerResults();
     if (closeMobilePicker) closePicker(true);
   };
   let requestedChannel = guideMode ? null : route.get('channel');
@@ -20916,6 +20919,10 @@ function liveChannelsSection(onSelectionChange, options = {}) {
       dismissedStoppedTables.delete(value.table_id);
     }
     tables.set(value.table_id, value);
+    if (value.table_id === 'classic') {
+      updateVisibleRows(value);
+      return;
+    }
     let tab = tabNodes.get(value.table_id);
     if (!tab) {
       tab = node('div', 'channels-live-tab ui-surface');
@@ -20949,8 +20956,7 @@ function liveChannelsSection(onSelectionChange, options = {}) {
       tab.dataset.tableId = value.table_id;
       tab.append(select);
       tabNodes.set(value.table_id, tab);
-      if(value.table_id === 'classic') tabBar.prepend(tab);
-      else tabBar.append(tab);
+      tabBar.append(tab);
     }
     const label = value.title || value.channel_name || value.table_id;
     const select = tab.querySelector('.channels-tab-select');
@@ -20966,13 +20972,6 @@ function liveChannelsSection(onSelectionChange, options = {}) {
     }
     const quality = tab.querySelector('.channels-tab-quality');
     const stateLabel = tab.querySelector('.channels-tab-state-label');
-    if (value.table_id === 'classic') {
-      quality.hidden = true;
-      stateLabel.textContent = 'Live';
-      select.setAttribute('aria-label', 'Show Classic live channels');
-      updateVisibleRows(value);
-      return;
-    }
     const currentControl = liveCurrentControlRow(value);
     const qualityObservedAt = Number(currentControl?.quality_observed_at_ms || 0);
     const qualityFresh = currentControl && value.control_active && qualityObservedAt > 0 &&
@@ -21064,7 +21063,7 @@ function liveChannelsSection(onSelectionChange, options = {}) {
     if (activeTableId) return;
     const preferred = requestedChannel ? null : preferredTableId;
     const fallback = tables.has(preferred) ? preferred :
-      (tables.has('conventional') ? 'conventional' : [...tables.keys()].find(id => id !== 'classic') || 'classic');
+      (tables.has('conventional') ? 'conventional' : [...tables.keys()].find(id => id !== 'classic'));
     if (fallback) showTable(fallback);
   };
 
@@ -21076,7 +21075,7 @@ function liveChannelsSection(onSelectionChange, options = {}) {
     if (activeTableId === tableId) {
       activeTableId = null;
       clearSelection();
-      const next = tables.has('conventional') ? 'conventional' : [...tables.keys()].find(id => id !== 'classic') || 'classic';
+      const next = tables.has('conventional') ? 'conventional' : [...tables.keys()].find(id => id !== 'classic');
       if (next) showTable(next);
       else {
         liveTable.tableController.replaceRows([]);
@@ -31975,8 +31974,11 @@ function openStatusIconSettings(returnFocusSelector = null) {
 function openLivePresentationSettings(returnFocusSelector = null) {
   const snapshot = userPreferenceController.snapshot();
   if (!snapshot.loaded) return;
-  const classic = liveChannelActivityActiveTableId === 'classic';
+  let currentClassic = liveChannelActivityActiveTableId === 'classic';
+  let classic = currentClassic;
   let current = snapshot.preferences.presentation;
+  const viewMode = preferenceSelect('live-view-mode',
+    [['channels', 'Channel views'], ['classic', 'Classic']], classic ? 'classic' : 'channels');
   const displayed = liveViewPresentation(current, classic ? 'classic' : null);
   const form = node('form', 'admin-form live-presentation-form');
   const message = node('div', 'admin-form-message');
@@ -31998,6 +32000,16 @@ function openLivePresentationSettings(returnFocusSelector = null) {
   const clearIdleQuality = preferenceCheckbox('clear-idle-voice-quality',
     'Clear voice quality when a row becomes idle', displayed.clear_voice_quality_when_idle,
     'Hide the completed call\'s voice-quality result after its row becomes idle.');
+  const readRowOptions = () => ({ show_only_active_trunked_channels: activeOnly.input.checked,
+    live_channel_sort: callSort.value, retain_last_call_on_idle_rows: retainLastCall.input.checked,
+    clear_voice_quality_when_idle: clearIdleQuality.input.checked });
+  const applyRowOptions = (options) => {
+    setUiToggle(activeOnly.input, options.show_only_active_trunked_channels);
+    callSort.value = liveChannelSortMethod(options);
+    setUiToggle(retainLastCall.input, options.retain_last_call_on_idle_rows);
+    setUiToggle(clearIdleQuality.input, options.clear_voice_quality_when_idle);
+  };
+  let channelRowOptions = { ...current };
   const syncIdleRowOptions = () => {
     activeOnly.input.disabled = classic;
     callSort.disabled = classic;
@@ -32011,6 +32023,14 @@ function openLivePresentationSettings(returnFocusSelector = null) {
     callSort.value = activeOnly.input.checked ? 'order_appeared' : 'lcn';
     syncIdleRowOptions();
   });
+  viewMode.addEventListener('change', () => {
+    if (!classic) channelRowOptions = readRowOptions();
+    classic = viewMode.value === 'classic';
+    applyRowOptions(classic ? liveViewPresentation(current, 'classic') : channelRowOptions);
+    syncIdleRowOptions();
+    classicHelp.hidden = !classic;
+    idleHelp.hidden = classic;
+  });
   syncIdleRowOptions();
   const qualityMode = preferenceSelect('quality-mode', [['percentage', 'Percentage'], ['detailed', 'Detailed counters']],
     current.decode_quality_display_mode);
@@ -32021,9 +32041,15 @@ function openLivePresentationSettings(returnFocusSelector = null) {
   rowLimit.max = '500';
   rowLimit.required = true;
   rowLimit.value = String(current.live_detail_row_limit);
-  const apply = (presentation) => {
-    current = presentation;
-    presentation = liveViewPresentation(presentation, classic ? 'classic' : null);
+  const apply = (preferences) => {
+    current = preferences.presentation;
+    currentClassic = preferences.live_workspace.active_channel_table_id === 'classic';
+    classic = currentClassic;
+    viewMode.value = classic ? 'classic' : 'channels';
+    channelRowOptions = { ...current };
+    const presentation = liveViewPresentation(current, classic ? 'classic' : null);
+    classicHelp.hidden = !classic;
+    idleHelp.hidden = classic;
     setUiToggle(encryption.input, presentation.show_encryption_details);
     setUiToggle(activeOnly.input, presentation.show_only_active_trunked_channels);
     callSort.value = liveChannelSortMethod(presentation);
@@ -32044,14 +32070,19 @@ function openLivePresentationSettings(returnFocusSelector = null) {
   actions.append(save);
   const footer = node('div', 'settings-form-footer');
   footer.append(message, actions);
+  const classicHelp = node('p', 'ui-field-detail',
+    'Classic combines active trunked channels and running conventional channels in order appeared. Its row options are fixed.');
+  classicHelp.hidden = !classic;
+  const idleHelp = node('p', 'ui-field-detail',
+    'Turn off “Show only active trunked channels” to use idle-row options.');
+  idleHelp.hidden = classic;
   const presentationCard = settingsCard('Live details',
     'Choose how decoded activity is shown on the Live page.',
+    formField('Presentation', viewMode), classicHelp,
     formField('Row density', rowDensity),
     activeOnly.control, formField('Sort calls by', callSort,
       'Active-only view defaults to Order appeared; showing idle rows defaults to LCN.'),
-    node('p', 'ui-field-detail', classic ?
-      'Classic shows active trunked channels and all running conventional channels in order appeared. These choices are fixed in Classic.' :
-      'Turn off “Show only active trunked channels” to use idle-row options.'),
+    idleHelp,
     retainLastCall.control, clearIdleQuality.control,
     encryption.control, fields);
   form.append(node('p', 'live-presentation-intro',
@@ -32079,12 +32110,14 @@ function openLivePresentationSettings(returnFocusSelector = null) {
       for (const key of ['show_only_active_trunked_channels', 'live_channel_sort',
         'retain_last_call_on_idle_rows', 'clear_voice_quality_when_idle']) submitted[key] = current[key];
     }
-    const densityOnly = Object.entries(submitted).every(([key, value]) =>
+    const modeChanged = classic !== currentClassic;
+    const densityOnly = !modeChanged && Object.entries(submitted).every(([key, value]) =>
       key === 'live_row_density' || value === current[key]);
     await savePreferenceForm(workflow, modal, (preferences) => {
       preferences.presentation = { ...preferences.presentation, ...submitted };
+      if (modeChanged) preferences.live_workspace.active_channel_table_id = classic ? 'classic' : null;
     }, { identity: snapshot.identity, saving: 'Saving Live presentation…',
-      apply: (preferences) => apply(preferences.presentation), renderAfterSave: !densityOnly });
+      apply, renderAfterSave: !densityOnly });
     if (!workflow.isBusy()) syncIdleRowOptions();
   });
 }

@@ -473,8 +473,8 @@ assert.match(channels, /rowClass: activityRowClass/,
 assert.match(channels,
   /channelTagSet\(row\.tags\)\.has\('CONVENTIONAL'\) \? '' : 'live-row-trunked'/,
   'Only trunked rows may hide their LCN in the compact mobile presentation');
-assert.match(channelValue, /const value = liveConventionalChannelValue\(row\)/,
-  'Channel names are distinct from the separate LCN column');
+assert.match(channelValue, /const value = liveConventionalChannelValue\(row, \{ actionFirst: true \}\)/,
+  'Conventional Channel cells keep the shared headphone action before the name');
 assert.match(channelValue,
   /const remote = showRemoteOrigin \? liveRemoteOriginBadge\(row\.remote_origin\) : null;[\s\S]*wrapper\.append\(remote\)/,
   'Mixed Live rows keep their cloud badge without replacing the channel value');
@@ -729,7 +729,9 @@ test('automatic Live table fallbacks preserve the explicit preferred table', () 
     const clearSelection = () => {}, updateSelectedView = () => {}, closePicker = () => {};
     const presentation = {};
     const makeLiveTable = () => ({ tableController: { replaceRows() {} } });
-    const host = { replaceChildren() {} };
+    const host = { replaceChildren() {}, setAttribute() {} };
+    const selectedViewTitle = { id: 'live-selected-view-title' };
+    const updatePickerResults = () => {};
     const cleanupTableLayoutMenu = () => {};
     let layoutType = 'live-channels', liveTable = makeLiveTable();
     ${show};

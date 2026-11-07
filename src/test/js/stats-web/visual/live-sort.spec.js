@@ -743,8 +743,11 @@ for (const [theme, width, height] of [['light', 1440, 950], ['dark', 1440, 950],
     if (width < 761) await page.locator('.live-picker-toggle').click();
     await page.getByRole('tab', { name: /Show live channels for Conventional/ }).click();
     await expect(channelHeading).toHaveCount(1);
-    if (width < 761) await page.locator('.live-picker-toggle').click();
-    await page.getByRole('tab', { name: 'Show Classic live channels', exact: true }).click();
+    const chooseClassic = await presentationDialog(page);
+    await chooseClassic.getByRole('combobox', { name: 'Presentation', exact: true }).selectOption('classic');
+    await savePresentation(chooseClassic);
+    await expect(page.getByRole('tab', { name: 'Show Classic live channels', exact: true })).toHaveCount(0);
+    expect(app.preferences().live_workspace.active_channel_table_id).toBe('classic');
     const rows = page.locator('.channels-live-table tbody tr[data-id]');
     await expect(rows).toHaveCount(6);
     await expect.poll(() => rows.evaluateAll(nodes => nodes.map(node => JSON.parse(node.dataset.id))))
@@ -812,6 +815,16 @@ for (const [theme, width, height] of [['light', 1440, 950], ['dark', 1440, 950],
     await expect(rows).toHaveCount(0);
     await expect(page.locator('.live-selected-view-title')).toHaveText('Classic');
     await expect.poll(() => page.evaluate(() => window.fixtureSubscriptions?.decode_events?.configuration_id)).toBeUndefined();
+    await page.goto('/app.html?view=live');
+    await expect(page.locator('.live-selected-view-title')).toHaveText('Classic');
+    await expect(page.locator('.channels-live-tab[data-table-id="classic"]')).toHaveCount(0);
+    const channelViews = await presentationDialog(page);
+    await channelViews.getByRole('combobox', { name: 'Presentation', exact: true }).selectOption('channels');
+    await expect(channelViews.getByRole('checkbox', { name: 'Show only active trunked channels', exact: true })).not.toBeChecked();
+    await expect(channelViews.getByRole('combobox', { name: /^Sort calls by/ })).toHaveValue('frequency');
+    await savePresentation(channelViews);
+    await expect(page.locator('.live-selected-view-title')).toHaveText('Conventional');
+    expect(app.preferences().live_workspace.active_channel_table_id).toBeNull();
   });
 }
 
@@ -826,14 +839,26 @@ test('Live hints stay open while reception updates and only conventional channel
   sample.tables.push({ table_id: 'conventional', title: 'Conventional', channel_running: true,
     rows: [{ key: 'weather', channel_name: 'Weather', tags: ['CONVENTIONAL'],
       entity_ref: { kind: 'channel', key: '22222222-2222-4222-8222-222222222222' },
-      status: 'IDLE', frequency_hz: 162550000 }] });
+      status: 'IDLE', frequency_hz: 162550000, remote_origin: { remote: true } }] });
   await openLive(page, 'light', {}, sample);
-  await page.getByRole('tab', { name: 'Show Classic live channels', exact: true }).click();
+  const chooseClassic = await presentationDialog(page);
+  await chooseClassic.getByRole('combobox', { name: 'Presentation', exact: true }).selectOption('classic');
+  await savePresentation(chooseClassic);
   const table = liveTable(page);
   await expect(table.locator('td[data-column="channel"]').filter({ hasText: 'Weather' })
     .locator('[data-direct-listen-target-key]')).toHaveCount(1);
   await expect(table.locator('td[data-column="channel"]').filter({ hasText: 'Metro North' })
     .locator('[data-direct-listen-target-key]')).toHaveCount(0);
+  const channelIcons = await table.locator('td[data-column="channel"]').filter({ hasText: 'Weather' })
+    .evaluate(element => {
+      const label = element.querySelector('.live-channel-link').getBoundingClientRect();
+      const action = element.querySelector('[data-direct-listen-target-key]').getBoundingClientRect();
+      const cloud = element.querySelector('.live-remote-origin').getBoundingClientRect();
+      return { headphoneBeforeName: action.width > 0 && action.right <= label.left,
+        cloudBeforeName: cloud.width > 0 && cloud.right <= label.left };
+    });
+  expect(channelIcons).toEqual({ headphoneBeforeName: true, cloudBeforeName: true });
+  await page.screenshot({ path: test.info().outputPath('leading-conventional-channel-icons.png') });
 
   await page.locator('.live-channels-section').getByRole('button', { name: 'Choose table columns', exact: true }).click();
   const chooser = page.getByRole('dialog', { name: 'Table columns', exact: true });
@@ -856,4 +881,30 @@ test('Live hints stay open while reception updates and only conventional channel
   }
   await page.keyboard.press('Escape');
   await expect(hint).toHaveCount(0);
+});
+
+
+test('Classic presentation waits for a successful save and preserves the channel-view draft', async ({ page }) => {
+  const app = await openLive(page, 'light', { show_only_active_trunked_channels: false,
+    live_channel_sort: 'frequency', retain_last_call_on_idle_rows: true });
+  const dialog = await presentationDialog(page);
+  const mode = dialog.getByRole('combobox', { name: 'Presentation', exact: true });
+  const sort = dialog.getByRole('combobox', { name: /^Sort calls by/ });
+  await sort.selectOption('lcn');
+  await mode.selectOption('classic');
+  await expect(sort).toBeDisabled();
+  await mode.selectOption('channels');
+  await expect(sort).toHaveValue('lcn');
+  await expect(dialog.getByRole('checkbox', { name: 'Retain the last call on idle rows', exact: true })).toBeChecked();
+  await mode.selectOption('classic');
+  app.failNextSave(503);
+  await dialog.getByRole('button', { name: 'Save Live Presentation', exact: true }).click();
+  await expect(dialog.locator('.admin-form-message')).toHaveText('Unable to save user preferences.');
+  await expect(mode).toHaveValue('classic');
+  expect(app.preferences().live_workspace.active_channel_table_id).toBeNull();
+  await expect(page.locator('.live-selected-view-title')).toHaveText('Metro North');
+  await savePresentation(dialog);
+  await expect(page.locator('.live-selected-view-title')).toHaveText('Classic');
+  await expect(page.locator('.channels-live-tab[data-table-id="classic"]')).toHaveCount(0);
+  expect(app.preferences().presentation.live_channel_sort).toBe('frequency');
 });

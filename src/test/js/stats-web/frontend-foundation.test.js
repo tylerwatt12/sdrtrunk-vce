@@ -959,7 +959,8 @@ async function main() {
   assert.match(preferenceFormSource, /if \(modal\.close\(\)\) void render\(\)/);
   assert.match(preferenceFormSource, /error\?\.code === 'preference_session_changed'/);
   assert.match(preferenceFormSource, /apply\(latest\.preferences\)/);
-  assert.match(livePresentationSource, /apply\(preferences\.presentation\)/);
+  assert.match(livePresentationSource, /const apply = \(preferences\) =>/);
+  assert.match(livePresentationSource, /currentClassic = preferences\.live_workspace\.active_channel_table_id === 'classic'/);
   assert.match(livePresentationSource, /renderAfterSave: !densityOnly/);
   assert.doesNotMatch(appSource, /function (?:activateScannerSettings|openScannerSettings)\(/,
     'Scanner preferences must not retain an unused parallel settings dialog.');
