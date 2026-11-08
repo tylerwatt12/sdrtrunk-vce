@@ -180,8 +180,8 @@ final class RadioResolveSpool
             Files.copy(sourceAudio, audioTemporary, StandardCopyOption.REPLACE_EXISTING);
             force(audioTemporary);
             moveAtomically(audioTemporary, audio);
+            //writeManifest forces the directory after both owned files have been atomically promoted.
             writeManifest(manifestTemporary, manifestPath, manifest);
-            forceDirectory();
             entry = new Entry(manifestPath, audio, manifest, Files.size(manifestPath) + Files.size(audio));
             mState.entries.put(envelope.submissionId(), entry);
             mState.observedSize = mState.entries.size();

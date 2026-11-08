@@ -119,10 +119,37 @@ final class RadioSystemSchema
             return mIdentities.get(IdentityKey.from(radioSystemId, identity));
         }
 
-        private void rememberIdentity(long radioSystemId, Identity identity, long summaryId)
+        private void rememberIdentity(Connection connection, long radioSystemId, Identity identity, boolean accepted)
+            throws SQLException
         {
-            mIdentities.put(IdentityKey.from(radioSystemId, identity),
-                new IdentityDelta(summaryId, identity.stableCanonicalSubscriber()));
+            IdentityDelta delta = new IdentityDelta(0, false, null, null);
+            if(accepted)
+            {
+                //Read the stored values: an out-of-order observation may not have replaced encryption metadata.
+                try(PreparedStatement statement = connection.prepareStatement("""
+                    SELECT id, p25_subscriber_identity_id, last_encryption_algorithm_id, last_encryption_key_id
+                    FROM radio_system_identity_summary
+                    WHERE radio_system_id=? AND identity_kind_code=? AND home_wacn=? AND home_system_id=?
+                        AND identity_id=?
+                    """))
+                {
+                    statement.setLong(1, radioSystemId);
+                    statement.setInt(2, identity.kindCode());
+                    statement.setInt(3, identity.homeWacn());
+                    statement.setInt(4, identity.homeSystemId());
+                    statement.setInt(5, identity.id());
+                    try(ResultSet row = statement.executeQuery())
+                    {
+                        if(row.next())
+                        {
+                            delta = new IdentityDelta(row.getLong(1), row.getObject(2) != null,
+                                row.getObject(3) != null ? row.getInt(3) : null,
+                                row.getObject(4) != null ? row.getInt(4) : null);
+                        }
+                    }
+                }
+            }
+            mIdentities.put(IdentityKey.from(radioSystemId, identity), delta);
         }
 
         void flush(Connection connection) throws SQLException
@@ -991,11 +1018,6 @@ final class RadioSystemSchema
             activity.action() == ReceiverActivityRecords.Action.UNKNOWN)
         {
             return radioSystem;
-        }
-
-        if(batch != null && (activity.encryptionAlgorithmId() != null || activity.encryptionKeyId() != null))
-        {
-            batch.flushIdentities(connection);
         }
 
         Identity sourceIdentity = identity(radioSystem, TrunkedIdentityPolicy.IDENTITY_KIND_RADIO,
@@ -2312,19 +2334,21 @@ final class RadioSystemSchema
         throws SQLException
     {
         long radioSystemId = radioSystem.radioSystemId();
-        if(batch != null && counts.equals(IdentityCounts.NONE) && encryptionAlgorithm == null &&
-            encryptionKey == null && talkerAlias == null)
+        if(batch != null)
         {
             IdentityDelta delta = batch.identity(radioSystemId, identity);
             if(delta != null)
             {
-                if(!identity.stableCanonicalSubscriber() || delta.mStableCanonicalSubscriber)
+                if(counts.equals(IdentityCounts.NONE) && talkerAlias == null &&
+                    (!identity.stableCanonicalSubscriber() || delta.mStableCanonicalSubscriber) &&
+                    (encryptionAlgorithm == null || encryptionAlgorithm.equals(delta.mEncryptionAlgorithm)) &&
+                    (encryptionKey == null || encryptionKey.equals(delta.mEncryptionKey)))
                 {
                     delta.observe(observedAt, action);
                     return delta.mSummaryId > 0;
                 }
-                //Sharing a serving-home key must not discard its first explicit canonical qualification or the
-                //ordinary counter deltas already waiting in this bounded writer batch.
+                //Changed metadata must compare against every earlier accepted timestamp. Flush before the normal
+                //upsert so older enrichment cannot overwrite a newer pending observation or discard its counters.
                 batch.flushIdentities(connection);
             }
         }
@@ -2334,7 +2358,7 @@ final class RadioSystemSchema
         {
             if(batch != null)
             {
-                batch.rememberIdentity(radioSystemId, identity, 0);
+                batch.rememberIdentity(connection, radioSystemId, identity, false);
             }
             return false;
         }
@@ -2430,8 +2454,7 @@ final class RadioSystemSchema
 
         if(batch != null)
         {
-            batch.rememberIdentity(radioSystemId, identity,
-                identitySummaryId(connection, radioSystemId, identity));
+            batch.rememberIdentity(connection, radioSystemId, identity, true);
         }
 
         return true;
@@ -3564,14 +3587,19 @@ final class RadioSystemSchema
     {
         private final long mSummaryId;
         private final boolean mStableCanonicalSubscriber;
+        private final Integer mEncryptionAlgorithm;
+        private final Integer mEncryptionKey;
         private final int[] mActionCounts = new int[ACTIONS.size()];
         private long mFirstSeen;
         private long mLastSeen;
 
-        private IdentityDelta(long summaryId, boolean stableCanonicalSubscriber)
+        private IdentityDelta(long summaryId, boolean stableCanonicalSubscriber, Integer encryptionAlgorithm,
+                              Integer encryptionKey)
         {
             mSummaryId = summaryId;
             mStableCanonicalSubscriber = stableCanonicalSubscriber;
+            mEncryptionAlgorithm = encryptionAlgorithm;
+            mEncryptionKey = encryptionKey;
         }
 
         private void observe(long observedAt, ReceiverActivityRecords.Action action)

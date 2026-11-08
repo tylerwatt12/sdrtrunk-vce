@@ -35,11 +35,14 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.sqlite.SQLiteConnection;
 
 /**
  * Focused contract tests for the current saved-channel and radio-system identity model.
@@ -657,6 +660,93 @@ class RadioSystemIdentityModelTest
                 "SELECT logical_call_count FROM radio_system_identity_summary WHERE id=" + owner));
             ActivityTestDatabase.validateCurrent(connection);
         }
+    }
+
+    @Test
+    void repeatedEncryptionMetadataCoalescesWithoutLosingAnyObservation() throws Exception
+    {
+        try(Connection connection = open())
+        {
+            insertChannel(connection, P25_A, "TRUNKED", "P25_PHASE1", 1, "P25 A", correlation(1));
+            var writes = new AtomicInteger();
+            ((SQLiteConnection)connection).addUpdateListener((type, database, table, row) -> {
+                if(table.equals("radio_system_identity_summary")) writes.incrementAndGet();
+            });
+            var observations = java.util.stream.IntStream.range(0, 100)
+                .mapToObj(i -> encryptedRegistration(1_000 + i, 132, 77)).toList();
+            ReceiverActivitySchema.recordActivityBatch(connection, observations, true);
+            assertEquals(100, scalar(connection, "SELECT count(*) FROM receiver_activity_event"));
+            assertEquals(100, scalar(connection, "SELECT register_count FROM radio_system_identity_summary"));
+            assertEquals(1_000, scalar(connection, "SELECT first_seen_ms FROM radio_system_identity_summary"));
+            assertEquals(1_099, scalar(connection, "SELECT last_seen_ms FROM radio_system_identity_summary"));
+            assertEquals(77, scalar(connection, "SELECT last_encryption_key_id FROM radio_system_identity_summary"));
+            assertEquals(2, writes.get(), "one insert and one accumulated summary update");
+        }
+    }
+
+    @Test
+    void changedAndOutOfOrderEncryptionKeepsTheSameResultAsIndividualObservations() throws Exception
+    {
+        try(Connection serial = open(); Connection batched = open())
+        {
+            for(Connection c: List.of(serial, batched))
+            {
+                insertChannel(c, P25_A, "TRUNKED", "P25_PHASE1", 1, "P25 A", correlation(1));
+                record(c, encryptedRegistration(2_000, 132, 77));
+            }
+            var input = List.of(
+                encryptedRegistration(1_000, 132, 88), //Older than persisted state: cannot replace key 77.
+                encryptedRegistration(3_000, 132, 88), //Must not mistake the rejected key for stored metadata.
+                encryptedRegistration(4_000, null, null),
+                encryptedRegistration(3_500, 132, 99), //Older than pending state: flush before evaluating it.
+                encryptedRegistration(5_000, 132, 99),
+                encryptedRegistration(5_001, 132, 99),
+                encryptedRegistration(5_001, 133, null), //Equal-time partial updates keep arrival order.
+                encryptedRegistration(5_001, null, 100),
+                encryptedRegistration(4_999, 134, 100), //A rejected algorithm must not enter the cache.
+                encryptedRegistration(5_002, null, 100),
+                encryptedRegistration(5_003, 133, 100));
+            for(var event: input) record(serial, event);
+            ReceiverActivitySchema.recordActivityBatch(batched, input, true);
+            for(String table: List.of("radio_system_identity_summary", "receiver_activity_event",
+                "radio_system", "trunked_signaling_activity_bucket"))
+            {
+                assertEquals(tableRows(serial, table), tableRows(batched, table), table);
+            }
+            assertEquals(12, scalar(batched, "SELECT register_count FROM radio_system_identity_summary"));
+            assertEquals(133, scalar(batched, "SELECT last_encryption_algorithm_id FROM radio_system_identity_summary"));
+            assertEquals(100, scalar(batched, "SELECT last_encryption_key_id FROM radio_system_identity_summary"));
+            ActivityTestDatabase.validateCurrent(batched);
+        }
+    }
+
+    private static List<List<Object>> tableRows(Connection connection, String table)
+        throws SQLException
+    {
+        var rows = new ArrayList<List<Object>>();
+        try(var statement = connection.createStatement(); var result = statement.executeQuery("SELECT * FROM " + table + " ORDER BY 1"))
+        {
+            while(result.next())
+            {
+                var row = new ArrayList<Object>();
+                for(int i = 1; i <= result.getMetaData().getColumnCount(); i++)
+                {
+                    row.add(result.getObject(i));
+                }
+                rows.add(row);
+            }
+        }
+        return rows;
+    }
+
+    private static ReceiverActivityRecords.ActivityEvent encryptedRegistration(long time, Integer algorithm, Integer key)
+    {
+        return new ReceiverActivityRecords.ActivityEvent(time, P25_A,
+            ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE, "APCO25", ReceiverActivityRecords.Action.REGISTER,
+            "REGISTER", "10900077", null, null, List.of(), 851_012_500L, "0-1", 1,
+            CallEncryptionState.ENCRYPTED, algorithm, key, 0xBEE00, 0x3A9, null, null, null, null, false, null, null,
+            TrunkedIdentityDomain.STANDARD, ReceiverActivityRecords.P25Identity.UNKNOWN,
+            ReceiverActivityRecords.P25Identity.ORDINARY, List.of(), null);
     }
 
     @Test
