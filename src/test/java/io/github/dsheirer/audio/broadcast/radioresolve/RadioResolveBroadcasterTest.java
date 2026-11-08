@@ -348,6 +348,27 @@ class RadioResolveBroadcasterTest
     }
 
     @Test
+    void independentlyConfirmedStationAndControlFactsExportOneNativeChannel()
+    {
+        long time = 1_700_000_010_000L;
+        long frequency = RadioResolveTestFixtures.FREQUENCY;
+        var snapshot = withChannels(List.of(
+            new P25NetworkConfigurationSnapshot.Channel("primary_control", "10-700", frequency,
+                809_087_500L, false, 1, null, time),
+            new P25NetworkConfigurationSnapshot.Channel("base_station", "10-700", frequency,
+                809_087_500L, false, 1, "WTEST77", time - 1_000),
+            new P25NetworkConfigurationSnapshot.Channel("base_station", "11-700", frequency,
+                809_087_500L, false, 1, "KTEST", time - 1_000)));
+        var payload = RadioResolveBroadcaster.createSiteMetadataPayload(new SiteMetadataEvent(
+            new Channel("Control"), snapshot, time, frequency), time);
+        var channels = payload.getAsJsonArray("channels");
+        assertEquals(2, channels.size(), "different descriptors sharing a carrier stay separate");
+        assertEquals("primary_control", channels.get(0).getAsJsonObject().get("role").getAsString());
+        assertEquals("WTEST77", channels.get(0).getAsJsonObject().get("callsign").getAsString());
+        assertEquals("KTEST", channels.get(1).getAsJsonObject().get("callsign").getAsString());
+    }
+
+    @Test
     void metadataMergesAccessModeEvidenceOnlyForTheExactDescriptor()
     {
         long observedAt = 1_700_000_010_000L;

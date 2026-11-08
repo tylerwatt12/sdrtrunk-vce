@@ -39,6 +39,125 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 public class P25NetworkConfigurationStabilizerTest
 {
     @Test
+    void independentChannelFactsConfirmDespiteInterleavedControlAndDataUpdates()
+    {
+        var stabilizer = new P25NetworkConfigurationStabilizer("P25_PHASE_1");
+        var control = primary(856137500L);
+        var bsi = station(control, "WTEST77");
+        var data = new P25NetworkConfigurationSnapshot.Channel("fdma_data", control.descriptor(),
+            control.downlink(), control.uplink(), false, 1);
+        for(long time: new long[]{1_000, 31_000, 61_000})
+        {
+            stabilizer.observe(snapshot(control), time, control.downlink());
+            stabilizer.observe(snapshot(bsi), time + 1, control.downlink());
+            stabilizer.observe(snapshot(data), time + 2, control.downlink());
+        }
+        stabilizer.observe(snapshot(control), 70_000, control.downlink());
+        var stable = stabilizer.getSnapshot();
+        assertEquals("primary_control", stable.channels().getFirst().role(), "control evidence keeps export priority");
+        assertEquals("WTEST77", getChannel(stable, "base_station").callsign());
+        assertEquals(61_001L, getChannel(stable, "base_station").observedAtMs());
+        assertTrue(hasChannel(stable, "fdma_data", control.downlink()));
+        assertEquals(java.util.Set.of(control.downlink()), stabilizer.getStableCurrentSiteControlFrequencies());
+    }
+
+    @Test
+    void callsignChallengersNeedTheirOwnFreshConfirmationAndNeverFlickerTheIncumbent()
+    {
+        var stabilizer = new P25NetworkConfigurationStabilizer("P25_PHASE_1");
+        var control = primary(856137500L);
+        var bsi = station(control, "WTEST77");
+        for(long time: new long[]{1_000, 31_000, 61_000}) stabilizer.observe(snapshot(bsi), time);
+        var changed = station(control, "KTEST");
+        stabilizer.observe(snapshot(changed), 70_000);
+        stabilizer.observe(snapshot(changed), 70_000);
+        stabilizer.observe(snapshot(changed), 69_000);
+        stabilizer.observe(snapshot(changed), 100_000);
+        stabilizer.observe(snapshot(control), 110_000, control.downlink());
+        assertEquals("WTEST77", getChannel(stabilizer.getSnapshot(), "base_station").callsign());
+        stabilizer.observe(snapshot(changed), 130_000);
+        assertEquals("KTEST", getChannel(stabilizer.getSnapshot(), "base_station").callsign());
+    }
+
+    @Test
+    void cachedBandResolutionCannotCreateCallsignEvidenceOrExtendFreshness()
+    {
+        var stabilizer = new P25NetworkConfigurationStabilizer("P25_PHASE_1");
+        var control = primary(856137500L);
+        var bsi = station(control, "WTEST77");
+        stabilizer.observe(snapshot(bsi.withObservedAt(1_000)), 1_000);
+        stabilizer.observe(snapshot(bsi.withObservedAt(1_000)), 31_000);
+        stabilizer.observe(snapshot(bsi.withObservedAt(1_000)), 61_000);
+        assertNull(getChannel(stabilizer.getSnapshot(), "base_station"));
+        stabilizer.observe(snapshot(bsi), 62_000);
+        stabilizer.observe(snapshot(bsi), 63_000);
+        assertEquals(63_000L, getChannel(stabilizer.getSnapshot(), "base_station").observedAtMs());
+        for(long time = 100_000; time <= 700_000; time += 30_000)
+            stabilizer.observe(snapshot(control), time, control.downlink());
+        assertNull(getChannel(stabilizer.getSnapshot(), "base_station"));
+        assertTrue(hasChannel(stabilizer.getSnapshot(), "primary_control", control.downlink()));
+    }
+
+    @Test
+    void emptyStationIdentifiersNeverReplaceOrRefreshALearnedCallsign()
+    {
+        var stabilizer = new P25NetworkConfigurationStabilizer("P25_PHASE_1");
+        var control = primary(856137500L);
+        for(long time: new long[]{1_000, 31_000, 61_000})
+            stabilizer.observe(snapshot(station(control, "WTEST77")), time);
+        for(long time: new long[]{70_000, 100_000, 130_000})
+            stabilizer.observe(snapshot(station(control, "")), time);
+        assertEquals("WTEST77", getChannel(stabilizer.getSnapshot(), "base_station").callsign());
+        assertEquals(61_000L, getChannel(stabilizer.getSnapshot(), "base_station").observedAtMs());
+    }
+
+    @Test
+    void derivedFrequencyChangesDoNotRestartCallsignAssociationConfirmation()
+    {
+        var stabilizer = new P25NetworkConfigurationStabilizer("P25_PHASE_1");
+        var bsi = station(primary(856137500L), "WTEST77");
+        var resolved = new P25NetworkConfigurationSnapshot.Channel(bsi.role(), bsi.descriptor(),
+            857137500L, bsi.uplink(), bsi.tdma(), bsi.timeslots(), bsi.callsign());
+        stabilizer.observe(snapshot(bsi), 1_000);
+        stabilizer.observe(snapshot(resolved), 31_000);
+        stabilizer.observe(snapshot(resolved), 61_000);
+        assertEquals("WTEST77", getChannel(stabilizer.getSnapshot(), "base_station").callsign());
+        assertEquals(857137500L, getChannel(stabilizer.getSnapshot(), "base_station").downlink());
+    }
+
+    @Test
+    void resetsAndSharedCarriersKeepIndependentCallsignEvidenceScoped()
+    {
+        var stabilizer = new P25NetworkConfigurationStabilizer("P25_PHASE_1");
+        var first = station(primary(856137500L), "WTEST77");
+        var second = new P25NetworkConfigurationSnapshot.Channel("base_station", "2-100", first.downlink(),
+            first.uplink(), false, 1, "KTEST");
+        stabilizer.observe(snapshot(first), 1_000);
+        stabilizer.observe(snapshot(second), 1_000);
+        stabilizer.observe(snapshot(first), 31_000);
+        stabilizer.resetCandidates();
+        stabilizer.observe(snapshot(first), 61_000);
+        assertTrue(stabilizer.getSnapshot().channels().isEmpty());
+        for(long time: new long[]{91_000, 121_000, 151_000})
+        {
+            stabilizer.observe(snapshot(first), time);
+            stabilizer.observe(snapshot(second), time);
+        }
+        assertEquals(2, stabilizer.getSnapshot().channels().size());
+        stabilizer.resetCandidates();
+        assertEquals(2, stabilizer.getSnapshot().channels().size());
+        stabilizer.reset();
+        assertTrue(stabilizer.getSnapshot().channels().isEmpty());
+    }
+
+    private static P25NetworkConfigurationSnapshot.Channel station(P25NetworkConfigurationSnapshot.Channel channel,
+                                                                   String callsign)
+    {
+        return new P25NetworkConfigurationSnapshot.Channel("base_station", channel.descriptor(), channel.downlink(),
+            channel.uplink(), channel.tdma(), channel.timeslots(), callsign);
+    }
+
+    @Test
     public void blockedObserverProjectionNeverDelaysDecoderObservationResetOrSaturation() throws Exception
     {
         CountDownLatch projectionEntered = new CountDownLatch(1);

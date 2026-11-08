@@ -929,6 +929,18 @@ class ReceiverActivityMapper
             snapshot.frequencyBands(), snapshot.patchGroups(), snapshot.foreignSystemBands());
     }
 
+    /** Content comparison for bounded persistence; the stored snapshot still carries original RF timestamps. */
+    static String siteStructureHash(P25NetworkConfigurationSnapshot snapshot)
+    {
+        return sha256(String.join("|", safe(snapshot.decoder()), safe(snapshot.network()), safe(snapshot.currentSite()),
+            safe(snapshot.channels().stream().map(P25NetworkConfigurationSnapshot.Channel::withoutObservedAt).toList()),
+            safe(snapshot.neighborSites().stream().map(P25NetworkConfigurationSnapshot.NeighborSite::withoutObservedAt).toList()),
+            safe(snapshot.frequencyBands().stream().map(P25NetworkConfigurationSnapshot.FrequencyBand::withoutObservedAt).toList()),
+            safe(snapshot.patchGroups().stream().map(P25NetworkConfigurationSnapshot.PatchGroup::withoutObservedAt).toList()),
+            safe(snapshot.siteStatus() != null ? snapshot.siteStatus().withoutVolatileTiming() : null),
+            safe(snapshot.foreignSystemBands().stream().map(P25NetworkConfigurationSnapshot.ForeignSystemBand::withoutObservedAt).toList())));
+    }
+
     private static Boolean hasTdma(P25NetworkConfigurationSnapshot snapshot)
     {
         boolean observed = false;

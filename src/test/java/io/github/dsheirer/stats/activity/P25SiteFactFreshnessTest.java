@@ -7,6 +7,9 @@ package io.github.dsheirer.stats.activity;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+
+import io.github.dsheirer.metadata.site.SiteReceiverContext;
 
 import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
@@ -22,6 +25,68 @@ class P25SiteFactFreshnessTest
     private static final List<String> SUMMARIES = List.of("p25_site_channel_summary",
         "p25_site_channel_tag_summary", "p25_site_frequency_band_summary", "p25_site_neighbor_summary",
         "p25_site_patch_group_summary", "p25_site_patch_group_talkgroup_summary", "p25_site_patch_group_radio_summary");
+
+    @Test
+    void learnedCallsignSurvivesControlOnlyUpdatesAndIndependentEvidenceMergesWithoutDuplicateChannels() throws Exception
+    {
+        try(Connection connection = database())
+        {
+            var original = snapshot(61_000, 61_000, "a");
+            var control = original.channels().getFirst();
+            var bsi = new P25NetworkConfigurationSnapshot.Channel("base_station", control.descriptor(),
+                control.downlink(), control.uplink(), false, 1, "WTEST77", 60_000L);
+            ReceiverActivitySchema.insertSite(connection, withChannels(original, List.of(control, bsi)));
+            assertEquals(1, scalar(connection, "SELECT count(*) FROM p25_site_channel_summary"));
+            assertEquals(1, scalar(connection, "SELECT count(*) FROM p25_site_channel"));
+            assertEquals(1, scalar(connection, "SELECT count(*) FROM p25_site_channel_summary WHERE callsign='WTEST77'"));
+            ReceiverActivitySchema.insertSite(connection, snapshot(71_000, 71_000, "b"));
+            assertEquals(1, scalar(connection, "SELECT count(*) FROM p25_site_channel_summary WHERE callsign='WTEST77'"));
+            assertEquals(61_000, scalar(connection, "SELECT first_seen_ms FROM p25_site_channel_summary"));
+        }
+    }
+
+    @Test
+    void contentChangesSaveImmediatelyButUnchangedFreshnessUsesMinuteHeartbeats()
+    {
+        var context = SiteReceiverContext.detached(CONFIGURATION, 770606250L);
+        var first = networkSnapshot(1_000, null);
+        var fresh = networkSnapshot(6_000, null);
+        var learned = networkSnapshot(7_000, "WTEST77");
+        String initialHash = ReceiverActivityMapper.siteStructureHash(first);
+        assertEquals(initialHash, ReceiverActivityMapper.siteStructureHash(fresh));
+        var previous = new ReceiverActivityService.SiteWriteReceipt(context, initialHash, 1_000);
+        assertFalse(new ReceiverActivityService.SiteWriteReceipt(context, initialHash, 6_000).shouldWrite(previous));
+        assertFalse(new ReceiverActivityService.SiteWriteReceipt(context, initialHash, 60_999).shouldWrite(previous));
+        assertTrue(new ReceiverActivityService.SiteWriteReceipt(context, initialHash, 61_000).shouldWrite(previous));
+        assertTrue(new ReceiverActivityService.SiteWriteReceipt(context,
+            ReceiverActivityMapper.siteStructureHash(learned), 7_000).shouldWrite(previous));
+        assertTrue(new ReceiverActivityService.SiteWriteReceipt(SiteReceiverContext.detached(CONFIGURATION, 773831250L),
+            initialHash, 7_000).shouldWrite(previous));
+        assertFalse(new ReceiverActivityService.SiteWriteReceipt(context,
+            ReceiverActivityMapper.siteStructureHash(learned), 999).shouldWrite(previous));
+        //A -> B -> A is a real content transition; do not suppress A just because it was saved earlier this minute.
+        var changed = new ReceiverActivityService.SiteWriteReceipt(context,
+            ReceiverActivityMapper.siteStructureHash(learned), 7_000);
+        assertTrue(new ReceiverActivityService.SiteWriteReceipt(context, initialHash, 8_000).shouldWrite(changed));
+    }
+
+    private static P25NetworkConfigurationSnapshot networkSnapshot(long received, String callsign)
+    {
+        return new P25NetworkConfigurationSnapshot("P25_PHASE_1", null, null,
+            List.of(new P25NetworkConfigurationSnapshot.Channel("primary_control", "1-1376", 770606250L,
+                800606250L, false, 1, callsign, received)), List.of(), List.of(), List.of(), List.of());
+    }
+
+    private static ReceiverActivityRecords.SiteSnapshot withChannels(ReceiverActivityRecords.SiteSnapshot source,
+        List<P25NetworkConfigurationSnapshot.Channel> channels)
+    {
+        return new ReceiverActivityRecords.SiteSnapshot(source.observedAtEpochMilliseconds(), source.configurationId(),
+            source.receiverKind(), source.snapshotHash(), source.protocol(), source.wacn(), source.systemId(), source.nac(),
+            source.rfss(), source.site(), source.lra(), source.activeRfssNetworkConnection(), source.tdma(),
+            source.siteStatus(), source.sourceFrequencyHertz(), source.primaryFrequencyHertz(),
+            source.currentControlHertz(), channels, source.neighborSites(), source.frequencyBands(),
+            source.patchGroups(), source.foreignSystemBands());
+    }
 
     @Test
     void changedAndUnchangedExportsDoNotCountCachedFactsAndFreshReceptionAdvancesThem() throws Exception

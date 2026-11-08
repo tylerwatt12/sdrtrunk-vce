@@ -642,6 +642,45 @@ class ReceiverActivityServiceLifecycleTest
     }
 
     @Test
+    void repeatedP25MetadataIsCoalescedWithoutDelayingNewLearnedFacts() throws Exception
+    {
+        Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder);
+        SdrTrunkTestDatabase.create(database);
+        Channel channel = p25TrunkedChannel(LEARNED_P25_CONFIGURATION_ID);
+        channel.setSourceConfiguration(tuner(851_012_500L));
+        persistChannels(database, channel);
+        var preferences = new TestUserPreferences(new TestApplicationPreference(true, 30, true),
+            new TestDirectoryPreference(mTemporaryFolder));
+        ReceiverActivityService service = fastWriterService(preferences);
+        long now = System.currentTimeMillis();
+        try
+        {
+            for(int index = 0; index < 24; index++)
+            {
+                long time = now + index * 5_000L;
+                var channels = new java.util.ArrayList<P25NetworkConfigurationSnapshot.Channel>();
+                channels.add(new P25NetworkConfigurationSnapshot.Channel("primary_control", "0-1", 851_012_500L,
+                    806_012_500L, false, 1, null, time));
+                if(index >= 2) channels.add(new P25NetworkConfigurationSnapshot.Channel("base_station", "0-1",
+                    851_012_500L, 806_012_500L, false, 1, "WTEST77", time));
+                var snapshot = new P25NetworkConfigurationSnapshot("P25_PHASE_1",
+                    new P25NetworkConfigurationSnapshot.Network(0xBEE00, 0x3A9, 0x293, null),
+                    new P25NetworkConfigurationSnapshot.CurrentSite(0x3A9, 0x293, 1, 1, null, true),
+                    channels, List.of(), List.of(), List.of(), List.of());
+                service.receiveSiteMetadata(new SiteMetadataEvent(channel, snapshot, time, 851_012_500L));
+            }
+            assertTrue(service.awaitObservationDrain(5, TimeUnit.SECONDS));
+            var barrier = StatsDatabaseMaintenanceRequest.forOperation(ReceiverActivityMaintenance.Operation.CHECK);
+            service.receiveMaintenanceRequest(barrier);
+            assertTrue(barrier.result().get(5, TimeUnit.SECONDS).checkOk());
+            assertEquals(3, service.getStatus().recordsWritten(), "initial record, new callsign, minute heartbeat");
+            assertEquals(0, service.getStatus().recordsDropped());
+            assertEquals("WTEST77", scalarText(database, "SELECT callsign FROM p25_site_channel_summary"));
+        }
+        finally { disposeAndAwait(service); }
+    }
+
+    @Test
     void queuedSiteMetadataCannotReassignAReceiverAfterItsSavedSourceChanges() throws Exception
     {
         Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder);

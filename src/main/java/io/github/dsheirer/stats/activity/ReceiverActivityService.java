@@ -90,6 +90,7 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
     private final Map<String,Long> mRecentLogicalNotifications = new LinkedHashMap<>(1024, 0.75f, true);
     private long mP25CollectionEpoch = 1;
     private volatile long mObservationCollectionStartedAt = System.currentTimeMillis();
+    private final Map<String,SiteWriteReceipt> mRecentSiteWrites = new LinkedHashMap<>();
     private final Map<String,TrunkedSiteEvidence> mObservedTrunkedSites = new ConcurrentHashMap<>();
     private final Map<StatsDatabaseMaintenanceRequest,BoundedMpscPairQueue<Object,Object>>
         mPendingDeletionRequests = new ConcurrentHashMap<>();
@@ -1048,6 +1049,7 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
         mRecentLogicalNotifications.clear();
         mP25CollectionEpoch++;
         mObservedTrunkedSites.clear();
+        mRecentSiteWrites.clear();
     }
 
     private void drainObservations()
@@ -1100,7 +1102,7 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
         }
     }
 
-    private void enqueueObservation(ReceiverActivityWriter writer, ReceiverActivityRecord record)
+    private boolean enqueueObservation(ReceiverActivityWriter writer, ReceiverActivityRecord record)
     {
         synchronized(this)
         {
@@ -1111,9 +1113,10 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
                 {
                     record = call.inCollection(mP25CollectionEpoch, mObservationCollectionStartedAt);
                 }
-                writer.enqueue(record);
+                return writer.enqueue(record);
             }
         }
+        return false;
     }
 
     private void processObservation(Object observation)
@@ -1479,7 +1482,27 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
 
         if(record != null)
         {
-            enqueueObservation(writer, record);
+            long observedAt = record.observedAtEpochMilliseconds();
+            //Unchanged facts need only a minute heartbeat. Confirmed content, source or receiver-generation changes
+            //are saved at the existing five-second publication cadence. Never receipt a rejected queue offer.
+            mRecentSiteWrites.entrySet().removeIf(entry ->
+                observedAt - entry.getValue().observedAt() >= DEDUPE_RETENTION_MILLISECONDS);
+            SiteWriteReceipt receipt = new SiteWriteReceipt(event.receiverContext(),
+                ReceiverActivityMapper.siteStructureHash(event.snapshot()), observedAt);
+            if(receipt.shouldWrite(mRecentSiteWrites.get(record.configurationId())) && enqueueObservation(writer, record))
+            {
+                mRecentSiteWrites.put(record.configurationId(), receipt);
+            }
+        }
+    }
+
+    record SiteWriteReceipt(SiteReceiverContext context, String structureHash, long observedAt)
+    {
+        boolean shouldWrite(SiteWriteReceipt previous)
+        {
+            return previous == null || observedAt >= previous.observedAt() &&
+                (!context.equals(previous.context()) || !structureHash.equals(previous.structureHash()) ||
+                    observedAt - previous.observedAt() >= DEDUPE_RETENTION_MILLISECONDS);
         }
     }
 

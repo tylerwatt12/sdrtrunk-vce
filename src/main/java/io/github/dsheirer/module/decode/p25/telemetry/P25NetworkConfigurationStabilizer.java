@@ -582,6 +582,13 @@ public class P25NetworkConfigurationStabilizer
             channel = channel.withoutObservedAt();
         }
 
+        //A valid BSI can carry no identifier. Absence is not a callsign withdrawal or replacement candidate.
+        if(channel != null && "base_station".equals(channel.role()) &&
+            (channel.callsign() == null || channel.callsign().isBlank()))
+        {
+            return;
+        }
+
         String key = channelKey(channel);
 
         if(key == null)
@@ -590,7 +597,8 @@ public class P25NetworkConfigurationStabilizer
         }
 
         StableFactTracker<P25NetworkConfigurationSnapshot.Channel,P25NetworkConfigurationSnapshot.Channel> tracker =
-            mChannels.computeIfAbsent(key, ignored -> tracker());
+            mChannels.computeIfAbsent(key, ignored -> new StableFactTracker<>(
+                P25NetworkConfigurationStabilizer::channelEvidenceKey));
 
         boolean tunedControl = isCurrentControlChannel(channel) && channel.downlink() != null &&
             sourceFrequency > 0 && channel.downlink() == sourceFrequency;
@@ -762,9 +770,9 @@ public class P25NetworkConfigurationStabilizer
 
         if(channel.descriptor() != null && !channel.descriptor().isBlank())
         {
-            //The v3 canonical channel identity is the native descriptor. Role and resolved frequencies are mutable
-            //observations of that one channel and must never produce duplicate descriptor rows on the wire.
-            return channel.descriptor();
+            //Control role changes concern one fact. Callsign and data advertisements are independent facts
+            //about that same descriptor. Consumers merge confirmed evidence into one channel identity.
+            return isControlChannel(channel) ? channel.descriptor() : channel.role() + ":" + channel.descriptor();
         }
 
         if(channel.downlink() != null)
@@ -773,6 +781,15 @@ public class P25NetworkConfigurationStabilizer
         }
 
         return channel.role() + ":" + channel.descriptor();
+    }
+
+    private static P25NetworkConfigurationSnapshot.Channel channelEvidenceKey(
+        P25NetworkConfigurationSnapshot.Channel channel)
+    {
+        //BSI establishes a callsign association, not the derived band mapping. A later band resolution must not
+        //restart callsign confirmation or manufacture a new callsign reception.
+        return "base_station".equals(channel.role()) ? new P25NetworkConfigurationSnapshot.Channel(
+            channel.role(), channel.descriptor(), null, null, null, null, channel.callsign()) : channel;
     }
 
     private long observationTimestamp(long timestamp)
