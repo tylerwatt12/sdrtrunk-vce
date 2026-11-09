@@ -125,7 +125,6 @@ class Format68To69DatabaseMigrationTest
         Path fresh = directory.resolve("fresh.sqlite");
         SdrTrunkDatabaseStartup.createGlobalDatabase(fresh);
         Path migrated = Format69TestDatabase.create(directory.resolve("migrated.sqlite"));
-        ApplicationDatabaseMigrator.migrateInPlace(migrated, null);
         try(var first = open(ActivityDatabasePath.forConfiguration(fresh));
             var second = open(ActivityDatabasePath.forConfiguration(migrated)))
         {

@@ -85,7 +85,7 @@ final class Format68To69DatabaseMigration implements DatabaseMigrationStep
     private static void stampHistory(Connection connection, String schema) throws SQLException
     {
         String actual = SqliteSchemaValidator.fingerprint(connection, schema);
-        if(!ConfigurationHistoryDatabase.FORMAT_69_HISTORY_FINGERPRINT.equals(actual))
+        if(!ConfigurationHistoryDatabase.HISTORY_FINGERPRINT.equals(actual))
             throw new SQLException("Activity encryption migration did not reach the exact target schema: " + actual);
         try(var update = connection.prepareStatement("UPDATE " + schema +
             ".database_metadata SET value=?,updated_at_ms=? WHERE key=? AND CAST(value AS INTEGER) BETWEEN 63 AND 68"))

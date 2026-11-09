@@ -41,8 +41,7 @@ class Format70To71DatabaseMigrationTest
         assertArrayEquals(configurationBytes, Files.readAllBytes(configuration));
         assertArrayEquals(historyBytes, Files.readAllBytes(history));
         var plan = ApplicationMigrationService.readStartupPlan(configuration);
-        assertEquals(CurrentFormatTestDatabase.migrationStepIdsFrom(70),
-            plan.steps().stream().map(DatabaseMigrationChain.StepPreflight::id).toList());
+        assertEquals(List.of("retired-mp3-normalization-v1", "format-71-to-72"), plan.steps().stream().map(DatabaseMigrationChain.StepPreflight::id).toList());
         assertTrue(plan.steps().getFirst().effects().stream().anyMatch(effect -> effect.kind() == DatabaseMigrationEffect.Kind.DROP));
         try(var connection = open(configuration); var attach = connection.prepareStatement("ATTACH DATABASE ? AS activity"))
         {
@@ -126,11 +125,7 @@ class Format70To71DatabaseMigrationTest
     {
         Path configuration = Format70TestDatabase.create(directory.resolve("workspace.sqlite"));
         Path history = ActivityDatabasePath.forConfiguration(configuration);
-        var full = ApplicationMigrationService.readStartupPlan(configuration);
-        var preferencesOnly = new DatabaseMigrationChain.PreflightReport(full.source(),
-            DatabaseFormatCatalog.requireVersion(72), full.steps().stream().filter(step -> step.targetVersion() <= 72).toList());
-        long workspace = ApplicationMigrationService.requiredOwnedMigrationWorkspace(configuration, MigrationContent.FULL,
-            preferencesOnly);
+        long workspace = ApplicationMigrationService.requiredOwnedMigrationWorkspace(configuration, MigrationContent.FULL);
         assertEquals(2 * Files.size(configuration) + 64L * 1024 * 1024, workspace);
         try(var connection = open(history); var statement = connection.createStatement())
         {
@@ -138,8 +133,7 @@ class Format70To71DatabaseMigrationTest
                 "INSERT INTO receiver_activity_event(channel_id,observed_at_ms,action_code,event_type_code,encryption_state) " +
                 "SELECT (SELECT channel_id FROM receiver_activity_event LIMIT 1),1000000+value,2,7,0 FROM n");
         }
-        assertEquals(workspace, ApplicationMigrationService.requiredOwnedMigrationWorkspace(configuration, MigrationContent.FULL,
-            preferencesOnly));
+        assertEquals(workspace, ApplicationMigrationService.requiredOwnedMigrationWorkspace(configuration, MigrationContent.FULL));
     }
 
     private static void assertNoOp(Path configuration) throws Exception
@@ -182,7 +176,6 @@ class Format70To71DatabaseMigrationTest
             {
                 while(values.next())
                 {
-                    if(ActivityMigrationPreservation.format73Statistic(table, values)) continue;
                     StringBuilder row = new StringBuilder();
                     for(int index = 1; index <= values.getMetaData().getColumnCount(); index++)
                     {
@@ -207,14 +200,7 @@ class Format70To71DatabaseMigrationTest
     {
         Map<String,List<String>> result = new LinkedHashMap<>();
         try(var query = connection.createStatement(); var values = query.executeQuery("SELECT name,type,rootpage,coalesce(sql,'') FROM sqlite_schema ORDER BY name"))
-        {
-            while(values.next())
-            {
-                String name = values.getString(1);
-                if(!ActivityMigrationPreservation.FORMAT_73_INDEXES.contains(name))
-                    result.put(name, List.of(values.getString(2), values.getString(3), values.getString(4)));
-            }
-        }
+        { while(values.next()) result.put(values.getString(1), List.of(values.getString(2), values.getString(3), values.getString(4))); }
         return result;
     }
 }

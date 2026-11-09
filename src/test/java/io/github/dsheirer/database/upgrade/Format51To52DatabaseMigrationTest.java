@@ -268,7 +268,6 @@ class Format51To52DatabaseMigrationTest
                 while(rows.next())
                 {
                     if(targetFormat >= 69 && CurrentFormatTestDatabase.changedEncryptionStatistic(table, rows)) continue;
-                    if(targetFormat >= 73 && ActivityMigrationPreservation.format73Statistic(table, rows)) continue;
                     List<String> row=new ArrayList<>();
                     for(int column=1;column<=rows.getMetaData().getColumnCount();column++)
                     {
@@ -331,13 +330,11 @@ class Format51To52DatabaseMigrationTest
     {
         Map<String,RetainedIndex> actual = indexDefinitions(connection);
         assertEquals(expected.keySet(), actual.keySet(), "Preserve the complete retained index name set");
-        int version = DatabaseFormatCatalog.inspect(connection).version();
         for(var entry: expected.entrySet())
         {
             // The existing validator compares complete SQL while permitting insignificant stored whitespace.
             var definition = entry.getValue().definition();
-            if(version >= 73 && ActivityMigrationPreservation.FORMAT_73_INDEXES.contains(entry.getKey())) continue;
-            if(version >= 69 && List.of("idx_receiver_activity_event_encryption", "idx_receiver_activity_event_system_encrypted_time",
+            if(DatabaseFormatCatalog.inspect(connection).version() >= 69 && List.of("idx_receiver_activity_event_encryption", "idx_receiver_activity_event_system_encrypted_time",
                 "idx_receiver_activity_event_channel_encrypted_time").contains(entry.getKey()))
                 definition = new SqliteSchemaValidator.Definition("index", entry.getKey(),
                     definition.sql().replaceAll("\\bencrypted\\b", "encryption_state")
