@@ -33,6 +33,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.Consumer;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -193,9 +194,12 @@ class ChannelOutputProcessorBackpressureTest
         dispatcherField.setAccessible(true);
         ComplexPolyphaseChannelizerM2.IFFTProcessorDispatcher dispatcher =
             (ComplexPolyphaseChannelizerM2.IFFTProcessorDispatcher)dispatcherField.get(channelizer);
-        Field fftField = dispatcher.getClass().getDeclaredField("mFFT");
-        fftField.setAccessible(true);
-        fftField.set(dispatcher, null);
+        Field transformField = dispatcher.getClass().getDeclaredField("mInverseTransform");
+        transformField.setAccessible(true);
+        Consumer<float[]> failingTransform = samples -> {
+            throw new IllegalStateException("Injected IFFT failure");
+        };
+        transformField.set(dispatcher, failingTransform);
         CountDownLatch recycled = new CountDownLatch(1);
         ComplexPolyphaseChannelizerM2.ChannelResultsBuffer batch =
             new ComplexPolyphaseChannelizerM2.ChannelResultsBuffer(1, ignored -> recycled.countDown());

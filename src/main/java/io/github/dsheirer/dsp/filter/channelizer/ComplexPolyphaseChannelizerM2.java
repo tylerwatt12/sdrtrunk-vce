@@ -18,6 +18,7 @@
  */
 package io.github.dsheirer.dsp.filter.channelizer;
 
+import io.github.dsheirer.dsp.fft.MixedRadixComplexFFT;
 import io.github.dsheirer.dsp.filter.FilterFactory;
 import io.github.dsheirer.dsp.filter.design.FilterDesignException;
 import io.github.dsheirer.sample.complex.InterleavedComplexSamples;
@@ -26,6 +27,7 @@ import java.text.DecimalFormat;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Consumer;
 import org.apache.commons.math3.util.FastMath;
 import org.jtransforms.fft.FloatFFT_1D;
 import org.slf4j.Logger;
@@ -389,7 +391,7 @@ public class ComplexPolyphaseChannelizerM2 extends AbstractComplexPolyphaseChann
     private void init(float[] coefficients)
     {
         int channelCount = getChannelCount();
-        mIFFTProcessorDispatcher.setFFT(new FloatFFT_1D(channelCount));
+        mIFFTProcessorDispatcher.setInverseTransform(createInverseTransform(channelCount));
         int bufferLength = getSubChannelCount() * mTapsPerChannel;
         mSamplesPerBlock = channelCount; //Same as subChannelCount / 2
         mTopBlockMap = getTopBlockMap(channelCount);
@@ -400,6 +402,21 @@ public class ComplexPolyphaseChannelizerM2 extends AbstractComplexPolyphaseChann
         initializeBatchArena();
         warmUpProcessing();
         mProcessedChannelResultsBuffer = acquireChannelResultsBuffer();
+    }
+
+    /**
+     * Creates one transform for the lifetime of an IFFT dispatcher. JTransforms already avoids this scratch allocation
+     * for powers of two and handles sizes with other prime factors.
+     */
+    static Consumer<float[]> createInverseTransform(int channelCount)
+    {
+        if(Integer.bitCount(channelCount) > 1 && MixedRadixComplexFFT.isSupported(channelCount))
+        {
+            return new MixedRadixComplexFFT(channelCount)::inverse;
+        }
+
+        FloatFFT_1D fft = new FloatFFT_1D(channelCount);
+        return samples -> fft.complexInverse(samples, true);
     }
 
     /** Preallocates every complete result batch before live tuner samples can reach the channelizer. */
@@ -606,7 +623,8 @@ public class ComplexPolyphaseChannelizerM2 extends AbstractComplexPolyphaseChann
      */
     public class IFFTProcessorDispatcher extends Dispatcher<ChannelResultsBuffer>
     {
-        private FloatFFT_1D mFFT;
+        //Initialized and warmed before start. Only this dispatcher processes live batches with this workspace.
+        private Consumer<float[]> mInverseTransform;
 
         public IFFTProcessorDispatcher(long interval)
         {
@@ -629,7 +647,7 @@ public class ComplexPolyphaseChannelizerM2 extends AbstractComplexPolyphaseChann
                         if(channelResults != null)
                         {
                             //Rotate each of the channels to the correct phase using the IFFT
-                            mFFT.complexInverse(channelResults, true);
+                            mInverseTransform.accept(channelResults);
                         }
                     }
 
@@ -646,15 +664,15 @@ public class ComplexPolyphaseChannelizerM2 extends AbstractComplexPolyphaseChann
             });
         }
 
-        private void setFFT(FloatFFT_1D fft)
+        private void setInverseTransform(Consumer<float[]> inverseTransform)
         {
-            mFFT = fft;
+            mInverseTransform = inverseTransform;
         }
 
         /** Runs one synchronous initialization-only IFFT without dispatching synthetic samples. */
         private void warmUp(float[] channelResults)
         {
-            mFFT.complexInverse(channelResults, true);
+            mInverseTransform.accept(channelResults);
         }
     }
 }
