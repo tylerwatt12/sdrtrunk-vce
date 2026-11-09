@@ -23,6 +23,7 @@ import com.sun.net.httpserver.HttpServer;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.record.RecordingMode;
+import io.github.dsheirer.record.ClassicRecordingPathTemplate;
 import io.github.dsheirer.record.managed.ManagedRecordingCatalog;
 import io.github.dsheirer.web.auth.WebAccessService;
 import io.github.dsheirer.web.auth.AccessTier;
@@ -531,6 +532,52 @@ class ManagedRecordingsHttpControllerTest
             "&system_key=" + otherSystemKey).GET());
         assertEquals(200, unrelated.statusCode(), unrelated.body());
         assertEquals(0, json(unrelated).at("/data/calls").size());
+    }
+
+    @Test
+    void previewsClassicNamingWithoutSavingAndRetainsTheTemplateWhenSwitchingToStandard() throws Exception
+    {
+        String admin = ManagedRecordingsHttpController.ADMIN_PATH;
+        Session primary = login();
+        var preference = mPreferences.getRecordPreference();
+        var original = preference.getClassicNaming();
+        String template = "{talkgroupName}/{standardName}";
+        try
+        {
+            preference.setClassicNaming(false, ClassicRecordingPathTemplate.compile(ClassicRecordingPathTemplate.STARTER));
+            assertEquals("STANDARD", json(send(request(admin + "/settings").header("Cookie", primary.cookie()).GET()))
+                .at("/data/classic_naming/mode").textValue());
+            var preview = send(mutation(admin + "/classic-naming/preview", primary).POST(
+                HttpRequest.BodyPublishers.ofString(MAPPER.writeValueAsString(Map.of("template", template,
+                    "format", "WAVE")))));
+            assertEquals(200, preview.statusCode(), preview.body());
+            assertEquals("Fire Dispatch/20261109_143522_County_North_Control__TO_234_FROM_4534.wav",
+                json(preview).at("/data/path").textValue());
+            assertFalse(preference.getClassicNaming().custom());
+
+            var invalid = send(mutation(admin + "/settings", primary).PUT(
+                HttpRequest.BodyPublishers.ofString(MAPPER.writeValueAsString(Map.of("classic_naming",
+                    Map.of("mode", "CUSTOM", "template", "../escape"))))));
+            assertEquals(400, invalid.statusCode(), invalid.body());
+            assertFalse(preference.getClassicNaming().custom());
+
+            var custom = send(mutation(admin + "/settings", primary).PUT(
+                HttpRequest.BodyPublishers.ofString(MAPPER.writeValueAsString(Map.of("classic_naming",
+                    Map.of("mode", "CUSTOM", "template", template))))));
+            assertEquals(200, custom.statusCode(), custom.body());
+            assertEquals("CUSTOM", json(custom).at("/data/classic_naming/mode").textValue());
+
+            var standard = send(mutation(admin + "/settings", primary).PUT(
+                HttpRequest.BodyPublishers.ofString(MAPPER.writeValueAsString(Map.of("classic_naming",
+                    Map.of("mode", "STANDARD"))))));
+            assertEquals(200, standard.statusCode(), standard.body());
+            assertEquals("STANDARD", json(standard).at("/data/classic_naming/mode").textValue());
+            assertEquals(template, json(standard).at("/data/classic_naming/template").textValue());
+        }
+        finally
+        {
+            preference.setClassicNaming(original.custom(), original.template());
+        }
     }
 
     @Test

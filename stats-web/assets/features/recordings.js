@@ -576,7 +576,7 @@ function select(node, options, labelText) {
 export function createRecordingsFeature(deps) {
   const { node, requestJson, openReadOnlyModal, section, pageHeader, beginPage,
     captureRenderContext, renderIsCurrent, content, isPrimaryAdmin, canViewRadio,
-    entityRefHref, stopLiveAudio, href, anchor, iconButton, iconGlyph, uiToggleField, metrics, browsingWorkflows, modalFooter, closeReadOnlyModal,
+    entityRefHref, stopLiveAudio, href, anchor, iconButton, iconGlyph, uiToggleField, uiSelectFrame, metrics, browsingWorkflows, modalFooter, closeReadOnlyModal,
     getSourceNameDisplay = () => 'talker_alias', recordingDirectListenControl } = deps;
   const search = {
     q: '', transcript: '', from_ms: '', to_ms: '', system_key: '', site: '', talkgroup_id: '', radio_id: '',
@@ -3009,6 +3009,120 @@ export function createRecordingsFeature(deps) {
     modal = openReadOnlyModal(title, body, { id: 'recordings-administration-action' });
   }
 
+  function classicNamingPanel(initial, formatPanel, signal) {
+    let saved = initial;
+    const form = node('form', 'recordings-admin-body');
+    const naming = select(node, [['STANDARD', 'Standard'], ['CUSTOM', 'Custom']], 'Naming style');
+    naming.value = saved.mode;
+    const namingField = field('Naming style', uiSelectFrame(naming));
+    namingField.append(node('small', 'ui-field-detail',
+      'Standard uses the existing filenames in the Classic recordings folder.'));
+    const template = textInput('', 'text');
+    template.value = saved.template;
+    template.maxLength = saved.max_length;
+    template.spellcheck = false;
+    template.setAttribute('aria-label', 'Path template');
+    const templateField = field('Path template', template);
+    const help = node('small', 'ui-field-detail',
+      'Keep {standardName} for the usual filename. Use / for subfolders. The format supplies the extension.');
+    help.id = 'classic-path-template-help';
+    template.setAttribute('aria-describedby', help.id);
+    templateField.append(help);
+    const insert = select(node, [['', 'Select a variable'], ...saved.variables.map(variable =>
+      [variable.name, variable.label])], 'Insert variable');
+    const custom = node('div', 'ui-field');
+    const preview = node('dl', 'ui-fact-list');
+    const output = node('dd');
+    output.setAttribute('aria-live', 'polite');
+    preview.append(node('dt', '', 'Sample path'), output);
+    const previewError = node('div');
+    custom.append(templateField, field('Insert variable', uiSelectFrame(insert)), preview, previewError);
+
+    const feedback = node('div', 'recordings-form-status');
+    const save = button(node, 'Save naming', null, 'ui-button ui-button-primary');
+    save.type = 'submit';
+    const footer = node('div', 'settings-form-footer');
+    footer.append(feedback, adminActions(save));
+    form.append(namingField, custom, footer);
+    const isCustom = () => naming.value === 'CUSTOM';
+    const workflow = createFormWorkflow({ form, submit: save, feedback,
+      changed: () => naming.value !== saved.mode || isCustom() && template.value !== saved.template });
+
+    let active = false;
+    let timer;
+    let request;
+    const cancelPreview = () => {
+      window.clearTimeout(timer);
+      request?.abort();
+    };
+    const refreshPreview = () => {
+      cancelPreview();
+      custom.hidden = !isCustom();
+      previewError.replaceChildren();
+      template.removeAttribute('aria-invalid');
+      template.setAttribute('aria-describedby', help.id);
+      if (!active || !isCustom() || signal?.aborted) return;
+      output.textContent = 'Updating…';
+      timer = window.setTimeout(async () => {
+        if (!form.isConnected) return;
+        const controller = new AbortController();
+        request = controller;
+        const format = formatPanel?.querySelector('[data-preference="audio_record_format"] select')?.value;
+        try {
+          const result = await requestJson(`${ADMIN}/classic-naming/preview`, {
+            method: 'POST', body: { template: template.value, ...(format ? { format } : {}) },
+            signal: controller.signal
+          });
+          if (!controller.signal.aborted && form.isConnected) output.textContent = result.path;
+        } catch (error) {
+          if (controller.signal.aborted || !form.isConnected) return;
+          output.textContent = 'Unavailable';
+          const invalid = error.code === 'invalid_classic_template';
+          const notice = makeNotice(invalid ? error.message : 'Could not preview the path. Edit it to try again.', 'error');
+          if (invalid) {
+            template.setAttribute('aria-invalid', 'true');
+            notice.id = 'classic-path-template-error';
+            template.setAttribute('aria-describedby', `${help.id} ${notice.id}`);
+          }
+          previewError.replaceChildren(notice);
+        }
+      }, 200);
+    };
+    signal?.addEventListener('abort', cancelPreview, { once: true });
+    naming.addEventListener('change', refreshPreview);
+    template.addEventListener('input', refreshPreview);
+    for (const event of ['change', 'operational-preferences-rendered']) {
+      formatPanel?.addEventListener(event, refreshPreview, { signal: signal ?? undefined });
+    }
+    insert.addEventListener('change', () => {
+      if (!insert.value) return;
+      const token = `{${insert.value}}`;
+      if (template.value.length - (template.selectionEnd - template.selectionStart) + token.length <= template.maxLength) {
+        template.setRangeText(token, template.selectionStart, template.selectionEnd, 'end');
+        template.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+      insert.value = '';
+      template.focus();
+    });
+    form.addEventListener('submit', async event => {
+      event.preventDefault();
+      const classic_naming = { mode: naming.value, ...(isCustom() ? { template: template.value } : {}) };
+      await workflow.save(async () => {
+        const result = await requestJson(`${ADMIN}/settings`, {
+          method: 'PUT', body: { classic_naming }, page: false
+        });
+        saved = result.classic_naming;
+        template.value = saved.template;
+      });
+    });
+    const panel = section('Classic naming', form);
+    return { panel, setActive(visible) {
+      active = visible;
+      panel.hidden = !visible;
+      refreshPreview();
+    } };
+  }
+
   async function renderAdminRecordings(options = {}) {
     const wrapper = node('div', 'recordings-admin editor-workspace');
     const status = node('div', 'recordings-form-status');
@@ -3016,15 +3130,16 @@ export function createRecordingsFeature(deps) {
     wrapper.append(status);
     content.append(wrapper);
     try {
-      const [settings, catalog] = await Promise.all([
-        requestJson(`${ADMIN}/settings`), requestJson(`${ADMIN}/status`)
+      const [settings, catalogResult] = await Promise.all([
+        requestJson(`${ADMIN}/settings`),
+        requestJson(`${ADMIN}/status`).then(data => ({ data }), error => ({ error }))
       ]);
       if (!wrapper.isConnected) return;
       const modeBody = node('form', 'recordings-admin-body');
       const modes = node('div', 'recordings-mode-choices');
       const radios = {};
       for (const [mode, title, detail] of [
-        ['CLASSIC', 'Classic', 'Keep a flat recordings folder for tools such as Trunking Recorder.'],
+        ['CLASSIC', 'Classic', 'Save individual audio files in the Classic recordings folder.'],
         ['MANAGED', 'Managed · Recommended', 'Organize calls automatically, search by radio or talkgroup, ' +
           'listen in your browser, and clear old calls by age.']
       ]) {
@@ -3053,6 +3168,7 @@ export function createRecordingsFeature(deps) {
         await modeWorkflow.save(async () => {
           await requestJson(`${ADMIN}/settings`, { method: 'PUT', body: { mode }, page: false });
           settings.mode = mode;
+          classicNaming?.setActive(mode === 'CLASSIC');
         }, { onError: (error) => ({ state: 'error', message: error.message || 'Mode could not be saved.' }) });
       });
       const modeFooter = node('div', 'settings-form-footer');
@@ -3061,6 +3177,20 @@ export function createRecordingsFeature(deps) {
         'Managed calls are saved as MP3 for browser playback. The recording format setting applies to Classic mode. ' +
         'Existing managed calls stay searchable when you switch to Classic, and their age limit still applies.'),
       modeFooter);
+      const classicNaming = settings?.classic_naming ?
+        classicNamingPanel(settings.classic_naming, options.classicFormatPanel, captureRenderContext().signal) : null;
+      wrapper.append(section('Recording mode', modeBody));
+      if (options.classicFormatPanel) wrapper.append(options.classicFormatPanel);
+      if (classicNaming) {
+        wrapper.append(classicNaming.panel);
+        classicNaming.setActive(settings.mode === 'CLASSIC');
+      }
+      if (catalogResult.error) {
+        status.replaceChildren(makeNotice(catalogResult.error.message ||
+          'Call catalog status could not be loaded. Try again.', 'error'));
+        return;
+      }
+      const catalog = catalogResult.data;
       const ageBody = node('form', 'recordings-admin-body');
       ageBody.noValidate = true;
       const age = textInput('No age limit', 'number');
@@ -3234,8 +3364,6 @@ export function createRecordingsFeature(deps) {
         node('div', 'ui-notice ui-notice-warning recordings-maintenance-warning', reindexWarning),
         node('p', 'recordings-admin-note recordings-maintenance-note', reindexLimitation));
       catalogBody.append(catalogSummary, operationStatus, maintenanceDisclosure);
-      wrapper.append(section('Recording mode', modeBody));
-      if (options.classicFormatPanel) wrapper.append(options.classicFormatPanel);
       wrapper.append(section('Managed call retention', ageBody),
         section('Call catalog', catalogBody, refreshStatus));
       if (activeOperation(catalog)) void watchMaintenance(catalog);

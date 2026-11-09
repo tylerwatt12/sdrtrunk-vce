@@ -251,11 +251,19 @@ async function openRecordings(page, options = {}) {
           await route.fulfill({ status: 503, json: { error: { message: state.settingsWriteError } } });
           return;
         }
-        Object.assign(state.settings, update);
+        if (update.classic_naming) {
+          state.settings.classic_naming = { ...state.settings.classic_naming, ...update.classic_naming };
+        }
+        const { classic_naming, ...remaining } = update;
+        Object.assign(state.settings, remaining);
         if (update.transcription_api_key) state.settings.transcription_key_configured = true;
         if (update.transcription_clear_api_key) state.settings.transcription_key_configured = false;
       }
       await route.fulfill({ json: { data: state.settings } });
+    } else if (pathname === '/api/v1/admin/recordings/classic-naming/preview' && options.classicNamingPreview) {
+      const { template, format } = route.request().postDataJSON();
+      const preview = options.classicNamingPreview(template, format);
+      await route.fulfill({ status: preview.error ? 400 : 200, json: preview });
     } else if (pathname === '/api/v1/admin/recordings/status') {
       await route.fulfill(state.catalogStatusError ?
         { status: 503, json: { error: { message: state.catalogStatusError } } } :
@@ -415,6 +423,61 @@ async function searchNow(page, state) {
   await page.getByRole('button', { name: 'Search recordings', exact: true }).click();
   await expect.poll(() => state.requestedFilters.length).toBe(count + 1);
   await expect(page.locator('.recordings-result-status')).toBeEmpty();
+}
+
+for (const [theme, width] of [['light', 1280], ['dark', 320]]) {
+  test(`Classic naming previews and saves relative paths in ${theme} at ${width}px`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 850 });
+    const stem = '20261109_143522_County_North_Control__TO_234_FROM_4534';
+    const state = await openRecordings(page, { view: 'admin', mode: 'CLASSIC', theme,
+      settings: { classic_naming: { mode: 'STANDARD', template: '{standardName}', max_length: 512,
+        variables: [{ name: 'standardName', label: 'Standard filename' },
+          { name: 'talkgroupName', label: 'Talkgroup name' }] } },
+      classicNamingPreview: (template, format) => template === '../call' ?
+        { error: { code: 'invalid_classic_template', message: 'Use a relative path.' } } : ({ data: {
+        path: template.replace('{standardName}', stem).replace('{talkgroupName}', 'Fire Dispatch') +
+          (format === 'WAVE' ? '.wav' : '.mp3')
+      } })
+    });
+    const section = page.locator('section').filter({ has: page.getByLabel('Naming style') });
+    const style = section.getByLabel('Naming style');
+    const template = section.getByLabel('Path template');
+    const save = section.getByRole('button', { name: 'Save naming' });
+    await expect(style).toHaveValue('STANDARD');
+    await expect(template).toBeHidden();
+    await style.selectOption('CUSTOM');
+    await expect(template).toHaveValue('{standardName}');
+    await expect(section.getByText(stem + '.mp3')).toBeVisible();
+
+    await template.evaluate(input => input.setSelectionRange(0, 0));
+    await section.getByLabel('Insert variable').selectOption('talkgroupName');
+    await template.press('/');
+    await expect(template).toHaveValue('{talkgroupName}/{standardName}');
+    await expect(section.getByText('Fire Dispatch/' + stem + '.mp3')).toBeVisible();
+    await page.getByRole('combobox', { name: 'Recording format', exact: true }).selectOption('WAVE');
+    await expect(section.getByText('Fire Dispatch/' + stem + '.wav')).toBeVisible();
+    expect(state.settingsWrites).toEqual([]);
+    const box = await section.boundingBox();
+    expect(box.x + box.width).toBeLessThanOrEqual(width);
+    await section.screenshot({ path: testInfo.outputPath('classic-naming.png') });
+
+    await template.fill('../call');
+    await expect(template).toHaveAttribute('aria-invalid', 'true');
+    await expect(section.getByRole('alert')).toHaveText('Use a relative path.');
+    await template.fill('{talkgroupName}/{standardName}');
+    await expect(section.getByText('Fire Dispatch/' + stem + '.wav')).toBeVisible();
+    await save.click();
+    await expect(save).toBeHidden();
+    expect(state.settingsWrites.at(-1)).toEqual({
+      classic_naming: { mode: 'CUSTOM', template: '{talkgroupName}/{standardName}' }
+    });
+    await style.selectOption('STANDARD');
+    await save.click();
+    await expect(save).toBeHidden();
+    expect(state.settingsWrites.at(-1)).toEqual({ classic_naming: { mode: 'STANDARD' } });
+    await style.selectOption('CUSTOM');
+    await expect(template).toHaveValue('{talkgroupName}/{standardName}');
+  });
 }
 
 for (const [theme, width] of [['light', 1280], ['light', 320]]) {

@@ -148,6 +148,52 @@ class AudioRecordingManagerTest
     }
 
     @Test
+    void customClassicPathCreatesFoldersOnTheWorkerAndKeepsAnExistingRecording() throws Exception
+    {
+        var preferences = new UserPreferences();
+        var record = preferences.getRecordPreference();
+        var directory = preferences.getDirectoryPreference();
+        var originalNaming = record.getClassicNaming();
+        RecordFormat originalFormat = record.getAudioRecordFormat();
+        Path originalDirectory = directory.getDirectoryRecording();
+        var scheduler = new ManualRecordingScheduler();
+        List<Path> saved = new ArrayList<>();
+        var manager = new AudioRecordingManager(preferences, ignored -> {}, scheduler, (call, path, format, prefs) -> {
+            Files.writeString(path, "new call", StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
+            saved.add(path);
+        }, null, null, call -> null);
+        try
+        {
+            directory.setDirectoryRecording(mTemporaryFolder);
+            record.setAudioRecordFormat(RecordFormat.MP3);
+            record.setClassicNaming(true, ClassicRecordingPathTemplate.compile("{talkgroupName}/{radioId}"));
+            CompletedAudioCall call = decodedNxdnZeroCall();
+            manager.start();
+            manager.receive(call);
+            manager.receive(call);
+            assertFalse(Files.exists(mTemporaryFolder.resolve("Security")));
+
+            manager.stop();
+
+            Path folder = mTemporaryFolder.toRealPath().resolve("Security");
+            assertEquals(2, saved.size());
+            assertEquals(folder.resolve("19.mp3"), saved.getFirst());
+            assertEquals(folder, saved.getLast().getParent());
+            assertTrue(saved.getLast().getFileName().toString().matches("19_[0-9]+\\.mp3"));
+            assertEquals("new call", Files.readString(saved.getFirst()));
+            assertEquals("new call", Files.readString(saved.getLast()));
+        }
+        finally
+        {
+            manager.stop();
+            scheduler.shutdownNow();
+            directory.setDirectoryRecording(originalDirectory);
+            record.setAudioRecordFormat(originalFormat);
+            record.setClassicNaming(originalNaming.custom(), originalNaming.template());
+        }
+    }
+
+    @Test
     void decodedNxdnZeroPassesManagedQueueAndCatalogAsRawZero() throws Exception
     {
         CompletedAudioCall source = decodedNxdnZeroCall();

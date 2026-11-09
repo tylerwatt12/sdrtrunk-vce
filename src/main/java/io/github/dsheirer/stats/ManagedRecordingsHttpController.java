@@ -13,6 +13,8 @@ import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.record.RecordPreference;
 import io.github.dsheirer.preference.record.RecordingMode;
+import io.github.dsheirer.record.ClassicRecordingPathTemplate;
+import io.github.dsheirer.record.RecordFormat;
 import io.github.dsheirer.record.managed.ManagedRecordingCatalog;
 import io.github.dsheirer.record.managed.ManagedRecordingTranscriptionService;
 import io.github.dsheirer.web.http.ApiHttpResponse;
@@ -352,6 +354,27 @@ final class ManagedRecordingsHttpController implements AutoCloseable
                 {
                     requireMethod(exchange, "GET, PUT");
                 }
+                return;
+            }
+            if((ADMIN_PATH + "/classic-naming/preview").equals(path))
+            {
+                requireMethod(exchange, "POST");
+                JsonNode body = json(exchange);
+                rejectUnknownFields(body, Set.of("template", "format"));
+                RecordFormat format = mPreferences.getRecordPreference().getAudioRecordFormat();
+                if(body.has("format"))
+                {
+                    try
+                    {
+                        format = RecordFormat.valueOf(body.path("format").asText());
+                    }
+                    catch(IllegalArgumentException exception)
+                    {
+                        throw new StatsApiException(400, "invalid_format", "Choose MP3 or WAVE.");
+                    }
+                }
+                ApiHttpResponse.sendData(exchange, 200,
+                    Map.of("path", classicTemplate(body.get("template")).preview(format)));
                 return;
             }
             ManagedRecordingCatalog catalog = available();
@@ -1094,6 +1117,10 @@ final class ManagedRecordingsHttpController implements AutoCloseable
         Map<String,Object> result = new LinkedHashMap<>();
         result.put("mode", record.getRecordingMode().name());
         result.put("retention_days", record.getManagedRetentionDays());
+        RecordPreference.ClassicNaming naming = record.getClassicNaming();
+        result.put("classic_naming", Map.of("mode", naming.custom() ? "CUSTOM" : "STANDARD",
+            "template", naming.template().text(), "variables", ClassicRecordingPathTemplate.variables(),
+            "max_length", ClassicRecordingPathTemplate.MAX_LENGTH));
         result.put("managed_directory",
             mPreferences.getDirectoryPreference().getDirectoryManagedRecording().toString());
         result.put("available", mCatalog.get() != null);
@@ -1108,7 +1135,7 @@ final class ManagedRecordingsHttpController implements AutoCloseable
     private void updateSettings(HttpExchange exchange) throws IOException
     {
         JsonNode body = json(exchange);
-        rejectUnknownFields(body, Set.of("mode", "retention_days", "transcription_enabled",
+        rejectUnknownFields(body, Set.of("mode", "retention_days", "classic_naming", "transcription_enabled",
             "transcription_url", "transcription_model", "transcription_min_duration_ms",
             "transcription_api_key", "transcription_clear_api_key"));
         JsonNode rawMode = body.get("mode");
@@ -1154,6 +1181,18 @@ final class ManagedRecordingsHttpController implements AutoCloseable
             retention = rawRetention.intValue();
         }
         RecordPreference record = mPreferences.getRecordPreference();
+        JsonNode rawNaming = body.get("classic_naming");
+        ClassicRecordingPathTemplate template = null;
+        if(rawNaming != null)
+        {
+            rejectUnknownFields(rawNaming, Set.of("mode", "template"));
+            template = switch(rawNaming.path("mode").asText())
+            {
+                case "STANDARD" -> null;
+                case "CUSTOM" -> classicTemplate(rawNaming.get("template"));
+                default -> throw new StatsApiException(400, "invalid_classic_naming", "Choose Standard or Custom.");
+            };
+        }
         boolean enabled = record.isTranscriptionEnabled();
         if(rawEnabled != null)
         {
@@ -1249,6 +1288,10 @@ final class ManagedRecordingsHttpController implements AutoCloseable
         {
             record.setRecordingMode(mode);
         }
+        if(rawNaming != null)
+        {
+            record.setClassicNaming(template != null, template);
+        }
         if(rawUrl != null)
         {
             record.setTranscriptionUrl(url);
@@ -1274,6 +1317,18 @@ final class ManagedRecordingsHttpController implements AutoCloseable
             record.setTranscriptionEnabled(enabled);
         }
         ApiHttpResponse.sendData(exchange, 200, settings());
+    }
+
+    private static ClassicRecordingPathTemplate classicTemplate(JsonNode value)
+    {
+        try
+        {
+            return ClassicRecordingPathTemplate.compile(value != null && value.isTextual() ? value.textValue() : null);
+        }
+        catch(IllegalArgumentException exception)
+        {
+            throw new StatsApiException(400, "invalid_classic_template", exception.getMessage(), "classic_naming");
+        }
     }
 
     private static void validateTranscriptionUrl(String value)

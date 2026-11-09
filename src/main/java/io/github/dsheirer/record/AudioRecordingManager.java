@@ -235,14 +235,32 @@ public class AudioRecordingManager
                         //Tone metadata is optional; an observer failure must not discard the audio recording.
                     }
                     //A worker-only encoding view keeps the elected raw PCM available for ML and tone evidence.
-                    path = managed ? getManagedRecordingPath(completedAudioCall) :
-                        BasicRecordingContract.nextPath(getRecordingBasePath(),
-                            completedAudioCall.snapshot().identifierCollection(), recordFormat, writerTimestamp,
-                            unknownIndex);
-
+                    Path classicRoot = null;
+                    ClassicRecordingPathTemplate.Resolved customPath = null;
+                    Path customDirectory = null;
                     if(managed)
                     {
+                        path = getManagedRecordingPath(completedAudioCall);
                         Files.createDirectories(path.getParent());
+                    }
+                    else
+                    {
+                        classicRoot = getRecordingBasePath();
+                        var naming = mUserPreferences.getRecordPreference().getClassicNaming();
+                        if(naming.custom())
+                        {
+                            customPath = naming.template().resolve(completedAudioCall.snapshot().identifierCollection(),
+                                completedAudioCall.snapshot().recordingMetadata(), recordFormat, writerTimestamp,
+                                unknownIndex);
+                            customDirectory = customPath.createDirectoryUnder(classicRoot);
+                            path = customDirectory.resolve(customPath.filename(""));
+                        }
+                        else
+                        {
+                            path = BasicRecordingContract.nextPath(classicRoot,
+                                completedAudioCall.snapshot().identifierCollection(), recordFormat, writerTimestamp,
+                                unknownIndex);
+                        }
                     }
 
                     writeStarted = true;
@@ -258,9 +276,19 @@ public class AudioRecordingManager
                         catch(FileAlreadyExistsException collision)
                         {
                             if(managed || attempt >= 31) throw collision;
-                            path = BasicRecordingContract.nextPath(getRecordingBasePath(),
-                                completedAudioCall.snapshot().identifierCollection(), recordFormat, writerTimestamp,
-                                unknownIndex);
+                            if(customPath != null)
+                            {
+                                // A template without a timestamp can reuse a name indefinitely. Jump to this
+                                // write's timestamp instead of scanning every previous collision in the folder.
+                                String suffix = "_" + writerTimestamp + (attempt == 0 ? "" : "_V" + (attempt + 1));
+                                path = customDirectory.resolve(customPath.filename(suffix));
+                            }
+                            else
+                            {
+                                path = BasicRecordingContract.nextPath(classicRoot,
+                                    completedAudioCall.snapshot().identifierCollection(), recordFormat, writerTimestamp,
+                                    unknownIndex);
+                            }
                         }
                     }
 

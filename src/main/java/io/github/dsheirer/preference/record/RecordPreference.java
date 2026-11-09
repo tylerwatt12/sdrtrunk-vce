@@ -21,6 +21,7 @@ package io.github.dsheirer.preference.record;
 
 import io.github.dsheirer.preference.Preference;
 import io.github.dsheirer.preference.PreferenceType;
+import io.github.dsheirer.record.ClassicRecordingPathTemplate;
 import io.github.dsheirer.record.RecordFormat;
 import io.github.dsheirer.sample.Listener;
 import org.slf4j.Logger;
@@ -35,6 +36,8 @@ public class RecordPreference extends Preference
 {
     private static final String PREFERENCE_KEY_AUDIO_RECORD_FORMAT = "audio.record.format";
     private static final String PREFERENCE_KEY_RECORDING_MODE = "audio.record.mode";
+    private static final String PREFERENCE_KEY_CLASSIC_CUSTOM_NAMING = "audio.record.classic.custom.naming";
+    private static final String PREFERENCE_KEY_CLASSIC_PATH_TEMPLATE = "audio.record.classic.path.template";
     private static final String PREFERENCE_KEY_MANAGED_RETENTION_DAYS = "audio.record.managed.retention.days";
     private static final String PREFERENCE_KEY_TRANSCRIPTION_ENABLED = "audio.record.transcription.enabled";
     private static final String PREFERENCE_KEY_TRANSCRIPTION_URL = "audio.record.transcription.url";
@@ -50,6 +53,7 @@ public class RecordPreference extends Preference
     private final Preferences mPreferences;
     private RecordFormat mAudioRecordFormat;
     private volatile RecordingMode mRecordingMode;
+    private volatile ClassicNaming mClassicNaming;
     private volatile Integer mManagedRetentionDays;
     private volatile boolean mManagedRetentionLoaded;
 
@@ -171,6 +175,53 @@ public class RecordPreference extends Preference
 
         mPreferences.put(PREFERENCE_KEY_RECORDING_MODE, mode.name());
         mRecordingMode = mode;
+        notifyPreferenceUpdated();
+    }
+
+    public record ClassicNaming(boolean custom, ClassicRecordingPathTemplate template) {}
+
+    /** Cached together so the recording worker uses one mode and template for an entire write. */
+    public ClassicNaming getClassicNaming()
+    {
+        ClassicNaming naming = mClassicNaming;
+        if(naming == null)
+        {
+            synchronized(this)
+            {
+                naming = mClassicNaming;
+                if(naming == null)
+                {
+                    try
+                    {
+                        naming = new ClassicNaming(mPreferences.getBoolean(PREFERENCE_KEY_CLASSIC_CUSTOM_NAMING, false),
+                            ClassicRecordingPathTemplate.compile(mPreferences.get(PREFERENCE_KEY_CLASSIC_PATH_TEMPLATE,
+                                ClassicRecordingPathTemplate.STARTER)));
+                    }
+                    catch(IllegalArgumentException exception)
+                    {
+                        mLog.warn("Invalid Classic recording path template; using Standard naming");
+                        naming = new ClassicNaming(false,
+                            ClassicRecordingPathTemplate.compile(ClassicRecordingPathTemplate.STARTER));
+                    }
+                    mClassicNaming = naming;
+                }
+            }
+        }
+        return naming;
+    }
+
+    public synchronized void setClassicNaming(boolean custom, ClassicRecordingPathTemplate template)
+    {
+        if(template != null)
+        {
+            mPreferences.put(PREFERENCE_KEY_CLASSIC_PATH_TEMPLATE, template.text());
+        }
+        else
+        {
+            template = getClassicNaming().template();
+        }
+        mPreferences.putBoolean(PREFERENCE_KEY_CLASSIC_CUSTOM_NAMING, custom);
+        mClassicNaming = new ClassicNaming(custom, template);
         notifyPreferenceUpdated();
     }
 

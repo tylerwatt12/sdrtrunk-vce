@@ -41,7 +41,7 @@ import {
 import { radioReferenceLocalityCache } from './features/radioreference-locality-cache.js?v=1';
 import { openRadioReferenceConnect, radioReferencePremiumSignup } from './features/radioreference-connect.js?v=3';
 import { createActivityCallPlayback } from './features/activity-call-playback.js?v=2';
-import { createRecordingsFeature } from './features/recordings.js?v=80';
+import { createRecordingsFeature } from './features/recordings.js?v=81';
 import { spectrumSearchIdentityFacts, spectrumSearchMapDraft, spectrumSearchProtocolLabel } from './features/spectrum-search-data.js?v=1';
 import { createDiscoveryRadioReferenceContext, createDiscoveryRadioReferenceWait, discoveryRadioReferencePending, discoverySnapshotIsCurrent, discoveryCleanupAlreadyClosed, createDiscoveryCompletion, createDiscoveryAliasListChoice, discoveryAliasImportMatch, discoveryAliasImportTargets, discoveryRadioReferenceResult, discoveryRadioReferenceSystemUrl, ALIAS_LIST_NAME_MAX_LENGTH, discoveryAliasListName, discoveryAliasImportResults, discoveryAliasImportForSelection, importDiscoveryAliases } from './features/discovery-radioreference.js?v=19';
 import { requestChannelAction, requestChannelAdminMutation } from './core/channel-actions.js?v=2';
@@ -30690,6 +30690,7 @@ async function renderAdminOperationalPreferences(renderContext = captureRenderCo
       lane('output', 'Calls & audio'),
       lane('activity', 'Activity history')
     );
+    panel.dispatchEvent(new Event('operational-preferences-rendered'));
   }
 
   reload.addEventListener('click', async () => {
@@ -36627,7 +36628,7 @@ applicationRoutes = routeFoundation.createRegistry({
 
 function recordingsFeatureDependencies(overrides = {}) {
   return {
-  node, iconButton, iconGlyph, requestJson, openReadOnlyModal, closeReadOnlyModal, section, pageHeader, beginPage, uiToggleField, metrics, browsingWorkflows,
+  node, iconButton, iconGlyph, requestJson, openReadOnlyModal, closeReadOnlyModal, section, pageHeader, beginPage, uiToggleField, uiSelectFrame, metrics, browsingWorkflows,
   recordingDirectListenControl,
   openRecordingPlaylist: invoker => audioDock.openRecordingPlaylist(invoker),
   modalFooter: aliasModalFooter,
