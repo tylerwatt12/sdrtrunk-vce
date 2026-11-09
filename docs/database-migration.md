@@ -274,7 +274,7 @@ ambiguous markerless state instead of guessing which build produced it.
 Migration steps form one ordered chain:
 
 ```text
-format 2 (Alpha 12 family) -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 -> format 11 -> format 12 -> format 13 -> format 14 -> format 15 -> format 16 -> format 17 -> format 18 -> format 19 -> format 20 -> format 21 -> format 22 -> format 23 -> format 24 -> format 25 -> format 26 -> format 27 -> format 28 -> format 29 -> format 30 -> format 31 -> format 32 -> format 33 -> format 34 -> format 35 -> format 36 -> format 37 -> format 38 -> format 39 -> format 40 -> format 41 -> format 42 -> format 43 -> format 44 -> format 45 -> format 46 -> format 47 -> format 48 -> format 49 -> format 50 -> format 51 -> format 52 -> format 53 -> format 54 -> format 55 -> format 56 -> format 57 -> format 58 -> format 59 -> format 60 -> format 61 -> format 62 -> format 63 -> format 64 -> format 65 -> format 66 -> format 67 -> format 68 -> format 69 -> format 70 -> format 71 -> format 72 (current)
+format 2 (Alpha 12 family) -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 -> format 11 -> format 12 -> format 13 -> format 14 -> format 15 -> format 16 -> format 17 -> format 18 -> format 19 -> format 20 -> format 21 -> format 22 -> format 23 -> format 24 -> format 25 -> format 26 -> format 27 -> format 28 -> format 29 -> format 30 -> format 31 -> format 32 -> format 33 -> format 34 -> format 35 -> format 36 -> format 37 -> format 38 -> format 39 -> format 40 -> format 41 -> format 42 -> format 43 -> format 44 -> format 45 -> format 46 -> format 47 -> format 48 -> format 49 -> format 50 -> format 51 -> format 52 -> format 53 -> format 54 -> format 55 -> format 56 -> format 57 -> format 58 -> format 59 -> format 60 -> format 61 -> format 62 -> format 63 -> format 64 -> format 65 -> format 66 -> format 67 -> format 68 -> format 69 -> format 70 -> format 71 -> format 72 -> format 73 (current)
 ```
 
 Each step owns exactly one `N -> N+1` transformation. The runner repeatedly applies the next registered step until it
@@ -410,6 +410,14 @@ only unusable documents or revisions. Guest browser preferences use the correspo
 No table or index changes. The migrator updates bounded account preference documents and both format markers in its
 existing transaction, without scanning or rewriting retained Activity. Format 71 remains a frozen supported source;
 normal startup validates the new contract without converting older preferences.
+
+The format 72-to-73 step rebuilds nine Activity time indexes. SQLite already stores the event ID in each index
+entry, so the rebuilt indexes use that ID to order equal timestamps. Existing keys and partial-index predicates
+retain their meanings. The update preserves every event, relationship, learned record, counter, allocator, setting
+and recording. The Application Migrator replaces the indexes in one rollback-journal transaction with both
+format markers and samples planner statistics only for the rebuilt indexes. The event table and other indexes
+stay in place. Sorting and rollback space scale with retained Activity, so the full-history upgrade uses the
+conservative paired workspace allowance. Normal startup only validates the new layout.
 
 ## Shared Upgrade And Import Boundary
 
@@ -1122,7 +1130,7 @@ availability; measured zero remains distinct from unavailable. The adjacent form
 existing field, row, relationship, transcript, index, counter and allocator. Historical quality remains unknown;
 the update neither reads audio files nor guesses measurements. The populated format-11 fixture remains frozen and
 supported. The main application database is independently at
-format 71; recording-catalog migrations do not change it. Recognized older catalogs are updated in one transaction
+format 73; recording-catalog migrations do not change it. Recognized older catalogs are updated in one transaction
 at the pre-receiver setup boundary under the same manual-backup policy, without an additional automatic upgrade
 backup. Normal catalog startup validates only. A catalog upgrade failure offers retry or continuation with
 Managed Recordings unavailable, so optional catalog trouble does not prevent ordinary receiving.

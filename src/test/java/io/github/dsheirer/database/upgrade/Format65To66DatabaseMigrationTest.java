@@ -242,6 +242,7 @@ class Format65To66DatabaseMigrationTest
                     while(rows.next())
                     {
                         if(table.equals("database_metadata") && DatabaseFormatCatalog.FORMAT_VERSION_KEY.equals(rows.getString(1))) continue;
+                        if(ActivityMigrationPreservation.format73Statistic(table, rows)) continue;
                         // The encryption conversion intentionally reanalyses only these three replaced indexes.
                         if(table.equals("sqlite_stat1") && rows.getString("idx") != null && List.of("idx_receiver_activity_event_encryption",
                             "idx_receiver_activity_event_system_encrypted_time",

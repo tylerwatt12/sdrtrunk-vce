@@ -209,6 +209,35 @@ public class ReceiverActivitySchema
     private static final String CURRENT_ACTION_INSERT_PLACEHOLDERS = CURRENT_ACTIONS.stream()
         .map(action -> "?").collect(Collectors.joining(", "));
 
+    // id aliases SQLite's rowid. Its implicit ascending index suffix breaks equal-time ties in both scan directions.
+    private record EventTimeIndex(String suffix, String columns, String predicate)
+    {
+        String name() { return "idx_receiver_activity_event_" + suffix; }
+
+        String createSql(String schema)
+        {
+            return "CREATE INDEX " + schema + "." + name() + " ON receiver_activity_event(" + columns + ")" + predicate;
+        }
+    }
+
+    private static final List<EventTimeIndex> ROWID_TIME_INDEXES = List.of(
+        new EventTimeIndex("retention", "observed_at_ms", ""),
+        new EventTimeIndex("system_time", "radio_system_id, observed_at_ms", ""),
+        new EventTimeIndex("system_action_time", "radio_system_id, action_code, observed_at_ms",
+            " WHERE radio_system_id IS NOT NULL"),
+        new EventTimeIndex("system_event_type_time", "radio_system_id, event_type_code, observed_at_ms",
+            " WHERE radio_system_id IS NOT NULL AND event_type_code IS NOT NULL"),
+        new EventTimeIndex("channel_event_type_time", "channel_id, event_type_code, observed_at_ms",
+            " WHERE event_type_code IS NOT NULL"),
+        new EventTimeIndex("channel_source_id_time", "channel_id, source_observed_local_id, observed_at_ms",
+            " WHERE source_observed_local_id IS NOT NULL"),
+        new EventTimeIndex("channel_target_id_time", "channel_id, target_observed_local_id, observed_at_ms",
+            " WHERE target_observed_local_id IS NOT NULL"),
+        new EventTimeIndex("system_encrypted_time", "radio_system_id, observed_at_ms",
+            " WHERE encryption_state = 2 AND radio_system_id IS NOT NULL"),
+        new EventTimeIndex("channel_encrypted_time", "channel_id, observed_at_ms",
+            " WHERE encryption_state = 2"));
+
     private ReceiverActivitySchema()
     {
     }
@@ -265,14 +294,55 @@ public class ReceiverActivitySchema
         {
             if(rows.next()) throw new SQLException("Fresh Activity schema requires an empty event table");
         }
-        List<String> indexes = eventIndexSql(connection, "main");
+        Map<String,String> indexes = eventIndexSql(connection);
+        for(EventTimeIndex index: ROWID_TIME_INDEXES)
+        {
+            if(indexes.replace(index.name(), index.createSql("main")) == null)
+                throw new SQLException("Missing fresh Activity index " + index.name());
+        }
         try(Statement statement = connection.createStatement())
         {
             statement.executeUpdate("DROP VIEW receiver_activity_event_resolved");
             statement.executeUpdate("DROP TABLE receiver_activity_event");
             statement.executeUpdate(currentReceiverActivityEventSql());
-            for(String index: indexes) statement.executeUpdate(encryptionStateSql(index));
+            for(String index: indexes.values()) statement.executeUpdate(encryptionStateSql(index));
             statement.executeUpdate(createCurrentResolvedViewSql());
+        }
+    }
+
+    /** Replaces nine reproducible indexes while retaining every event and all other index b-trees. */
+    public static int migrateFormat72EventTimeIndexes(Connection connection, String schema) throws SQLException
+    {
+        if(!List.of("main", "activity").contains(schema)) throw new SQLException("Unknown Activity migration schema");
+        io.github.dsheirer.database.upgrade.ApplicationMigrationTransaction.requireActive(connection);
+        try(Statement statement = connection.createStatement())
+        {
+            for(EventTimeIndex index: ROWID_TIME_INDEXES)
+            {
+                statement.executeUpdate("DROP INDEX " + schema + "." + index.name());
+                statement.executeUpdate(index.createSql(schema));
+            }
+            analyzeIndexes(statement, schema, ROWID_TIME_INDEXES.stream().map(EventTimeIndex::name).toList());
+        }
+        return ROWID_TIME_INDEXES.size();
+    }
+
+    private static void analyzeIndexes(Statement statement, String schema, List<String> indexes) throws SQLException
+    {
+        long previousLimit;
+        try(ResultSet row = statement.executeQuery("PRAGMA analysis_limit"))
+        {
+            row.next();
+            previousLimit = row.getLong(1);
+        }
+        try
+        {
+            statement.execute("PRAGMA analysis_limit=" + (previousLimit > 0 ? Math.min(previousLimit, 1000) : 1000));
+            for(String index: indexes) statement.execute("ANALYZE " + schema + "." + index);
+        }
+        finally
+        {
+            statement.execute("PRAGMA analysis_limit=" + previousLimit);
         }
     }
 
@@ -326,27 +396,20 @@ public class ReceiverActivitySchema
             for(String index: indexes.values())
                 statement.executeUpdate(qualifySchemaObject(encryptionStateSql(index), schema, "INDEX"));
             statement.executeUpdate(qualifySchemaObject(encryptionStateSql(view), schema, "VIEW"));
-            long analysisLimit;
-            try(ResultSet row = statement.executeQuery("PRAGMA analysis_limit"))
-            { row.next(); analysisLimit = row.getLong(1); }
-            try
-            {
-                statement.execute("PRAGMA analysis_limit=" +
-                    (analysisLimit > 0 ? Math.min(analysisLimit, 1000) : 1000));
-                for(String index: encryptedIndexes) statement.execute("ANALYZE " + schema + "." + index);
-            }
-            finally { statement.execute("PRAGMA analysis_limit=" + analysisLimit); }
+            analyzeIndexes(statement, schema, encryptedIndexes);
         }
         return converted;
     }
 
-    private static List<String> eventIndexSql(Connection connection, String schema) throws SQLException
+    private static Map<String,String> eventIndexSql(Connection connection) throws SQLException
     {
-        List<String> indexes = new ArrayList<>();
+        Map<String,String> indexes = new LinkedHashMap<>();
         try(Statement statement = connection.createStatement(); ResultSet rows = statement.executeQuery(
-            "SELECT sql FROM " + schema + ".sqlite_schema WHERE type='index' AND tbl_name='receiver_activity_event' " +
+            "SELECT name,sql FROM sqlite_schema WHERE type='index' AND tbl_name='receiver_activity_event' " +
                 "AND sql IS NOT NULL ORDER BY name"))
-        { while(rows.next()) indexes.add(rows.getString(1)); }
+        {
+            while(rows.next()) indexes.put(rows.getString("name"), rows.getString("sql"));
+        }
         return indexes;
     }
 
@@ -758,10 +821,10 @@ public class ReceiverActivitySchema
             List.of("channel_id", "frequency_hz", "observed_at_ms", "id", "lcn_band", "lcn_number",
                 "timeslot", "radio_system_id", "action_code"));
         validateIndexColumns(connection, "idx_receiver_activity_event_retention",
-            List.of("observed_at_ms", "id"));
+            List.of("observed_at_ms"));
         validateIndexColumns(connection, "idx_receiver_activity_event_source_call", List.of("source_call_uuid"));
         validateIndexColumns(connection, "idx_receiver_activity_event_system_time",
-            List.of("radio_system_id", "observed_at_ms", "id"));
+            List.of("radio_system_id", "observed_at_ms"));
         validateIndexColumns(connection, "idx_receiver_activity_event_source_time",
             List.of("source_identity_summary_id", "observed_at_ms", "id", "channel_id",
                 "source_observed_local_id", "source_observed_working_id"));
@@ -771,22 +834,22 @@ public class ReceiverActivitySchema
         validateIndexColumns(connection, "idx_receiver_activity_event_source_working_evidence",
             List.of("source_identity_summary_id", "channel_id", "source_observed_working_id"));
         validateIndexColumns(connection, "idx_receiver_activity_event_system_action_time",
-            List.of("radio_system_id", "action_code", "observed_at_ms", "id"));
+            List.of("radio_system_id", "action_code", "observed_at_ms"));
         validateIndexColumns(connection, "idx_receiver_activity_event_channel_action_time",
             List.of("channel_id", "action_code", "observed_at_ms", "id", "radio_system_id",
                 "source_identity_summary_id", "source_observed_local_id"));
         validateIndexColumns(connection, "idx_receiver_activity_event_system_event_type_time",
-            List.of("radio_system_id", "event_type_code", "observed_at_ms", "id"));
+            List.of("radio_system_id", "event_type_code", "observed_at_ms"));
         validateIndexColumns(connection, "idx_receiver_activity_event_channel_event_type_time",
-            List.of("channel_id", "event_type_code", "observed_at_ms", "id"));
+            List.of("channel_id", "event_type_code", "observed_at_ms"));
         validateIndexColumns(connection, "idx_receiver_activity_event_channel_source_id_time",
-            List.of("channel_id", "source_observed_local_id", "observed_at_ms", "id"));
+            List.of("channel_id", "source_observed_local_id", "observed_at_ms"));
         validateIndexColumns(connection, "idx_receiver_activity_event_channel_target_id_time",
-            List.of("channel_id", "target_observed_local_id", "observed_at_ms", "id"));
+            List.of("channel_id", "target_observed_local_id", "observed_at_ms"));
         validateIndexColumns(connection, "idx_receiver_activity_event_system_encrypted_time",
-            List.of("radio_system_id", "observed_at_ms", "id"));
+            List.of("radio_system_id", "observed_at_ms"));
         validateIndexColumns(connection, "idx_receiver_activity_event_channel_encrypted_time",
-            List.of("channel_id", "observed_at_ms", "id"));
+            List.of("channel_id", "observed_at_ms"));
         validateIndexColumns(connection, "idx_trunked_signaling_activity_system",
             List.of("radio_system_id", "channel_id", "bucket_start_ms"));
         validateIndexColumns(connection, "idx_p25_site_snapshot_retention", List.of("last_seen_ms", "channel_id"));

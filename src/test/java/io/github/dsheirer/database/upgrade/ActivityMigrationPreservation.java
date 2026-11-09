@@ -6,14 +6,35 @@ import io.github.dsheirer.database.ActivityDatabasePath;
 import io.github.dsheirer.database.ConfigurationHistoryDatabase;
 import java.nio.file.Path;
 import java.sql.DriverManager;
+import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.util.*;
 
 /** Preserve complete Activity facts while allowing only declared full-chain changes. */
 final class ActivityMigrationPreservation
 {
-    private static final Set<String> REBUILT_INDEXES = Set.of("idx_receiver_activity_event_encryption",
+    static final Set<String> FORMAT_73_INDEXES = Set.of(
+        "idx_receiver_activity_event_retention", "idx_receiver_activity_event_system_time",
+        "idx_receiver_activity_event_system_action_time", "idx_receiver_activity_event_system_event_type_time",
+        "idx_receiver_activity_event_channel_event_type_time", "idx_receiver_activity_event_channel_source_id_time",
+        "idx_receiver_activity_event_channel_target_id_time", "idx_receiver_activity_event_system_encrypted_time",
+        "idx_receiver_activity_event_channel_encrypted_time");
+    private static final Set<String> FORMAT_69_INDEXES = Set.of("idx_receiver_activity_event_encryption",
         "idx_receiver_activity_event_system_encrypted_time", "idx_receiver_activity_event_channel_encrypted_time");
     private ActivityMigrationPreservation() {}
+
+    static boolean rebuiltIndexStatistic(String table, ResultSet rows, Set<String> indexes) throws SQLException
+    {
+        if(!table.equals("sqlite_stat1") && !table.equals("sqlite_stat4")) return false;
+        String index = rows.getString("idx");
+        return index != null && indexes.contains(index);
+    }
+
+    static boolean format73Statistic(String table, ResultSet rows) throws SQLException
+    {
+        return rebuiltIndexStatistic(table, rows, FORMAT_73_INDEXES);
+    }
+
     static Map<String,List<String>> capture(Path configuration) throws Exception
     { return capture(configuration, true); }
     static Map<String,List<String>> original(Path configuration) throws Exception
@@ -29,6 +50,7 @@ final class ActivityMigrationPreservation
             { while(rows.next()) tables.add(rows.getString(1)); }
             for(String table: tables)
             {
+                boolean plannerStatistics = table.equals("sqlite_stat1") || table.equals("sqlite_stat4");
                 List<String> values = new ArrayList<>();
                 try(var statement = connection.createStatement(); var rows = statement.executeQuery("SELECT * FROM \"" + table + "\""))
                 {
@@ -36,8 +58,8 @@ final class ActivityMigrationPreservation
                     {
                         if(currentProjection && table.equals("database_metadata") &&
                             rows.getString("key").equals("database_format_version")) continue;
-                        if(currentProjection && table.equals("sqlite_stat1") && rows.getString("idx") != null &&
-                            REBUILT_INDEXES.contains(rows.getString("idx"))) continue;
+                        if(currentProjection && (rebuiltIndexStatistic(table, rows, FORMAT_69_INDEXES) ||
+                            format73Statistic(table, rows))) continue;
                         StringBuilder value = new StringBuilder();
                         for(int column=1; column<=rows.getMetaData().getColumnCount(); column++)
                         {
@@ -53,6 +75,7 @@ final class ActivityMigrationPreservation
                         values.add(value.toString());
                     }
                 }
+                if(currentProjection && plannerStatistics && values.isEmpty()) continue;
                 Collections.sort(values); result.put(table, values);
             }
         }

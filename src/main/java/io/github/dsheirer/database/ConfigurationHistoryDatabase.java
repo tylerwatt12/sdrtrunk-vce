@@ -17,19 +17,23 @@ public final class ConfigurationHistoryDatabase
     // Exact role signatures; supported historical history layouts remain explicit migration inputs.
     public static final String CONFIGURATION_FINGERPRINT = "fb1754c8bf00abc163ad8955f6452151d88477768f7848fd8e71f25fdc6d93d1";
     public static final String FORMAT_63_HISTORY_FINGERPRINT = "a359803e101642d77f5ce5591ea2e493bde753696c8ee9e6c0180f5995717d3d";
-    public static final String HISTORY_FINGERPRINT = "c2443a47e0a9fc529e887076cc5086c75ead2118d52e521027306cc009222ac9";
+    public static final String FORMAT_69_HISTORY_FINGERPRINT = "c2443a47e0a9fc529e887076cc5086c75ead2118d52e521027306cc009222ac9";
+
+    public static final String HISTORY_FINGERPRINT = "91491365a485fd8adf956b798e6f85ed8d9c3dc03e118de534d730ed834ec38d";
 
     /** The versioned signature is checked before any historical role is admitted. */
     public static String historyFingerprint(int version) throws SQLException
     {
         if(version >= 63 && version <= 68) return FORMAT_63_HISTORY_FINGERPRINT;
-        if(version >= 69 && version <= 72) return HISTORY_FINGERPRINT;
+        if(version >= 69 && version <= 72) return FORMAT_69_HISTORY_FINGERPRINT;
+        if(version == 73) return HISTORY_FINGERPRINT;
         throw new SQLException("Unsupported activity database format");
     }
 
     public static boolean isHistoryFingerprint(String fingerprint)
     {
-        return HISTORY_FINGERPRINT.equals(fingerprint) || FORMAT_63_HISTORY_FINGERPRINT.equals(fingerprint);
+        return HISTORY_FINGERPRINT.equals(fingerprint) ||
+            FORMAT_69_HISTORY_FINGERPRINT.equals(fingerprint) || FORMAT_63_HISTORY_FINGERPRINT.equals(fingerprint);
     }
     private ConfigurationHistoryDatabase()
     {

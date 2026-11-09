@@ -100,7 +100,11 @@ class Format69To70DatabaseMigrationTest
     {
         Path configuration = Format69TestDatabase.create(directory.resolve("workspace.sqlite"));
         Path history = ActivityDatabasePath.forConfiguration(configuration);
-        long workspace = ApplicationMigrationService.requiredOwnedMigrationWorkspace(configuration, MigrationContent.FULL);
+        var full = ApplicationMigrationService.readStartupPlan(configuration);
+        var semanticOnly = new DatabaseMigrationChain.PreflightReport(full.source(),
+            DatabaseFormatCatalog.requireVersion(72), full.steps().stream().filter(step -> step.targetVersion() <= 72).toList());
+        long workspace = ApplicationMigrationService.requiredOwnedMigrationWorkspace(configuration, MigrationContent.FULL,
+            semanticOnly);
         assertEquals(2 * Files.size(configuration) + 64L * 1024 * 1024, workspace);
         try(var connection = open(history); var statement = connection.createStatement())
         {
@@ -108,7 +112,8 @@ class Format69To70DatabaseMigrationTest
                 "INSERT INTO receiver_activity_event(channel_id,observed_at_ms,action_code,event_type_code,encryption_state) " +
                 "SELECT (SELECT channel_id FROM receiver_activity_event LIMIT 1),1000000+value,2,7,0 FROM n");
         }
-        assertEquals(workspace, ApplicationMigrationService.requiredOwnedMigrationWorkspace(configuration, MigrationContent.FULL));
+        assertEquals(workspace, ApplicationMigrationService.requiredOwnedMigrationWorkspace(configuration, MigrationContent.FULL,
+            semanticOnly));
     }
 
     @Test void legacyMonolithAdvancesItsAttachedConfigurationAndHistoryTogether() throws Exception
@@ -152,6 +157,7 @@ class Format69To70DatabaseMigrationTest
             {
                 while(values.next())
                 {
+                    if(ActivityMigrationPreservation.format73Statistic(table, values)) continue;
                     StringBuilder row = new StringBuilder();
                     for(int index = 1; index <= values.getMetaData().getColumnCount(); index++)
                     {
@@ -178,7 +184,12 @@ class Format69To70DatabaseMigrationTest
         try(var query = connection.createStatement(); var values = query.executeQuery(
             "SELECT name,type,rootpage,coalesce(sql,'') FROM sqlite_schema ORDER BY name"))
         {
-            while(values.next()) result.put(values.getString(1), List.of(values.getString(2), values.getString(3), values.getString(4)));
+            while(values.next())
+            {
+                String name = values.getString(1);
+                if(!ActivityMigrationPreservation.FORMAT_73_INDEXES.contains(name))
+                    result.put(name, List.of(values.getString(2), values.getString(3), values.getString(4)));
+            }
         }
         return result;
     }

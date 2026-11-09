@@ -65,6 +65,9 @@ class Format71To72DatabaseMigrationTest
                 assertEquals(revision + 1, rows.getLong(2)); assertEquals(timestamp, rows.getLong(3));
             }
         }
+        ConfigurationHistoryDatabase.validatePairIdentity(database);
+        assertEquals(activity, ActivityMigrationPreservation.capture(database));
+        ApplicationDatabaseMigrator.migrateInPlace(database, null);
         ActivityMigrationPreservation.assertCurrent(database, activity);
         ConfigurationHistoryDatabase.validatePair(database);
         SdrTrunkDatabaseStartup.validateGlobalDatabase(database);

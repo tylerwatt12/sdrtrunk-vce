@@ -55,7 +55,7 @@ class Format68To69StorageEfficiencyTest
             assertEquals(17, scalar(connection, "PRAGMA analysis_limit"));
             assertEquals(0, scalar(connection, "PRAGMA writable_schema"));
             connection.commit(); connection.setAutoCommit(true);
-            assertEquals(ConfigurationHistoryDatabase.HISTORY_FINGERPRINT, SqliteSchemaValidator.fingerprint(connection));
+            assertEquals(ConfigurationHistoryDatabase.FORMAT_69_HISTORY_FINGERPRINT, SqliteSchemaValidator.fingerprint(connection));
             assertEquals(roots, unaffectedRoots(connection, "main"));
             assertEquals(statistics, unaffectedStatistics(connection));
             assertEquals(sequence, scalar(connection, "SELECT seq FROM sqlite_sequence WHERE name='receiver_activity_event'"));
@@ -117,7 +117,7 @@ class Format68To69StorageEfficiencyTest
             connection.setAutoCommit(false);
             ReceiverActivitySchema.migrateFormat68EncryptionState(connection, "activity");
             connection.commit(); connection.setAutoCommit(true);
-            assertEquals(ConfigurationHistoryDatabase.HISTORY_FINGERPRINT,
+            assertEquals(ConfigurationHistoryDatabase.FORMAT_69_HISTORY_FINGERPRINT,
                 SqliteSchemaValidator.fingerprint(connection, "activity"));
             assertEquals(roots, unaffectedRoots(connection, "activity"));
         }
