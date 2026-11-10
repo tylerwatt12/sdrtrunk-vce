@@ -7461,15 +7461,10 @@ class StatsWebDatabase
             return hex;
         }
 
-        String name = vendor.getDescription().trim();
-
-        if(vendor != Vendor.OPEN25 && !name.isEmpty())
-        {
-            String description = name.toLowerCase();
-            name = Character.toUpperCase(description.charAt(0)) + description.substring(1);
-        }
-
-        return name.isEmpty() ? hex : name + " (" + hex + ")";
+        String description = vendor.getDescription().trim().toLowerCase();
+        String name = description.isEmpty() ? null : Character.toUpperCase(description.charAt(0)) +
+            description.substring(1);
+        return name != null ? name + " (" + hex + ")" : hex;
     }
 
     private List<Map<String,Object>> loggerStatus(Connection connection) throws SQLException
