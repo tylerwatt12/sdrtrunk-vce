@@ -10,15 +10,34 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.github.dsheirer.bits.CorrectedBinaryMessage;
 import io.github.dsheirer.module.decode.event.DecodeEvent;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
+import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.Opcode;
+import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.TSBKMessage;
+import io.github.dsheirer.module.decode.p25.reference.Direction;
 import io.github.dsheirer.module.decode.p25.reference.ExtendedFunction;
 import io.github.dsheirer.module.decode.p25.reference.QueuedResponseReason;
+import io.github.dsheirer.module.decode.p25.reference.Vendor;
 import io.github.dsheirer.protocol.Protocol;
 import org.junit.jupiter.api.Test;
 
 class P25SignalingSemanticsTest
 {
+    @Test
+    void namesOpen25WithoutSelectingAnotherVendorsOpcode()
+    {
+        var message = CorrectedBinaryMessage.loadHex("809400000000000000000000");
+        Vendor vendor = TSBKMessage.getVendor(message);
+        assertEquals(Vendor.OPEN25, vendor);
+        assertEquals("Open25", vendor.getLabel());
+        assertEquals(0x94, vendor.getValue());
+        assertEquals(Opcode.UNKNOWN_VENDOR_OSP, TSBKMessage.getOpcode(message, Direction.OUTBOUND, vendor));
+        assertEquals(Vendor.MOTOROLA, Vendor.fromValue(0x90));
+        assertEquals(Vendor.HARRIS, Vendor.fromValue(0xA4));
+        assertEquals(Vendor.VUNK, Vendor.fromValue(0x100));
+    }
+
     @Test
     void retainsStableRadioInhibitEventOrderAndCommandGrouping()
     {

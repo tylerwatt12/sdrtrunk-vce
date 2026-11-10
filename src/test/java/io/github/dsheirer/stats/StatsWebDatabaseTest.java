@@ -307,6 +307,7 @@ class StatsWebDatabaseTest
     void formatsKnownAndUnknownMfids()
     {
         assertEquals("Motorola (0x90)", StatsWebDatabase.mfidDisplay(0x90));
+        assertEquals("Open25 (0x94)", StatsWebDatabase.mfidDisplay(0x94));
         assertEquals("0xAB", StatsWebDatabase.mfidDisplay(0xAB));
     }
 

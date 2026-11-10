@@ -172,7 +172,7 @@ public enum Vendor
 	V145( "VENDOR91", "V_91", 145),
 	V146( "VENDOR92", "V_92", 146),
 	V147( "VENDOR93", "V_93", 147),
-	V148( "VENDOR94", "V_94", 148),
+	OPEN25( "Open25", 0x94),
 	V149( "VENDOR95", "V_95", 149),
 	V150( "VENDOR96", "V_96", 150),
 	V151( "VENDOR97", "V_97", 151),
