@@ -317,7 +317,7 @@ const CHANNEL_TAG_DISPLAY = Object.freeze({
   VOICE: { abbreviation: 'VC', description: 'Observed voice traffic', className: 'role-voice' },
   DATA: { abbreviation: 'DAT', description: 'Observed data traffic', className: 'role-data' },
   DATA_ANNOUNCED: { abbreviation: 'DAT-A', description: 'Announced data channel', className: 'role-data-announced' },
-  CWID: { abbreviation: 'CWID', description: 'Base station identification channel' }
+  BSI: { abbreviation: 'BSI', description: 'Base station identification channel' }
 });
 const SERVER_TABLE_DEFAULT_SORTS = {
   'radio-system-channels': 'last_seen',
@@ -2119,6 +2119,25 @@ function callsignLink(value) {
     `https://www.radioreference.com/db/fcc/callsign/${encodeURIComponent(callsign)}`) : '';
 }
 
+function bsiFreshness(observation, now = Date.now()) {
+  const lastHeard = Number(observation?.lastHeardMs ?? observation?.last_heard_ms);
+  if (!Number.isFinite(lastHeard) || lastHeard <= 0) return 'Last heard unknown';
+  const freshness = now - lastHeard <= 60 * 60 * 1000 ? 'Fresh' : 'Historical';
+  return `${freshness} · Last heard ${dateTime(lastHeard).textContent}`;
+}
+
+function bsiCallsigns(row) {
+  const container = node('div', 'live-event-stack');
+  for (const observation of row.bsi || []) {
+    const line = node('div');
+    const source = observation.source === 'voice' ? 'Voice BSI' : 'Control BSI';
+    line.append(node('span', '', `${source}: `), callsignLink(observation.callsign),
+      node('div', 'muted', bsiFreshness(observation)));
+    container.append(line);
+  }
+  return container;
+}
+
 function radioSystemLink(reference, label) {
   const target = capabilityAllowed(ACCESS_CAPABILITIES.RADIO) ? entityRefHref(reference) : '';
   return target ? anchor(label, target) : label;
@@ -2402,7 +2421,7 @@ function channelTags(row) {
   if (observed.has('VOICE')) tags.push(channelTagBadge('VOICE'));
   if (observed.has('DATA')) tags.push(channelTagBadge('DATA'));
   if (observed.has('DATA_ANNOUNCED') && !observed.has('DATA')) tags.push(channelTagBadge('DATA_ANNOUNCED'));
-  if (observed.has('CWID') || current.has('CWID')) tags.push(channelTagBadge('CWID'));
+  if (observed.has('BSI') || current.has('BSI')) tags.push(channelTagBadge('BSI'));
   if (!tags.length) return badge('Unknown', 'state-historical ui-pill-compact');
   const group = badgeGroup(tags);
   group.classList.add('ui-badge-group-compact');
@@ -2412,7 +2431,7 @@ function channelTags(row) {
 
 function visibleLiveChannelTags(row) {
   const tags = channelTagSet(row.tags);
-  const visible = ['CURRENT_CONTROL', 'ALTERNATE_CONTROL', 'VOICE', 'DATA', 'DATA_ANNOUNCED', 'CWID']
+  const visible = ['CURRENT_CONTROL', 'ALTERNATE_CONTROL', 'VOICE', 'DATA', 'DATA_ANNOUNCED', 'BSI']
     .filter((tag) => tags.has(tag) && (tag !== 'DATA_ANNOUNCED' || !tags.has('DATA')));
   if (tags.has('CONVENTIONAL')) visible.unshift('CONVENTIONAL');
   if (tags.has('CONFIGURED') && visible.length === 0) visible.push('CONFIGURED');
@@ -15029,13 +15048,17 @@ function liveMessagesPane(options = {}) {
         message.source_frequency_hz || message.frequency_hz, message.timeslot]) },
     { id: 'context', label: 'Context', render: (message) => [
       message.protocol,
-      timeslotLabel(message.timeslot)
+      timeslotLabel(message.timeslot),
+      message.link_control_valid === false ? 'Link control invalid' : ''
     ].filter(Boolean).join(' · '),
-      reconcileKey: (message) => JSON.stringify([message.protocol, message.timeslot]) },
+      reconcileKey: (message) => JSON.stringify([message.protocol, message.timeslot, message.link_control_valid]) },
     { id: 'message', label: 'Message', className: 'live-message-text',
-      reconcileKey: (message) => message.text || '', render: (message) => {
+      reconcileKey: (message) => JSON.stringify([message.text, message.frame_valid, message.link_control_valid]), render: (message) => {
       const value = node('span', '', message.text || '');
-      value.dataset.uiHint = message.text || '';
+      const integrity = [];
+      if (typeof message.frame_valid === 'boolean') integrity.push(`Frame: ${message.frame_valid ? 'valid' : 'invalid'}`);
+      if (typeof message.link_control_valid === 'boolean') integrity.push(`Link control: ${message.link_control_valid ? 'valid' : 'invalid'}`);
+      value.dataset.uiHint = [...integrity, message.text || ''].join('\n');
       return value;
     } }
   ], 'Select a live row above', {
@@ -19395,7 +19418,11 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
     add('Channel', activityValues(rows, (row) => row.channel_name || row.tableChannelName));
     add('Call type', TUNER_ACTIVITY_LABELS[carrier?.status] || TUNER_ACTIVITY_LABELS.ACTIVE);
     add('Role', activityValues(rows, (row) => (row.tags || []).map(activityTokenLabel)));
-    add('Callsign', activityValues(rows, (row) => row.callsign));
+    for (const source of ['control', 'voice']) {
+      add(source === 'voice' ? 'Voice BSI' : 'Control BSI',
+        rows.flatMap((row) => (row.bsi || []).filter((bsi) => bsi.source === source)
+          .map((bsi) => `${bsi.callsign} · ${bsiFreshness(bsi)}`)));
+    }
     add('LCN', activityValues(rows, (row) => row.lcn));
     add('Timeslot', activityValues(rows, (row) => row.timeslot));
 
@@ -23300,7 +23327,10 @@ function p25DecoderMode(value) {
 
 function p25ChannelDetailRows(channel) {
   return [
-    ['Callsign', callsignLink(channel.callsign)], ['WACN', hexDecimalPair(channel.wacn, 5)],
+    ['Control BSI', callsignLink(channel.callsign)],
+    ['BSI status', channel.callsign ? bsiFreshness({lastHeardMs: channel.bsi_last_heard_ms}) : ''],
+    ['BSI frequency', channel.callsign ? frequency(channel.bsi_frequency_hz) : ''],
+    ['WACN', hexDecimalPair(channel.wacn, 5)],
     ['SysID', hexDecimalPair(channel.system_id, 3)], ['NAC', hexDecimalPair(channel.nac, 3)],
     ['RFSS', hexDecimalPair(channel.rfss, 2)], ['Site', hexDecimalPair(channel.site_id, 2)],
     ['Local Registration Area', hexDecimalPair(channel.lra, 2)],
@@ -23384,7 +23414,7 @@ function channelProtocolDetailRows(channel) {
 function p25ChannelFrequencyColumns() {
   return [
     { id: 'descriptor', label: 'LCN', fullLabel: 'Logical Channel Number and Modes', key: 'descriptor' },
-    { id: 'callsign', label: 'Callsign', render: (row) => callsignLink(row.callsign),
+    { id: 'callsign', label: 'BSI', render: bsiCallsigns,
       sortValue: (row) => row.callsign || '' },
     { id: 'tags', label: 'Tags', key: 'tags', render: channelTags },
     { id: 'downlink', label: 'Down MHz', fullLabel: 'Downlink MHz',

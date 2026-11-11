@@ -98,6 +98,7 @@ public enum LinkControlOpcode
     MOTOROLA_FAILSOFT("MOTOROLA FAILSOFT", 2),
     MOTOROLA_GROUP_REGROUP_ADD("MOTOROLA GROUP REGROUP ADD", 3),
     MOTOROLA_GROUP_REGROUP_DELETE("MOTOROLA GROUP REGROUP DELETE", 4),
+    MOTOROLA_BASE_STATION_ID("MOTOROLA BASE STATION ID", 5),
     MOTOROLA_UNIT_GPS("MOTOROLA UNIT GPS", 6),
     MOTOROLA_EMERGENCY_ALARM_ACTIVATION("MOTOROLA EMERGENCY ALARM ACTIVATION", 10),
     MOTOROLA_TALK_COMPLETE("MOTOROLA TALK_COMPLETE", 15),
@@ -251,6 +252,8 @@ public enum LinkControlOpcode
                         return MOTOROLA_GROUP_REGROUP_ADD;
                     case 4:
                         return MOTOROLA_GROUP_REGROUP_DELETE;
+                    case 5:
+                        return MOTOROLA_BASE_STATION_ID;
                     case 6:
                         return MOTOROLA_UNIT_GPS;
                     case 10:

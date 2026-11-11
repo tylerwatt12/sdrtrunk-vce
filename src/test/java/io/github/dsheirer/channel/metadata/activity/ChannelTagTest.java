@@ -23,7 +23,7 @@ class ChannelTagTest
         assertEquals(ChannelTag.CURRENT_CONTROL, ChannelTag.fromNetworkRole("primary_control"));
         assertEquals(ChannelTag.ALTERNATE_CONTROL, ChannelTag.fromNetworkRole("alternate_control"));
         assertEquals(ChannelTag.DATA_ANNOUNCED, ChannelTag.fromNetworkRole("fdma_data"));
-        assertEquals(ChannelTag.CWID, ChannelTag.fromNetworkRole("base_station"));
+        assertEquals(ChannelTag.BSI, ChannelTag.fromNetworkRole("base_station"));
         assertNull(ChannelTag.fromNetworkRole("unknown"));
     }
 }

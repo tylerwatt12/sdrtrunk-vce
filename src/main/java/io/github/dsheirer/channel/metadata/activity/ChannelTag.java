@@ -23,7 +23,7 @@ public enum ChannelTag
     CONTROL("CC", "Observed control channel"),
     CURRENT_CONTROL("CC", "Current control channel"),
     ALTERNATE_CONTROL("ACC", "Alternate control channel"),
-    CWID("CWID", "Base station identification channel"),
+    BSI("BSI", "Base station identification channel"),
     VOICE("VC", "Observed voice traffic"),
     DATA("DAT", "Observed data traffic"),
     DATA_ANNOUNCED("DAT-A", "Announced data channel");
@@ -58,7 +58,7 @@ public enum ChannelTag
         {
             case "primary_control", "current_control" -> CURRENT_CONTROL;
             case "secondary_control", "alternate_control" -> ALTERNATE_CONTROL;
-            case "base_station" -> CWID;
+            case "base_station", "base_station_voice" -> BSI;
             case "fdma_data", "tdma_data" -> DATA_ANNOUNCED;
             default -> null;
         };

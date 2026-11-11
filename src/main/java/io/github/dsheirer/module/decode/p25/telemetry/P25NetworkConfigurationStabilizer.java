@@ -50,6 +50,10 @@ public class P25NetworkConfigurationStabilizer
     private static final FactConfirmationPolicy GUARDED_STATIC_POLICY =
         new FactConfirmationPolicy(GUARDED_STATIC_OBSERVATION_THRESHOLD,
             GUARDED_STATIC_MINIMUM_AGE_MILLISECONDS, CANDIDATE_EXPIRATION_MILLISECONDS, false);
+    // Capture-verified control BSI arrives in roughly 24-second bursts. It has its own evidence policy;
+    // the normal static-site 60-second minimum would discard these bursts.
+    private static final FactConfirmationPolicy BSI_POLICY =
+        new FactConfirmationPolicy(3, 1000, TimeUnit.MINUTES.toMillis(1), false);
     private static final FactConfirmationPolicy DYNAMIC_POLICY =
         new FactConfirmationPolicy(DYNAMIC_OBSERVATION_THRESHOLD, DYNAMIC_MINIMUM_AGE_MILLISECONDS,
             CANDIDATE_EXPIRATION_MILLISECONDS, false);
@@ -610,7 +614,8 @@ public class P25NetworkConfigurationStabilizer
         }
         else
         {
-            tracker.observe(channel, timestamp, GUARDED_STATIC_POLICY, this::allowChannelPromotion);
+            tracker.observe(channel, timestamp, "base_station".equals(channel.role()) ? BSI_POLICY :
+                GUARDED_STATIC_POLICY, this::allowChannelPromotion);
         }
     }
 
@@ -653,7 +658,15 @@ public class P25NetworkConfigurationStabilizer
         expireCandidates(mForeignSystemBands, timestamp);
         expireStableBroadcastFacts(mPatchGroups, timestamp, PATCH_GROUP_FRESHNESS_MILLISECONDS);
         expireCandidates(mTalkerAliases, timestamp);
-        expireStableBroadcastFacts(mChannels, timestamp);
+        mChannels.entrySet().removeIf(entry -> {
+            var tracker = entry.getValue();
+            var stable = tracker.getStableValue();
+            if(stable == null || !"base_station".equals(stable.role()))
+            {
+                tracker.expireStable(timestamp, STABLE_BROADCAST_FACT_EXPIRATION_MILLISECONDS);
+            }
+            return tracker.isEmpty();
+        });
         expireStableBroadcastFacts(mNeighborSites, timestamp);
         expireStableBroadcastFacts(mFrequencyBands, timestamp);
         expireStableBroadcastFacts(mForeignSystemBands, timestamp);

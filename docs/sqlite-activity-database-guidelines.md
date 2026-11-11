@@ -910,3 +910,26 @@ and planner statistic. It changes only the format metadata, without scanning or 
 does not infer old call associations, subtract old Active counts or compact the file. Existing retention frees
 expired pages for reuse. No table, column, index or persisted call registry is added, and runtime startup remains
 validation-only.
+
+### Carrier BSI (application format 73)
+
+`p25_site_bsi` stores the confirmed callsign and nullable last actual BSI reception time for one saved site,
+frequency and source (0 control announcement, 1 voice reception). Generic channel activity cannot supply this time
+or distinguish the sources. Repeated BSI updates its existing record; it adds no per-message or hourly history.
+Unknown reception times remain NULL. Fresh/Historical is a display calculation with a one-hour freshness window;
+aging alone never erases the learned name.
+
+There are at most two rows per learned frequency per retained saved-site owner. New rows per hour equal newly
+learned frequency/source pairs, rather than BSI message rate; a fixed inventory stops growing. Each row has three
+integer key fields, at most eight callsign characters and one optional timestamp, roughly 40 bytes of payload plus
+SQLite record/page overhead. The WITHOUT ROWID primary key is the only index, and serves the bounded frequency-page
+lookup as `SEARCH p25_site_bsi USING PRIMARY KEY (channel_id=? AND frequency_hz=?)`. No retained call scan is needed.
+Site deletion/retention cascades to BSI; frequency and summary clears explicitly remove it. Ordinary detailed-event
+retention is independent. Writes use the existing background writer and never run on decoder callbacks.
+
+The adjacent migration rewrites only the two compact channel tables while removing duplicated callsign columns,
+transfers known BSI-tag times without guessing missing ones, and renames CWID tags and the bundled Alias icon to BSI.
+It preserves call tables, their indexes and planner statistics. Temporary journal/workspace follows affected compact
+pages, with no additional database copy; capacity admission currently retains the existing conservative full-file
+bound for this new step. Tests cover exact prior/current signatures, preservation, rollback/retry, source separation,
+stale/cached/blank evidence and the indexed owner/frequency lookup.

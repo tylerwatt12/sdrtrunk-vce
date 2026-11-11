@@ -29,6 +29,10 @@ final class ActivityMigrationPreservation
             { while(rows.next()) tables.add(rows.getString(1)); }
             for(String table: tables)
             {
+                // Format 73 deliberately transforms these compact BSI owners; its adjacent regression verifies
+                // their exact conversion. This helper proves preservation of all unaffected history.
+                if(currentProjection && Set.of("p25_site_channel", "p25_site_channel_summary", "p25_site_bsi",
+                    "p25_site_channel_tag", "p25_site_channel_tag_summary").contains(table)) continue;
                 List<String> values = new ArrayList<>();
                 try(var statement = connection.createStatement(); var rows = statement.executeQuery("SELECT * FROM \"" + table + "\""))
                 {

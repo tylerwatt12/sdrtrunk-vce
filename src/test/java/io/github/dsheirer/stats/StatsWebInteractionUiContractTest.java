@@ -462,11 +462,11 @@ class StatsWebInteractionUiContractTest
     }
 
     @Test
-    void displaysStationIdentificationChannelsAsCwid() throws Exception
+    void displaysStationIdentificationChannelsAsBsi() throws Exception
     {
         String source = source();
-        assertTrue(source.contains("CWID: { abbreviation: 'CWID'"));
-        assertTrue(function(source, "function channelTags(row)").contains("channelTagBadge('CWID')"));
+        assertTrue(source.contains("BSI: { abbreviation: 'BSI'"));
+        assertTrue(function(source, "function channelTags(row)").contains("channelTagBadge('BSI')"));
     }
 
     @Test
@@ -707,8 +707,10 @@ class StatsWebInteractionUiContractTest
         String trunkedNeighbors = function(source, "function trunkedChannelNeighborColumns(channel)");
         assertTrue(callsign.contains("externalAnchor(callsign"));
         assertTrue(callsign.contains("encodeURIComponent(callsign)"));
-        assertTrue(source.contains("['Callsign', callsignLink(channel.callsign)]"));
-        assertTrue(source.contains("render: (row) => callsignLink(row.callsign)"));
+        assertTrue(source.contains("['Control BSI', callsignLink(channel.callsign)]"));
+        assertTrue(source.contains("render: bsiCallsigns"));
+        assertTrue(function(source, "function bsiCallsigns(row)").contains("callsignLink(observation.callsign)"));
+        assertTrue(function(source, "function bsiCallsigns(row)").contains("bsiFreshness(observation)"));
         assertTrue(neighbor.contains("entityRefHref(row?.entity_ref)"));
         assertFalse(neighbor.contains("neighbor_guid"));
         assertFalse(neighbor.contains("href('site'"));
@@ -1421,7 +1423,8 @@ class StatsWebInteractionUiContractTest
         assertTrue(upsert.contains("value.channel_running !== true"));
         assertTrue(selectedView.contains("value?.channel_running === false"));
         assertTrue(selectedView.contains("dismissedStoppedTables.add(value.table_id)"));
-        assertTrue(systems.contains("type: 'live-channels'"));
+        assertTrue(systems.contains("let layoutType = 'live-channels'"));
+        assertTrue(systems.contains("type: layoutType"));
         assertTrue(systems.contains("onRowClick: (row) =>"));
         assertTrue(rowRenderer.contains("event.target.closest('a, button, input, select, textarea, label')"));
         assertTrue(selectedView.contains("selectedViewActions.replaceChildren()"));
@@ -1743,7 +1746,8 @@ class StatsWebInteractionUiContractTest
         assertTrue(systems.contains("onSelectionChange(selection)"));
         assertFalse(systems.contains("selectedRowKey"));
         assertTrue(source.contains("function liveCurrentControlRow(tableValue)"));
-        assertTrue(systems.contains("type: 'live-channels'"));
+        assertTrue(systems.contains("let layoutType = 'live-channels'"));
+        assertTrue(systems.contains("type: layoutType"));
         assertTrue(systems.contains("onRowClick: (row) =>"));
         assertTrue(systems.contains("liveTable.tableController.replaceRows"));
         assertTrue(showTable.contains("displayed.control_active ? liveCurrentControlRow(displayed) : null"));

@@ -274,7 +274,7 @@ ambiguous markerless state instead of guessing which build produced it.
 Migration steps form one ordered chain:
 
 ```text
-format 2 (Alpha 12 family) -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 -> format 11 -> format 12 -> format 13 -> format 14 -> format 15 -> format 16 -> format 17 -> format 18 -> format 19 -> format 20 -> format 21 -> format 22 -> format 23 -> format 24 -> format 25 -> format 26 -> format 27 -> format 28 -> format 29 -> format 30 -> format 31 -> format 32 -> format 33 -> format 34 -> format 35 -> format 36 -> format 37 -> format 38 -> format 39 -> format 40 -> format 41 -> format 42 -> format 43 -> format 44 -> format 45 -> format 46 -> format 47 -> format 48 -> format 49 -> format 50 -> format 51 -> format 52 -> format 53 -> format 54 -> format 55 -> format 56 -> format 57 -> format 58 -> format 59 -> format 60 -> format 61 -> format 62 -> format 63 -> format 64 -> format 65 -> format 66 -> format 67 -> format 68 -> format 69 -> format 70 -> format 71 -> format 72 (current)
+format 2 (Alpha 12 family) -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 -> format 11 -> format 12 -> format 13 -> format 14 -> format 15 -> format 16 -> format 17 -> format 18 -> format 19 -> format 20 -> format 21 -> format 22 -> format 23 -> format 24 -> format 25 -> format 26 -> format 27 -> format 28 -> format 29 -> format 30 -> format 31 -> format 32 -> format 33 -> format 34 -> format 35 -> format 36 -> format 37 -> format 38 -> format 39 -> format 40 -> format 41 -> format 42 -> format 43 -> format 44 -> format 45 -> format 46 -> format 47 -> format 48 -> format 49 -> format 50 -> format 51 -> format 52 -> format 53 -> format 54 -> format 55 -> format 56 -> format 57 -> format 58 -> format 59 -> format 60 -> format 61 -> format 62 -> format 63 -> format 64 -> format 65 -> format 66 -> format 67 -> format 68 -> format 69 -> format 70 -> format 71 -> format 72 -> format 73 (current)
 ```
 
 Each step owns exactly one `N -> N+1` transformation. The runner repeatedly applies the next registered step until it
@@ -410,6 +410,18 @@ only unusable documents or revisions. Guest browser preferences use the correspo
 No table or index changes. The migrator updates bounded account preference documents and both format markers in its
 existing transaction, without scanning or rewriting retained Activity. Format 71 remains a frozen supported source;
 normal startup validates the new contract without converting older preferences.
+
+The format 72-to-73 step moves learned P25 callsigns out of generic channel rows into one BSI record per
+saved site, carrier frequency and evidence source. Existing callsigns become control-channel evidence. An exact
+retained BSI-tag time supplies last heard; otherwise that time remains unknown. It does not borrow a channel's
+activity time. Callsigns with an unusable frequency or more than eight characters refuse conversion rather than
+being silently lost. CWID tags and the bundled Alias icon selection become BSI. Voice BSI starts empty.
+
+The transaction preserves every call, counter, setting, recording and unaffected history index. It rewrites only
+the compact channel tables while removing their old callsign columns, creates the small BSI owner table, and updates
+the matching format markers. Its cost scales with channel inventory, not retained calls. There is no additional
+recovery copy or Activity-event scan. The existing conservative owned-migration workspace allowance applies to this
+new step. Format 72 remains a frozen populated source, and runtime startup validates without conversion.
 
 ## Shared Upgrade And Import Boundary
 

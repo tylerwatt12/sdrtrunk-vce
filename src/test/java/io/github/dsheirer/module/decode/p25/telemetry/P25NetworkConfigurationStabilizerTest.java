@@ -39,6 +39,26 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 public class P25NetworkConfigurationStabilizerTest
 {
     @Test
+    void controlBsiConfirmsAShortBurstWithoutWeakeningOtherChannelFacts()
+    {
+        var stabilizer = new P25NetworkConfigurationStabilizer("P25_PHASE_1");
+        var channel = primary(856137500L);
+        var bsi = station(channel, "WTEST77");
+        var data = new P25NetworkConfigurationSnapshot.Channel("fdma_data", channel.descriptor(),
+            channel.downlink(), channel.uplink(), false, 1);
+        for(long time: new long[]{1000, 1500})
+        {
+            stabilizer.observe(snapshot(bsi), time);
+            stabilizer.observe(snapshot(data), time);
+        }
+        assertNull(getChannel(stabilizer.getSnapshot(), "base_station"));
+        stabilizer.observe(snapshot(bsi), 2000);
+        stabilizer.observe(snapshot(data), 2000);
+        assertEquals("WTEST77", getChannel(stabilizer.getSnapshot(), "base_station").callsign());
+        assertNull(getChannel(stabilizer.getSnapshot(), "fdma_data"));
+    }
+
+    @Test
     void independentChannelFactsConfirmDespiteInterleavedControlAndDataUpdates()
     {
         var stabilizer = new P25NetworkConfigurationStabilizer("P25_PHASE_1");
@@ -89,12 +109,13 @@ public class P25NetworkConfigurationStabilizerTest
         stabilizer.observe(snapshot(bsi.withObservedAt(1_000)), 31_000);
         stabilizer.observe(snapshot(bsi.withObservedAt(1_000)), 61_000);
         assertNull(getChannel(stabilizer.getSnapshot(), "base_station"));
+        stabilizer.observe(snapshot(bsi), 61_001);
         stabilizer.observe(snapshot(bsi), 62_000);
         stabilizer.observe(snapshot(bsi), 63_000);
         assertEquals(63_000L, getChannel(stabilizer.getSnapshot(), "base_station").observedAtMs());
         for(long time = 100_000; time <= 700_000; time += 30_000)
             stabilizer.observe(snapshot(control), time, control.downlink());
-        assertNull(getChannel(stabilizer.getSnapshot(), "base_station"));
+        assertEquals(63_000L, getChannel(stabilizer.getSnapshot(), "base_station").observedAtMs());
         assertTrue(hasChannel(stabilizer.getSnapshot(), "primary_control", control.downlink()));
     }
 

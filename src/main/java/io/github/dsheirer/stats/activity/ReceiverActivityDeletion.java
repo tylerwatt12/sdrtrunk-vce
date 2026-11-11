@@ -244,6 +244,8 @@ final class ReceiverActivityDeletion
             }
 
             if(keys.isEmpty()) return Result.missing();
+            deleted = execute(connection, "DELETE FROM p25_site_bsi WHERE channel_id=? AND frequency_hz=?",
+                channel.id(), target.frequencyHz());
 
             for(String key: keys)
             {

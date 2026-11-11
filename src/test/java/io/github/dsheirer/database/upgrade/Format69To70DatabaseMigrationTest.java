@@ -62,7 +62,7 @@ class Format69To70DatabaseMigrationTest
         try(var connection = open(history))
         {
             assertEquals(btrees, schemaObjects(connection));
-            assertEquals(ConfigurationHistoryDatabase.HISTORY_FINGERPRINT, SqliteSchemaValidator.fingerprint(connection));
+            assertEquals(ConfigurationHistoryDatabase.FORMAT_69_HISTORY_FINGERPRINT, SqliteSchemaValidator.fingerprint(connection));
             assertEquals("ok", scalar(connection, "PRAGMA quick_check"));
             try(var query = connection.createStatement(); var violations = query.executeQuery("PRAGMA foreign_key_check"))
             { assertFalse(violations.next()); }

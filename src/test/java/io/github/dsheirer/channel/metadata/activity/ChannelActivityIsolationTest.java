@@ -410,7 +410,7 @@ class ChannelActivityIsolationTest
             155_000_000L, null);
         state.refresh(row);
         ChannelActivitySnapshot before = state.getLatestSnapshot();
-        row.setCallsign("WPFF205");
+        row.setBsi(List.of(new BaseStationIdentification("control", "WPFF205", 1000L)));
 
         assertEquals(null, before.rows().getFirst().callsign());
         state.refresh(row);

@@ -61,6 +61,7 @@ final class CurrentDatabaseDerivedStateRepair
         "conventional_activity_bucket",
         "conventional_call_identity_bucket",
         "p25_site_snapshot",
+        "p25_site_bsi",
         "p25_site_channel",
         "p25_site_channel_summary",
         "p25_site_channel_tag",
@@ -392,7 +393,7 @@ final class CurrentDatabaseDerivedStateRepair
         for(String table: List.of("alias_list_analog_activity_summary", "receiver_channel_statistics_reset"))
             if(present.contains(table)) classified.add(table);
         return classified.stream().filter(table -> present.contains(table) ||
-            !Set.of("p25_wuid_assignment_observation_summary", "receiver_activity_tone", "receiver_activity_tone_sequence").contains(table)).toList();
+            !Set.of("p25_site_bsi", "p25_wuid_assignment_observation_summary", "receiver_activity_tone", "receiver_activity_tone_sequence").contains(table)).toList();
     }
 
     private static boolean tableChecksAreValid(Connection connection, String table) throws SQLException
@@ -403,7 +404,7 @@ final class CurrentDatabaseDerivedStateRepair
         }
 
         //Historical direct-source repair can precede the format-32 storage additions.
-        if(Set.of("p25_wuid_assignment_observation_summary", "receiver_activity_tone", "receiver_activity_tone_sequence").contains(table))
+        if(Set.of("p25_site_bsi", "p25_wuid_assignment_observation_summary", "receiver_activity_tone", "receiver_activity_tone_sequence").contains(table))
         {
             try(Statement statement = connection.createStatement();
             ResultSet rows = statement.executeQuery("SELECT 1 FROM " + historySchema(connection) + ".sqlite_schema WHERE type='table' AND name='" + table + "'"))

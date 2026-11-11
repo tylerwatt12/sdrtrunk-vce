@@ -52,6 +52,28 @@ class P25P1DecoderStateTerminatorRecoveryTest
     private static final int TALKGROUP = 56_132;
 
     @Test
+    void voiceBsiDoesNotCompleteCallOrClearIdentifiers()
+    {
+        var manager = new P25TrafficChannelManager(new Channel("Parent"));
+        var source = APCO25RadioIdentifier.createFrom(1880997);
+        var call = startCall(manager, TALKGROUP, source, 1000L);
+        var state = decoderState(manager);
+        state.getIdentifierCollection().update(source);
+        state.getIdentifierCollection().update(APCO25Talkgroup.create(TALKGROUP));
+        var events = new ArrayList<State>();
+        state.setDecoderStateListener(event -> events.add(event.getState()));
+        var bsi = new io.github.dsheirer.module.decode.p25.phase1.message.lc.motorola.LCMotorolaBaseStationId(
+            CorrectedBinaryMessage.loadHex("0590B20A1928820000"));
+        bsi.setValid(true);
+        state.receive(new TestTDULCMessage(bsi, 1300L));
+        assertFalse(events.contains(State.ACTIVE));
+        assertTrue(state.getIdentifierCollection().hasIdentifier(source));
+        assertEquals(100, call.getDuration());
+        manager.processP1TrafficVoice(FREQUENCY, 1400L);
+        assertEquals(400, call.getDuration());
+    }
+
+    @Test
     void recoversMissingSourceBeforeCompletingCallAndClearsDecoderUsers()
     {
         P25TrafficChannelManager manager = new P25TrafficChannelManager(new Channel("Parent"));

@@ -221,6 +221,57 @@ public class ReceiverActivitySchema
         addCallDuration(connection);
         upgradeFrom59(connection);
         createFreshEncryptionState(connection);
+        createBsiTable(connection, "main");
+        try(var statement = connection.createStatement())
+        {
+            statement.executeUpdate("ALTER TABLE p25_site_channel DROP COLUMN callsign");
+            statement.executeUpdate("ALTER TABLE p25_site_channel_summary DROP COLUMN callsign");
+        }
+    }
+
+    /** Authoritative BSI definition, shared by fresh creation and the adjacent Application Migrator. */
+    public static void createBsiTable(Connection connection, String schema) throws SQLException
+    {
+        if(!Set.of("main", "activity").contains(schema)) throw new SQLException("Invalid BSI store");
+        try(var statement = connection.createStatement())
+        {
+            statement.executeUpdate("CREATE TABLE " + schema + """
+                .p25_site_bsi (
+                    channel_id INTEGER NOT NULL CHECK(typeof(channel_id)='integer' AND channel_id>0) REFERENCES p25_site_snapshot(channel_id) ON DELETE CASCADE,
+                    frequency_hz INTEGER NOT NULL CHECK(typeof(frequency_hz)='integer' AND frequency_hz > 0),
+                    source INTEGER NOT NULL CHECK(typeof(source)='integer' AND source IN (0,1)),
+                    callsign TEXT NOT NULL CHECK(typeof(callsign)='text' AND length(callsign) BETWEEN 1 AND 8 AND length(trim(callsign))>0),
+                    last_heard_ms INTEGER CHECK(last_heard_ms IS NULL OR (typeof(last_heard_ms)='integer' AND last_heard_ms > 0)),
+                    PRIMARY KEY(channel_id, frequency_hz, source)
+                ) WITHOUT ROWID
+                """);
+        }
+    }
+
+    private static void upsertBsi(Connection connection, long channelId,
+                                  ReceiverActivityRecords.SiteSnapshot snapshot) throws SQLException
+    {
+        try(var statement = connection.prepareStatement("""
+            INSERT INTO p25_site_bsi(channel_id,frequency_hz,source,callsign,last_heard_ms) VALUES(?,?,?,?,?)
+            ON CONFLICT(channel_id,frequency_hz,source) DO UPDATE SET
+                callsign=excluded.callsign,last_heard_ms=excluded.last_heard_ms
+            WHERE p25_site_bsi.last_heard_ms IS NULL OR excluded.last_heard_ms > p25_site_bsi.last_heard_ms
+            """))
+        {
+            for(var channel: list(snapshot.channels()))
+            {
+                if(channel == null || channel.downlink() == null || channel.callsign() == null ||
+                    channel.callsign().isBlank() || channel.observedAtMs() == null ||
+                    !("base_station".equals(channel.role()) || "base_station_voice".equals(channel.role()))) continue;
+                statement.setLong(1, channelId);
+                statement.setLong(2, channel.downlink());
+                statement.setInt(3, "base_station_voice".equals(channel.role()) ? 1 : 0);
+                statement.setString(4, channel.callsign());
+                statement.setLong(5, channel.observedAtMs());
+                statement.addBatch();
+            }
+            statement.executeBatch();
+        }
     }
 
     /** Adds shared message definitions and prospective command counters without reclassifying retained history. */
@@ -2582,6 +2633,7 @@ public class ReceiverActivitySchema
             return;
         }
         upsertSiteSnapshot(connection, snapshot, channelId, previousCompleteIdentity || incomingVerifiedIdentity);
+        upsertBsi(connection, channelId, snapshot);
 
         if(changed)
         {
@@ -3989,10 +4041,11 @@ public class ReceiverActivitySchema
             "lra", "mfid", "broadcast_clock_ms", "micro_slots", "data_service", "data_access",
             "wuid_lease_minutes", "registration_service", "tdma", "voice_service", "primary_frequency_hz",
             "current_control_hz", "active_rfss_network_connection"),
+        table("p25_site_bsi", "channel_id", "frequency_hz", "source", "callsign", "last_heard_ms"),
         table("p25_site_channel", "channel_id", "channel_key", "descriptor", "downlink_hz", "uplink_hz",
-            "tdma", "timeslots", "callsign", "confirmed_at_ms"),
+            "tdma", "timeslots", "confirmed_at_ms"),
         table("p25_site_channel_summary", "channel_id", "channel_key", "descriptor", "downlink_hz", "uplink_hz",
-            "tdma", "timeslots", "first_seen_ms", "last_seen_ms", "observation_count", "callsign"),
+            "tdma", "timeslots", "first_seen_ms", "last_seen_ms", "observation_count"),
         table("p25_site_channel_tag", "channel_id", "channel_key", "tag", "confirmed_at_ms"),
         table("p25_site_channel_tag_summary", "channel_id", "channel_key", "tag", "first_seen_ms", "last_seen_ms",
             "observation_count"),
@@ -4140,6 +4193,7 @@ public class ReceiverActivitySchema
         foreignKey("trunked_signaling_activity_bucket", List.of("radio_system_id"), "radio_system",
             List.of("id"), "CASCADE"),
         foreignKey("p25_site_snapshot", List.of("channel_id"), "receiver_channel", List.of("id"), "CASCADE"),
+        foreignKey("p25_site_bsi", List.of("channel_id"), "p25_site_snapshot", List.of("channel_id"), "CASCADE"),
         foreignKey("p25_site_channel", List.of("channel_id"), "p25_site_snapshot", List.of("channel_id"), "CASCADE"),
         foreignKey("p25_site_channel_summary", List.of("channel_id"), "p25_site_snapshot", List.of("channel_id"), "CASCADE"),
         foreignKey("p25_site_channel_tag", List.of("channel_id", "channel_key"), "p25_site_channel",
@@ -4693,15 +4747,14 @@ public class ReceiverActivitySchema
             try(PreparedStatement statement = connection.prepareStatement("""
                 INSERT INTO p25_site_channel_summary (
                     channel_id, channel_key, descriptor, downlink_hz, uplink_hz, tdma, timeslots,
-                    callsign, first_seen_ms, last_seen_ms, observation_count
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+                    first_seen_ms, last_seen_ms, observation_count
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
                 ON CONFLICT(channel_id, channel_key) DO UPDATE SET
                     descriptor = coalesce(excluded.descriptor, p25_site_channel_summary.descriptor),
                     downlink_hz = coalesce(excluded.downlink_hz, p25_site_channel_summary.downlink_hz),
                     uplink_hz = coalesce(excluded.uplink_hz, p25_site_channel_summary.uplink_hz),
                     tdma = coalesce(excluded.tdma, p25_site_channel_summary.tdma),
                     timeslots = coalesce(excluded.timeslots, p25_site_channel_summary.timeslots),
-                    callsign = coalesce(excluded.callsign, p25_site_channel_summary.callsign),
                     last_seen_ms = max(p25_site_channel_summary.last_seen_ms, excluded.last_seen_ms),
                     observation_count = p25_site_channel_summary.observation_count + 1
                 WHERE excluded.last_seen_ms > p25_site_channel_summary.last_seen_ms
@@ -4714,9 +4767,8 @@ public class ReceiverActivitySchema
                 setLong(statement, 5, channel.uplink());
                 setBoolean(statement, 6, channel.tdma());
                 setInteger(statement, 7, channel.timeslots());
-                statement.setString(8, channel.callsign());
+                statement.setLong(8, siteFactTimestamp(channel.observedAtMs(), snapshot));
                 statement.setLong(9, siteFactTimestamp(channel.observedAtMs(), snapshot));
-                statement.setLong(10, siteFactTimestamp(channel.observedAtMs(), snapshot));
                 statement.executeUpdate();
             }
 
@@ -5144,15 +5196,14 @@ public class ReceiverActivitySchema
 
         try(PreparedStatement statement = connection.prepareStatement("""
             INSERT INTO p25_site_channel
-                (channel_id, channel_key, descriptor, downlink_hz, uplink_hz, tdma, timeslots, callsign, confirmed_at_ms)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (channel_id, channel_key, descriptor, downlink_hz, uplink_hz, tdma, timeslots, confirmed_at_ms)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(channel_id, channel_key) DO UPDATE SET
                 descriptor = coalesce(excluded.descriptor, p25_site_channel.descriptor),
                 downlink_hz = coalesce(excluded.downlink_hz, p25_site_channel.downlink_hz),
                 uplink_hz = coalesce(excluded.uplink_hz, p25_site_channel.uplink_hz),
                 tdma = coalesce(excluded.tdma, p25_site_channel.tdma),
                 timeslots = coalesce(excluded.timeslots, p25_site_channel.timeslots),
-                callsign = coalesce(excluded.callsign, p25_site_channel.callsign),
                 confirmed_at_ms = max(excluded.confirmed_at_ms, p25_site_channel.confirmed_at_ms)
             """))
         {
@@ -5166,8 +5217,7 @@ public class ReceiverActivitySchema
                 setLong(statement, 5, channel.uplink());
                 setBoolean(statement, 6, channel.tdma());
                 setInteger(statement, 7, channel.timeslots());
-                statement.setString(8, channel.callsign());
-                statement.setLong(9, siteFactTimestamp(channel.observedAtMs(), snapshot));
+                statement.setLong(8, siteFactTimestamp(channel.observedAtMs(), snapshot));
                 statement.addBatch();
             }
 
@@ -6007,7 +6057,7 @@ public class ReceiverActivitySchema
     }
 
     private record SiteChannelEvidence(String descriptor, Long downlink, Long uplink, Boolean tdma, Integer timeslots,
-                                       String callsign, Set<ChannelTag> tags, Long observedAtMs, Map<ChannelTag,Long> tagObservedAtMs)
+                                       Set<ChannelTag> tags, Long observedAtMs, Map<ChannelTag,Long> tagObservedAtMs)
     {
         private SiteChannelEvidence
         {
@@ -6027,7 +6077,7 @@ public class ReceiverActivitySchema
             return new SiteChannelEvidence(channel != null ? channel.descriptor() : null,
                 channel != null ? channel.downlink() : null, channel != null ? channel.uplink() : null,
                 channel != null ? channel.tdma() : null, channel != null ? channel.timeslots() : null,
-                channel != null ? channel.callsign() : null, tags,
+                tags,
                 channel != null ? channel.observedAtMs() : null,
                 tag != null ? Map.of(tag.asHistoricalEvidence(),
                     channel.observedAtMs() != null ? channel.observedAtMs() : 0L) : Map.of());
@@ -6048,7 +6098,7 @@ public class ReceiverActivitySchema
                 Math.max(observedAtMs, other.observedAtMs);
             return new SiteChannelEvidence(firstNonBlank(descriptor, other.descriptor),
                 firstNonNull(downlink, other.downlink), firstNonNull(uplink, other.uplink), mergedTdma,
-                mergedTimeslots, firstNonBlank(callsign, other.callsign), mergedTags, newest, Map.copyOf(mergedTimes));
+                mergedTimeslots, mergedTags, newest, Map.copyOf(mergedTimes));
         }
 
         private List<String> conflictsWith(SiteChannelEvidence other)
@@ -6067,12 +6117,6 @@ public class ReceiverActivitySchema
 
             addConflict(conflicts, "tdma", tdma, other.tdma);
             addConflict(conflicts, "timeslots", timeslots, other.timeslots);
-
-            if(callsign != null && !callsign.isBlank() && other.callsign != null && !other.callsign.isBlank() &&
-                !callsign.strip().equals(other.callsign.strip()))
-            {
-                conflicts.add("callsign [" + callsign + "] vs [" + other.callsign + "]");
-            }
 
             return conflicts;
         }

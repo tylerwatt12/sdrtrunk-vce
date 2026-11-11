@@ -18,7 +18,7 @@ public enum StandardMapIconCatalog
     NO_ICON("No Icon", "no-icon", "images/no_icon.png"),
     AMBULANCE("Ambulance", "ambulance", "images/ambulance.png"),
     BLOCK_TRUCK("Block Truck", "block-truck", "images/concrete_block_truck.png"),
-    CWID("CWID", "cwid", "images/cwid.png"),
+    BSI("BSI", "bsi", "images/bsi.png"),
     DISPATCHER("Dispatcher", "dispatcher", "images/dispatcher.png"),
     DUMP_TRUCK("Dump Truck", "dump-truck", "images/dump_truck_red.png"),
     FIRE_TRUCK("Fire Truck", "fire-truck", "images/fire_truck.png"),

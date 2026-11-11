@@ -4266,8 +4266,6 @@ class StatsWebDatabase
                     coalesce(current.uplink_hz, summary.uplink_hz) AS uplink_hz,
                     coalesce(current.tdma, summary.tdma) AS tdma,
                     coalesce(current.timeslots, summary.timeslots) AS timeslots,
-                    substr(coalesce(current.callsign, summary.callsign), 1, 256) AS callsign,
-                    length(coalesce(current.callsign, summary.callsign)) > 256 AS callsign_truncated,
                     current.confirmed_at_ms, summary.first_seen_ms, summary.last_seen_ms,
                     summary.observation_count,
                     CASE WHEN coalesce(current.downlink_hz, summary.downlink_hz) > 0
@@ -4283,8 +4281,7 @@ class StatsWebDatabase
                     min(channel_key) AS channel_key, max(channel_key_truncated) AS channel_key_truncated,
                     min(descriptor) AS descriptor, max(descriptor_truncated) AS descriptor_truncated,
                     max(downlink_hz) AS downlink_hz, max(uplink_hz) AS uplink_hz,
-                    max(tdma) AS tdma, max(timeslots) AS timeslots, max(callsign) AS callsign,
-                    max(callsign_truncated) AS callsign_truncated,
+                    max(tdma) AS tdma, max(timeslots) AS timeslots,
                     max(confirmed_at_ms) AS confirmed_at_ms, min(first_seen_ms) AS first_seen_ms,
                     max(last_seen_ms) AS last_seen_ms, sum(observation_count) AS observation_count,
                     count(*) AS logical_channel_count
@@ -4306,8 +4303,8 @@ class StatsWebDatabase
                         AS control_observations,
                     sum(CASE WHEN tag.tag = 'ALTERNATE_CONTROL' THEN tag.observation_count ELSE 0 END)
                         AS alternate_control_observations,
-                    sum(CASE WHEN tag.tag = 'CWID' THEN tag.observation_count ELSE 0 END)
-                        AS cwid_observations,
+                    sum(CASE WHEN tag.tag = 'BSI' THEN tag.observation_count ELSE 0 END)
+                        AS bsi_observations,
                     sum(CASE WHEN tag.tag = 'DATA_ANNOUNCED' THEN tag.observation_count ELSE 0 END)
                         AS data_announcement_observations,
                     sum(CASE WHEN tag.tag = 'VOICE' THEN tag.observation_count ELSE 0 END)
@@ -4321,7 +4318,7 @@ class StatsWebDatabase
                         logical.raw_channel_key = selected.unassigned_channel_key)
                 LEFT JOIN p25_site_channel_tag_summary tag
                   ON tag.channel_id = logical.channel_id AND tag.channel_key = logical.raw_channel_key
-                 AND tag.tag IN ('CONFIGURED','CONTROL','ALTERNATE_CONTROL','CWID','DATA_ANNOUNCED','VOICE','DATA')
+                 AND tag.tag IN ('CONFIGURED','CONTROL','ALTERNATE_CONTROL','BSI','DATA_ANNOUNCED','VOICE','DATA')
                 GROUP BY selected.result_id
             ), current_tags AS (
                 SELECT selected.result_id,
@@ -4329,7 +4326,7 @@ class StatsWebDatabase
                     max(CASE WHEN tag.tag = 'CONTROL' THEN 1 ELSE 0 END) AS current_control,
                     max(CASE WHEN tag.tag = 'CURRENT_CONTROL' THEN 1 ELSE 0 END) AS current_current_control,
                     max(CASE WHEN tag.tag = 'ALTERNATE_CONTROL' THEN 1 ELSE 0 END) AS current_alternate_control,
-                    max(CASE WHEN tag.tag = 'CWID' THEN 1 ELSE 0 END) AS current_cwid,
+                    max(CASE WHEN tag.tag = 'BSI' THEN 1 ELSE 0 END) AS current_bsi,
                     max(CASE WHEN tag.tag = 'DATA_ANNOUNCED' THEN 1 ELSE 0 END) AS current_data_announced,
                     max(CASE WHEN tag.tag = 'VOICE' THEN 1 ELSE 0 END) AS current_voice,
                     max(CASE WHEN tag.tag = 'DATA' THEN 1 ELSE 0 END) AS current_data
@@ -4340,22 +4337,22 @@ class StatsWebDatabase
                         logical.raw_channel_key = selected.unassigned_channel_key)
                 LEFT JOIN p25_site_channel_tag tag
                   ON tag.channel_id = logical.channel_id AND tag.channel_key = logical.raw_channel_key
-                 AND tag.tag IN ('CONFIGURED','CONTROL','CURRENT_CONTROL','ALTERNATE_CONTROL','CWID',
+                 AND tag.tag IN ('CONFIGURED','CONTROL','CURRENT_CONTROL','ALTERNATE_CONTROL','BSI',
                                  'DATA_ANNOUNCED','VOICE','DATA')
                 GROUP BY selected.result_id
             )
             SELECT selected.channel_key, selected.channel_key_truncated, selected.descriptor,
                 selected.descriptor_truncated, selected.downlink_hz, selected.uplink_hz, selected.tdma,
-                selected.timeslots, selected.callsign, selected.callsign_truncated, selected.confirmed_at_ms,
+                selected.timeslots, selected.confirmed_at_ms,
                 selected.first_seen_ms, selected.last_seen_ms, selected.observation_count,
                 selected.logical_channel_count, 1 AS logical_channels_included,
                 selected.logical_channel_count > 1 AS logical_channels_truncated,
                 summary_tags.configured_observations, summary_tags.control_observations,
-                summary_tags.alternate_control_observations, summary_tags.cwid_observations,
+                summary_tags.alternate_control_observations, summary_tags.bsi_observations,
                 summary_tags.data_announcement_observations, summary_tags.voice_grant_observations,
                 summary_tags.data_grant_observations, current_tags.current_configured,
                 current_tags.current_control, current_tags.current_current_control,
-                current_tags.current_alternate_control, current_tags.current_cwid,
+                current_tags.current_alternate_control, current_tags.current_bsi,
                 current_tags.current_data_announced, current_tags.current_voice, current_tags.current_data,
                 CASE WHEN max(coalesce(selected.confirmed_at_ms, 0), selected.last_seen_ms) >= ?
                     THEN 'CURRENT' ELSE 'HISTORICAL' END AS state
@@ -4367,6 +4364,16 @@ class StatsWebDatabase
             """, configured.channelId(), limit, offset,
             System.currentTimeMillis() - CURRENT_STATE_WINDOW_MILLISECONDS);
         addP25ChannelTags(rows);
+        for(var row: rows)
+        {
+            var bsi = queryRows(connection, """
+                SELECT CASE source WHEN 0 THEN 'control' ELSE 'voice' END AS source,
+                    callsign, last_heard_ms AS lastHeardMs FROM p25_site_bsi
+                WHERE channel_id=? AND frequency_hz=? ORDER BY source
+                """, configured.channelId(), row.get("downlink_hz"));
+            row.put("bsi", bsi);
+            row.put("callsign", bsi.isEmpty() ? null : bsi.getFirst().get("callsign"));
+        }
         return rows;
     }
 
@@ -4378,7 +4385,7 @@ class StatsWebDatabase
             addTag(observed, row, "configured_observations", "CONFIGURED");
             addTag(observed, row, "control_observations", "CONTROL");
             addTag(observed, row, "alternate_control_observations", "ALTERNATE_CONTROL");
-            addTag(observed, row, "cwid_observations", "CWID");
+            addTag(observed, row, "bsi_observations", "BSI");
             addTag(observed, row, "data_announcement_observations", "DATA_ANNOUNCED");
             addTag(observed, row, "voice_grant_observations", "VOICE");
             addTag(observed, row, "data_grant_observations", "DATA");
@@ -4389,7 +4396,7 @@ class StatsWebDatabase
             addCurrentTag(current, row, "current_control", "CONTROL");
             addCurrentTag(current, row, "current_current_control", "CURRENT_CONTROL");
             addCurrentTag(current, row, "current_alternate_control", "ALTERNATE_CONTROL");
-            addCurrentTag(current, row, "current_cwid", "CWID");
+            addCurrentTag(current, row, "current_bsi", "BSI");
             addCurrentTag(current, row, "current_data_announced", "DATA_ANNOUNCED");
             addCurrentTag(current, row, "current_voice", "VOICE");
             addCurrentTag(current, row, "current_data", "DATA");
@@ -7345,18 +7352,9 @@ class StatsWebDatabase
                 site.voice_service,
                 site.primary_frequency_hz, site.current_control_hz, site.first_seen_ms, site.last_seen_ms,
                 site.observation_count,
-                coalesce(
-                    (SELECT max(channel.callsign) FROM p25_site_channel channel
-                     WHERE channel.channel_id = site.channel_id AND channel.downlink_hz = site.current_control_hz),
-                    (SELECT max(channel.callsign) FROM p25_site_channel_summary channel
-                     WHERE channel.channel_id = site.channel_id AND channel.downlink_hz = site.current_control_hz),
-                    (SELECT channel.callsign FROM p25_site_channel channel
-                     WHERE channel.channel_id = site.channel_id AND channel.callsign IS NOT NULL
-                     ORDER BY channel.confirmed_at_ms DESC LIMIT 1),
-                    (SELECT channel.callsign FROM p25_site_channel_summary channel
-                     WHERE channel.channel_id = site.channel_id AND channel.callsign IS NOT NULL
-                     ORDER BY channel.last_seen_ms DESC LIMIT 1)
-                ) AS callsign,
+                header_bsi.callsign AS callsign,
+                header_bsi.last_heard_ms AS bsi_last_heard_ms,
+                header_bsi.frequency_hz AS bsi_frequency_hz,
                 (SELECT COUNT(DISTINCT CASE WHEN channel.downlink_hz > 0
                     THEN 'f:' || channel.downlink_hz ELSE 'k:' || channel.channel_key END)
                     FROM p25_site_channel_summary channel WHERE channel.channel_id = site.channel_id) AS frequencies,
@@ -7367,6 +7365,12 @@ class StatsWebDatabase
                 (SELECT COUNT(*) FROM p25_site_patch_group patch
                     WHERE patch.channel_id = site.channel_id) AS patches
             FROM p25_site_snapshot site
+            LEFT JOIN p25_site_bsi header_bsi ON header_bsi.channel_id=site.channel_id AND header_bsi.source=0
+                AND header_bsi.frequency_hz=coalesce(
+                    (SELECT bsi.frequency_hz FROM p25_site_bsi bsi WHERE bsi.channel_id=site.channel_id
+                        AND bsi.source=0 AND bsi.frequency_hz=site.current_control_hz LIMIT 1),
+                    (SELECT bsi.frequency_hz FROM p25_site_bsi bsi WHERE bsi.channel_id=site.channel_id
+                        AND bsi.source=0 ORDER BY bsi.last_heard_ms DESC,bsi.frequency_hz LIMIT 1))
             JOIN receiver_channel channel ON channel.id = site.channel_id
             JOIN configuration_channel config ON config.configuration_id = channel.configuration_id
             LEFT JOIN alias_list ON alias_list.id = config.alias_list_id

@@ -18,6 +18,8 @@
  */
 package io.github.dsheirer.module.decode.p25.phase1;
 
+import io.github.dsheirer.module.decode.p25.phase1.message.lc.LinkControlOpcode;
+
 import io.github.dsheirer.channel.IChannelDescriptor;
 import io.github.dsheirer.channel.state.DecoderStateEvent;
 import io.github.dsheirer.channel.state.IDecoderStateEventProvider;
@@ -292,11 +294,17 @@ public class P25P1MessageProcessor implements Listener<IMessage>, IDecoderStateE
             }
             else if(message instanceof TDULCMessage tdulc)
             {
+                LinkControlWord lcw = tdulc.getLinkControlWord();
+                if(lcw.getOpcode() == LinkControlOpcode.MOTOROLA_BASE_STATION_ID)
+                {
+                    //Carrier metadata can precede voice. Preserve held source extensions and alias assembly.
+                    dispatch(tdulc);
+                    return;
+                }
                 //Clear before an extended terminator can be held awaiting its source extension.
                 mHarrisTalkerAliasAssembler.reset();
                 mHarrisTalkerAliasSource = null;
                 boolean motorolaTalkerAliasComplete = false;
-                LinkControlWord lcw = tdulc.getLinkControlWord();
 
                 if(lcw instanceof IExtendedSourceMessage esm)
                 {

@@ -48,6 +48,31 @@ class DecodeMessageViewServiceTest
     private static final long SECOND_FREQUENCY = 852_012_500L;
 
     @Test
+    void reportsInnerLinkControlFailureWithoutHidingTheFrameValidity() throws Exception
+    {
+        var source = new FakeMessageSource();
+        try(var service = new DecodeMessageViewService(scope -> source); var session = service.openSession(scope()))
+        {
+            await(session::isBound);
+            var lc = new io.github.dsheirer.module.decode.p25.phase1.message.lc.motorola.LCMotorolaBaseStationId(
+                io.github.dsheirer.bits.CorrectedBinaryMessage.loadHex("0590B20A1928820000"));
+            lc.setValid(false);
+            source.receive(new io.github.dsheirer.module.decode.p25.phase1.message.tdu.TDULCMessage(
+                new io.github.dsheirer.bits.CorrectedBinaryMessage(288), 1, 1000L) {
+                @Override public io.github.dsheirer.module.decode.p25.phase1.message.lc.LinkControlWord getLinkControlWord() { return lc; }
+            });
+            var view = session.poll(2, TimeUnit.SECONDS);
+            assertTrue(view.frameValid()); assertFalse(view.valid()); assertEquals(false, view.linkControlValid());
+            source.receive(new io.github.dsheirer.module.decode.p25.phase1.message.ldu.LDU1Message(
+                new io.github.dsheirer.bits.CorrectedBinaryMessage(1568), 1, 2000L) {
+                @Override public io.github.dsheirer.module.decode.p25.phase1.message.lc.LinkControlWord getLinkControlWord() { return lc; }
+            });
+            view = session.poll(2, TimeUnit.SECONDS);
+            assertTrue(view.frameValid()); assertTrue(view.valid()); assertEquals(false, view.linkControlValid());
+        }
+    }
+
+    @Test
     void sessionStartsEmptyAndOnlyReceivesMessagesObservedAfterOpening() throws InterruptedException
     {
         FakeMessageSource source = new FakeMessageSource();

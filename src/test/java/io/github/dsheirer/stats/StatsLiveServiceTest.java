@@ -542,7 +542,7 @@ class StatsLiveServiceTest
             null, null, 0L, 0L, 0L, 0L, 0L, 0L, 0L, null, null, null, null, null, null, null, null,
             null, null, null, null, "NBFM", null, null, "CONVENTIONAL",
             new ChannelActivitySnapshot.Transmission("leg-17", "active", 1_050L, 1_000L, 1_075L, false,
-                3L, 1_025L), 12_500, null, receiverIdentity);
+                3L, 1_025L), 12_500, null, receiverIdentity, List.of());
         ChannelActivitySnapshot snapshot = new ChannelActivitySnapshot("conventional", "Conventional",
             "", "", "Conventional", null, false, true, List.of(), List.of(row));
         return new ChannelActivityEvent(ChannelActivityEvent.Operation.UPSERT, snapshot);

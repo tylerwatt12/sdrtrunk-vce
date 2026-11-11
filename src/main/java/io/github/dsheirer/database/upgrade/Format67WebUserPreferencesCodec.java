@@ -29,6 +29,12 @@ final class Format67WebUserPreferencesCodec
     {
         if(json == null || json.getBytes(StandardCharsets.UTF_8).length > MAXIMUM_JSON_BYTES ||
             !(MAPPER.readTree(json) instanceof ObjectNode target)) throw invalid();
+        validateStructure(target);
+    }
+
+    /** Validate an already bounded tree when an adjacent contract removes fields. */
+    static void validateStructure(ObjectNode target) throws IOException
+    {
         JsonNode version = target.get("version");
         if(version == null || !version.isIntegralNumber() || !version.canConvertToInt() || version.intValue() != 15)
             throw invalid();

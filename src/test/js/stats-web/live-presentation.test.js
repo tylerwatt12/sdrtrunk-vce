@@ -758,3 +758,12 @@ test('automatic Live table fallbacks preserve the explicit preferred table', () 
   assert.match(channels, /showTable\(next\.closest\('\.channels-live-tab'\)\?\.dataset\.tableId, false, true\)/,
     'Keyboard selection must opt into saving');
 });
+
+// BSI freshness belongs to actual station-identification reception, independently of row activity.
+const bsiBehavior = vm.runInNewContext(`${functionSource('bsiFreshness')}; bsiFreshness`, {
+  dateTime: (value) => ({textContent: String(value)}), Date
+});
+assert.equal(bsiBehavior({last_heard_ms: 1000}, 3601000), 'Fresh · Last heard 1000');
+assert.equal(bsiBehavior({last_heard_ms: 1000}, 3601001), 'Historical · Last heard 1000');
+assert.equal(bsiBehavior({last_heard_ms: null}, 1000), 'Last heard unknown');
+assert.equal(bsiBehavior({lastHeardMs: 1000}, 1001), 'Fresh · Last heard 1000');

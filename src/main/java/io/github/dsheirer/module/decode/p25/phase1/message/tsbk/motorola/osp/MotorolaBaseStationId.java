@@ -30,24 +30,17 @@ import io.github.dsheirer.module.decode.p25.phase1.P25P1DataUnitID;
 import io.github.dsheirer.module.decode.p25.phase1.message.IFrequencyBandReceiver;
 import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.OSPMessage;
 
+import io.github.dsheirer.module.decode.p25.reference.MotorolaBsi;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
 public class MotorolaBaseStationId extends OSPMessage implements IFrequencyBandReceiver
 {
-    private static final IntField CHARACTER_1 = IntField.length6(16);
-    private static final IntField CHARACTER_2 = IntField.length6(22);
-    private static final IntField CHARACTER_3 = IntField.length6(28);
-    private static final IntField CHARACTER_4 = IntField.length6(34);
-    private static final IntField CHARACTER_5 = IntField.length6(40);
-    private static final IntField CHARACTER_6 = IntField.length6(46);
-    private static final IntField CHARACTER_7 = IntField.length6(52);
-    private static final IntField CHARACTER_8 = IntField.length6(58);
     private static final IntField FREQUENCY_BAND = IntField.length4(64);
     private static final IntField CHANNEL_NUMBER = IntField.length12(68);
 
-    private String mCWID;
+    private String mCallsign;
     private IChannelDescriptor mChannel;
 
     public MotorolaBaseStationId(P25P1DataUnitID dataUnitID, CorrectedBinaryMessage message, int nac, long timestamp)
@@ -64,11 +57,11 @@ public class MotorolaBaseStationId extends OSPMessage implements IFrequencyBandR
         if(hasChannel())
         {
             sb.append(" CHAN:").append(getChannel());
-            sb.append(" CWID:").append(getCWID());
+            sb.append(" BSI:").append(getCallsign());
         }
         else
         {
-            sb.append(" CWID NOT SPECIFIED");
+            sb.append(" BSI NOT SPECIFIED");
         }
 
         return sb.toString();
@@ -80,37 +73,14 @@ public class MotorolaBaseStationId extends OSPMessage implements IFrequencyBandR
     }
 
 
-    public String getCWID()
+    public String getCallsign()
     {
-        if(mCWID == null)
+        if(mCallsign == null)
         {
-            StringBuilder sb = new StringBuilder();
-
-            sb.append(getCharacter(CHARACTER_1));
-            sb.append(getCharacter(CHARACTER_2));
-            sb.append(getCharacter(CHARACTER_3));
-            sb.append(getCharacter(CHARACTER_4));
-            sb.append(getCharacter(CHARACTER_5));
-            sb.append(getCharacter(CHARACTER_6));
-            sb.append(getCharacter(CHARACTER_7));
-            sb.append(getCharacter(CHARACTER_8));
-
-            mCWID = sb.toString();
+            mCallsign = MotorolaBsi.decodeCallsign(getMessage());
         }
 
-        return mCWID;
-    }
-
-    private String getCharacter(IntField field)
-    {
-        int value = getMessage().getInt(field);
-
-        if(value != 0)
-        {
-            return String.valueOf((char)(value + 43));
-        }
-
-        return "";
+        return mCallsign;
     }
 
     public IChannelDescriptor getChannel()

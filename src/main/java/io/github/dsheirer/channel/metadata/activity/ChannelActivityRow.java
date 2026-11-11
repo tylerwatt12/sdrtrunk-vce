@@ -99,7 +99,7 @@ public class ChannelActivityRow
     private long mActivationOrder;
     private String mLcn;
     private long mFrequency;
-    private String mCallsign;
+    private List<BaseStationIdentification> mBsi = List.of();
     private Integer mTimeslot;
     private Identifier<?> mSource;
     private long mTrafficCallStart;
@@ -323,13 +323,16 @@ public class ChannelActivityRow
 
     public String getCallsign()
     {
-        return mCallsign;
+        return mBsi.isEmpty() ? null : mBsi.getFirst().callsign();
     }
 
-    public void setCallsign(String callsign)
+    public List<BaseStationIdentification> getBsi() { return mBsi; }
+
+    public void setBsi(List<BaseStationIdentification> bsi)
     {
-        mCallsign = callsign != null && !callsign.isBlank() ? callsign.trim() : null;
+        mBsi = List.copyOf(bsi);
     }
+
 
     public Integer getTimeslot()
     {
@@ -840,7 +843,7 @@ public class ChannelActivityRow
         copy.mState = mState;
         copy.mActivationOrder = mActivationOrder;
         copy.mLcn = mLcn;
-        copy.mCallsign = mCallsign;
+        copy.mBsi = mBsi;
         copy.mSource = mSource;
         copy.mServingSystemKey = mServingSystemKey;
         copy.mServingSystemCaptured = mServingSystemCaptured;

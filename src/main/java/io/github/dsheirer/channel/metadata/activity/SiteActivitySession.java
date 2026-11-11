@@ -44,7 +44,7 @@ public class SiteActivitySession
     private final ChannelActivityTableState mTableState;
     private final Map<Long,ChannelActivityRow> mControlRows = new HashMap<>();
     private final Map<String,ChannelActivityRow> mTrafficRows = new HashMap<>();
-    private final Map<Long,String> mCallsigns = new HashMap<>();
+    private final Map<Long,Map<String,BaseStationIdentification>> mBsi = new HashMap<>();
     private Long mCurrentControlFrequency;
 
     public SiteActivitySession(Channel parentChannel, ChannelActivityTableState tableState)
@@ -245,7 +245,7 @@ public class SiteActivitySession
     /**
      * Stores the latest BSI callsign for a frequency and applies it to all rows sharing that channel.
      */
-    public List<ChannelActivityRow> callsign(long frequency, String callsign)
+    public List<ChannelActivityRow> observeBsi(long frequency, String callsign, String source, Long lastHeardMs)
     {
         if(frequency <= 0 || callsign == null || callsign.isBlank())
         {
@@ -253,13 +253,17 @@ public class SiteActivitySession
         }
 
         String value = callsign.trim();
-        mCallsigns.put(frequency, value);
+        var bySource = mBsi.computeIfAbsent(frequency, ignored -> new java.util.TreeMap<>());
+        var previous = bySource.get(source);
+        if(previous != null && previous.lastHeardMs() != null &&
+            (lastHeardMs == null || lastHeardMs <= previous.lastHeardMs())) return List.of();
+        bySource.put(source, new BaseStationIdentification(source, value, lastHeardMs));
         List<ChannelActivityRow> updated = new ArrayList<>();
         ChannelActivityRow control = mControlRows.get(frequency);
 
         if(control != null)
         {
-            control.setCallsign(value);
+            applyBsi(control);
             updated.add(control);
         }
 
@@ -267,7 +271,7 @@ public class SiteActivitySession
         {
             if(traffic.getFrequency() == frequency)
             {
-                traffic.setCallsign(value);
+                applyBsi(traffic);
 
                 if(!updated.contains(traffic))
                 {
@@ -472,7 +476,7 @@ public class SiteActivitySession
         row.setChannel(mParentChannel);
         row.setFrequency(frequency);
         row.setTimeslot(null);
-        applyCallsign(row);
+        applyBsi(row);
 
         return row;
     }
@@ -494,14 +498,15 @@ public class SiteActivitySession
             }
         }
 
-        applyCallsign(row);
+        applyBsi(row);
     }
 
-    private void applyCallsign(ChannelActivityRow row)
+    private void applyBsi(ChannelActivityRow row)
     {
         if(row != null)
         {
-            row.setCallsign(mCallsigns.get(row.getFrequency()));
+            var values = mBsi.get(row.getFrequency());
+            row.setBsi(values != null ? List.copyOf(values.values()) : List.of());
         }
     }
 

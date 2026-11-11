@@ -40,6 +40,8 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
@@ -49,6 +51,45 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class ChannelProcessingManagerSiteMetadataTest
 {
+    @Test
+    public void voiceBsiRequestDefersProjectionAndRejectsReusedTrafficChannels() throws Exception
+    {
+        Channel parent = new Channel("Parent");
+        parent.setDecodeConfiguration(new io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1());
+        parent.activateProcessingIncarnation(10);
+        Channel traffic = new Channel("Traffic", Channel.ChannelType.TRAFFIC);
+        traffic.setDecodeConfiguration(new io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1());
+        traffic.activateProcessingIncarnation(11);
+        traffic.setSiteEvidenceProcessingIncarnation(parent.getProcessingIncarnation());
+        traffic.setSiteEvidenceTuningGeneration(parent.getSiteEvidenceTuningGeneration());
+        var manager = new io.github.dsheirer.module.decode.p25.P25TrafficChannelManager(parent);
+        var projection = new AtomicReference<Thread>();
+        manager.setControlSnapshotSupplier(() -> {
+            projection.set(Thread.currentThread());
+            return p25Snapshot();
+        });
+        var word = new io.github.dsheirer.module.decode.p25.phase1.message.lc.motorola.LCMotorolaBaseStationId(
+            io.github.dsheirer.bits.CorrectedBinaryMessage.loadHex("0590B20A1928820000"));
+        assertNull(manager.voiceBsiRequest(traffic, word, 851012500L, 999),
+            "Unverified link control must never enter BSI learning");
+        word.setValid(true);
+        var request = manager.voiceBsiRequest(traffic, word, 851012500L, 1000);
+        assertNull(projection.get());
+        assertNotNull(request);
+        try(var worker = java.util.concurrent.Executors.newSingleThreadExecutor())
+        {
+            assertNotNull(worker.submit(request::resolve).get());
+            assertNotEquals(Thread.currentThread(), projection.get());
+            projection.set(null);
+            var stale = manager.voiceBsiRequest(traffic, word, 851012500L, 2000);
+            traffic.advanceSiteEvidenceTuningGeneration();
+            assertNull(worker.submit(stale::resolve).get());
+            assertNull(projection.get());
+            assertNull(manager.voiceBsiRequest(traffic, word, 851012500L, 3000),
+                "A carrier allocated under another parent tuning generation cannot teach this site");
+        }
+    }
+
     @Test
     public void p25PublisherDefersSnapshotSupplierToObserverWorker() throws Exception
     {

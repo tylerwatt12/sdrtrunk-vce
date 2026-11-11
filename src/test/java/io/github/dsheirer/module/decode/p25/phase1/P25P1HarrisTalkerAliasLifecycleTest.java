@@ -30,6 +30,23 @@ import org.junit.jupiter.api.Test;
 class P25P1HarrisTalkerAliasLifecycleTest
 {
     @Test
+    void carrierBsiPreservesAnInProgressAlias()
+    {
+        var processor = new P25P1MessageProcessor();
+        var aliases = aliases(processor);
+        processor.receive(ldu(source(101), 900));
+        processor.receive(ldu(block1(), 1000));
+        var bsi = new io.github.dsheirer.module.decode.p25.phase1.message.lc.motorola.LCMotorolaBaseStationId(
+            CorrectedBinaryMessage.loadHex("0590B20A1928820000"));
+        bsi.setValid(true);
+        processor.receive(new TDULCMessage(new CorrectedBinaryMessage(288), 1, 1050) {
+            @Override public LinkControlWord getLinkControlWord() { return bsi; }
+        });
+        processor.receive(ldu(block2(), 1100));
+        assertEquals(List.of("CDP #0231"), aliases);
+    }
+
+    @Test
     void listenerResetCannotPublishTheOldCompletionOrRestoreItsSourceRecursively()
     {
         P25P1MessageProcessor processor = new P25P1MessageProcessor();

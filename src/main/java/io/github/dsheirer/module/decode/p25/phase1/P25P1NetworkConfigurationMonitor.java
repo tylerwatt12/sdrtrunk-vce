@@ -248,7 +248,7 @@ public class P25P1NetworkConfigurationMonitor
                 {
                     mMotorolaBaseStationIds.put(baseStationId.getChannel().toString(), baseStationId);
                     P25NetworkConfigurationSnapshot.Channel channel = getChannelSnapshot("base_station",
-                        baseStationId.getChannel(), baseStationId.getCWID());
+                        baseStationId.getChannel(), baseStationId.getCallsign());
                     return observation(null, null, channel != null ? List.of(channel) : Collections.emptyList(),
                         Collections.emptyList(), Collections.emptyList());
                 }
@@ -517,7 +517,7 @@ public class P25P1NetworkConfigurationMonitor
         for(MotorolaBaseStationId baseStationId: mMotorolaBaseStationIds.values())
         {
             P25NetworkConfigurationSnapshot.Channel channel = getChannelSnapshot("base_station",
-                baseStationId.getChannel(), baseStationId.getCWID());
+                baseStationId.getChannel(), baseStationId.getCallsign());
             if(channel != null)
             {
                 channels.add(channel);
@@ -906,7 +906,7 @@ public class P25P1NetworkConfigurationMonitor
         for(MotorolaBaseStationId baseStationId: mMotorolaBaseStationIds.values())
         {
             P25NetworkConfigurationSnapshot.Channel channel = getChannelSnapshot("base_station",
-                baseStationId.getChannel(), baseStationId.getCWID());
+                baseStationId.getChannel(), baseStationId.getCallsign());
             if(channel != null)
             {
                 callsigns.add(channel.withObservedAt(baseStationId.getTimestamp()));

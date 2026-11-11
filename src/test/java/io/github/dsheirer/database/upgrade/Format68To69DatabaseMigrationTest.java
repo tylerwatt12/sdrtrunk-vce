@@ -66,7 +66,7 @@ class Format68To69DatabaseMigrationTest
         try(var connection = open(history))
         {
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.requireCurrent(connection).version());
-            assertEquals(ConfigurationHistoryDatabase.HISTORY_FINGERPRINT, SqliteSchemaValidator.fingerprint(connection));
+            assertEquals(ConfigurationHistoryDatabase.FORMAT_69_HISTORY_FINGERPRINT, SqliteSchemaValidator.fingerprint(connection));
             assertEquals(count, scalar(connection, "SELECT count(*) FROM receiver_activity_event"));
             assertEquals(2, scalar(connection, "SELECT encryption_state FROM receiver_activity_event WHERE id=900000000001"));
             assertEquals(0, scalar(connection, "SELECT encryption_state FROM receiver_activity_event WHERE id=900000000002"));
@@ -129,7 +129,7 @@ class Format68To69DatabaseMigrationTest
             var second = open(ActivityDatabasePath.forConfiguration(migrated)))
         {
             assertEquals(SqliteSchemaValidator.fingerprint(first), SqliteSchemaValidator.fingerprint(second));
-            assertEquals(ConfigurationHistoryDatabase.HISTORY_FINGERPRINT, SqliteSchemaValidator.fingerprint(first));
+            assertEquals(ConfigurationHistoryDatabase.FORMAT_69_HISTORY_FINGERPRINT, SqliteSchemaValidator.fingerprint(first));
         }
         ConfigurationHistoryDatabase.validatePair(fresh);
         ConfigurationHistoryDatabase.validatePairIdentity(migrated);

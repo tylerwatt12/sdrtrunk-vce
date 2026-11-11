@@ -123,7 +123,8 @@ public record ChannelActivitySnapshot(String tableId, String title, String syste
                       String sourceAliasDescription, String talkerAlias, String sourceAliasDisplay, String targetId,
                       String targetForm, String targetAlias, String targetAliasDescription, String decoder,
                       String encryptionDetails, Navigation navigation, String role, Transmission transmission,
-                      Integer bandwidthHz, String servingSystemKey, String receiverIdentity)
+                      Integer bandwidthHz, String servingSystemKey, String receiverIdentity,
+                      List<BaseStationIdentification> bsi)
     {
         /** Compatibility snapshots have no current physical receiver assignment. */
         public Row(String key, String channelName, String configurationId, String status, List<String> tags,
@@ -142,7 +143,7 @@ public record ChannelActivitySnapshot(String tableId, String title, String syste
                 controlCorrectedBits, controlSyncLossBits, controlDroppedBits, controlLastValidDecodeMs, voiceQuality,
                 timeslot, sourceId, sourceForm, sourceAlias, sourceAliasDescription, talkerAlias, sourceAliasDisplay,
                 targetId, targetForm, targetAlias, targetAliasDescription, decoder, encryptionDetails, navigation,
-                role, transmission, bandwidthHz, servingSystemKey, null);
+                role, transmission, bandwidthHz, servingSystemKey, null, List.of());
         }
 
         /** Compatibility snapshots have no captured receiving-system proof. */
@@ -236,7 +237,7 @@ public record ChannelActivitySnapshot(String tableId, String title, String syste
                     row.getTransmissionObservedAt(), row.getTransmissionStart(),
                     row.getTransmissionLastObservedAt(), row.isTransmissionEndCertain(),
                     row.getTransmissionBurstGeneration(), row.getTransmissionBurstStart()) : null,
-                bandwidth(bandwidthChannel), row.getServingSystemKey(), row.getReceiverIdentity());
+                bandwidth(bandwidthChannel), row.getServingSystemKey(), row.getReceiverIdentity(), row.getBsi());
         }
 
         private static Integer bandwidth(Channel channel)

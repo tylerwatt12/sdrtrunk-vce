@@ -18,6 +18,9 @@
  */
 package io.github.dsheirer.module.decode.p25.phase1;
 
+import io.github.dsheirer.module.decode.p25.phase1.message.lc.motorola.LCMotorolaBaseStationId;
+import io.github.dsheirer.module.decode.p25.phase1.message.lc.LinkControlOpcode;
+
 import com.google.common.eventbus.Subscribe;
 import io.github.dsheirer.audio.call.AudioActivityCallEvent;
 import io.github.dsheirer.channel.IChannelDescriptor;
@@ -275,9 +278,6 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
 
         mNetworkConfigurationMonitor = new P25P1NetworkConfigurationMonitor(mModulation,
             mNetworkConfigurationStabilizer);
-        mSiteMetadataPublisher = new P25SiteMetadataPublisher(mChannel, mNetworkConfigurationStabilizer::getSnapshot,
-            this::hasInterModuleEventBus,
-            event -> getInterModuleEventBus().post(event), () -> mSourceFrequency);
 
         if(trafficChannelManager != null)
         {
@@ -298,6 +298,13 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
             //Do nothing with channel events if we're not configured to process traffic channels
             mChannelEventListener = channelEvent -> {};
         }
+        if(mSiteMetadataEnabled)
+        {
+            mTrafficChannelManager.setControlSnapshotSupplier(mNetworkConfigurationStabilizer::getSnapshot);
+        }
+        mSiteMetadataPublisher = new P25SiteMetadataPublisher(mChannel, mTrafficChannelManager::getSiteSnapshot,
+            this::hasInterModuleEventBus,
+            event -> getInterModuleEventBus().post(event), () -> mSourceFrequency);
     }
 
     /**
@@ -491,6 +498,16 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
         }
 
         publishSiteMetadata(timestamp);
+    }
+
+    private void processVoiceBaseStationId(
+        LCMotorolaBaseStationId bsi, long timestamp)
+    {
+        if(hasInterModuleEventBus())
+        {
+            var request = mTrafficChannelManager.voiceBsiRequest(mChannel, bsi, getCurrentFrequency(), timestamp);
+            if(request != null) getInterModuleEventBus().post(request);
+        }
     }
 
     private void publishSiteMetadata(long timestamp)
@@ -1198,8 +1215,18 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
     {
         if(message instanceof TDULCMessage tdulc)
         {
-            resetHarrisTalkerAliasSource();
             LinkControlWord lcw = tdulc.getLinkControlWord();
+            if(lcw != null && lcw.getOpcode() == LinkControlOpcode.MOTOROLA_BASE_STATION_ID)
+            {
+                if(lcw instanceof LCMotorolaBaseStationId bsi &&
+                    message.isValid() && bsi.isValid() && !bsi.isEncrypted())
+                {
+                    //The bounded site-metadata observer handles learning; this is not a call end.
+                    processVoiceBaseStationId(bsi, message.getTimestamp());
+                }
+                return;
+            }
+            resetHarrisTalkerAliasSource();
 
             if(message.isValid() && lcw != null && lcw.isValid())
             {

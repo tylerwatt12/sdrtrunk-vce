@@ -5,6 +5,9 @@
  */
 package io.github.dsheirer.message;
 
+import io.github.dsheirer.module.decode.p25.phase1.message.tdu.TDULCMessage;
+import io.github.dsheirer.module.decode.p25.phase1.message.ldu.LDU1Message;
+
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.controller.channel.ChannelProcessingManager;
@@ -444,14 +447,14 @@ public class DecodeMessageViewService implements AutoCloseable
     public record MessageView(String messageId, long timestampMs, String protocol, int timeslot, boolean valid,
                               String filterKey, String filterLabel, String text, String configurationId,
                               String channelName, long frequencyHz, @JsonIgnore long sourceGeneration,
-                              @JsonIgnore long sourceBindingSequence)
+                              @JsonIgnore long sourceBindingSequence, boolean frameValid, Boolean linkControlValid)
     {
         public MessageView(String messageId, long timestampMs, String protocol, int timeslot, boolean valid,
                            String filterKey, String filterLabel, String text, String configurationId,
                            String channelName, long frequencyHz, long sourceGeneration)
         {
             this(messageId, timestampMs, protocol, timeslot, valid, filterKey, filterLabel, text, configurationId,
-                channelName, frequencyHz, sourceGeneration, 0);
+                channelName, frequencyHz, sourceGeneration, 0, valid, null);
         }
 
         public MessageView(String messageId, long timestampMs, String protocol, int timeslot, boolean valid,
@@ -1188,7 +1191,8 @@ public class DecodeMessageViewService implements AutoCloseable
                     String key = view.filterKey().isEmpty() ? "" : filterPrefix(producer.mScope) + view.filterKey();
                     MessageView aggregateView = new MessageView(view.messageId(), view.timestampMs(), view.protocol(),
                         view.timeslot(), view.valid(), key, view.filterLabel(), view.text(), view.configurationId(),
-                        member.channelName(), view.frequencyHz(), mGeneration, view.sourceBindingSequence());
+                        member.channelName(), view.frequencyHz(), mGeneration, view.sourceBindingSequence(),
+                        view.frameValid(), view.linkControlValid());
 
                     for(Session session: mSessions)
                     {
@@ -1224,7 +1228,7 @@ public class DecodeMessageViewService implements AutoCloseable
             messageId(message, timestamp), timestamp, protocol.display(), timeslot(message),
             valid(message), match != null ? match.filterKey() : "", match != null ? match.filterLabel() : "Unknown",
             text(message), scope.configurationId(), bounded(channelName, TEXT_MAXIMUM_LENGTH), scope.frequencyHz(),
-            sourceGeneration, bindingSequence);
+            sourceGeneration, bindingSequence, frameValid(message), linkControlValid(message));
     }
 
     private static String messageId(IMessage message, long timestamp)
@@ -1275,12 +1279,30 @@ public class DecodeMessageViewService implements AutoCloseable
     {
         try
         {
-            return message.isValid();
+            return frameValid(message) && (!(message instanceof TDULCMessage) ||
+                Boolean.TRUE.equals(linkControlValid(message)));
         }
         catch(RuntimeException _)
         {
             return false;
         }
+    }
+
+    private static boolean frameValid(IMessage message)
+    {
+        try { return message.isValid(); }
+        catch(RuntimeException ignored) { return false; }
+    }
+
+    private static Boolean linkControlValid(IMessage message)
+    {
+        try
+        {
+            if(message instanceof TDULCMessage tdulc) return tdulc.getLinkControlWord().isValid();
+            if(message instanceof LDU1Message ldu1) return ldu1.getLinkControlWord().isValid();
+            return null;
+        }
+        catch(RuntimeException ignored) { return false; }
     }
 
     private static String text(IMessage message)

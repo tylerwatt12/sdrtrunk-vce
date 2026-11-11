@@ -18,6 +18,13 @@
  */
 package io.github.dsheirer.module.decode.p25;
 
+import io.github.dsheirer.module.decode.p25.phase1.message.lc.motorola.LCMotorolaBaseStationId;
+import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
+import io.github.dsheirer.module.decode.p25.telemetry.P25VoiceBsiTracker;
+import io.github.dsheirer.metadata.site.SiteMetadataSnapshotRequest;
+import io.github.dsheirer.metadata.site.SiteReceiverContext;
+import java.util.function.Supplier;
+
 import io.github.dsheirer.channel.IChannelDescriptor;
 import io.github.dsheirer.channel.metadata.activity.ChannelActivityModel;
 import io.github.dsheirer.controller.channel.Channel;
@@ -176,6 +183,10 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
     private Listener<ChannelEvent> mChannelEventListener;
     private Listener<IDecodeEvent> mDecodeEventListener;
     private TrafficChannelTeardownMonitor mTrafficChannelTeardownMonitor = new TrafficChannelTeardownMonitor();
+    private volatile Supplier<P25NetworkConfigurationSnapshot> mControlSnapshotSupplier;
+    private final P25VoiceBsiTracker mVoiceBsi =
+        new P25VoiceBsiTracker();
+
     private Channel mParentChannel;
     private ScrambleParameters mPhase2ScrambleParameters;
     private Listener<IMessage> mMessageListener;
@@ -719,6 +730,39 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
         }
 
         return mFrequencyBandMap;
+    }
+
+    /** Bound by the standard decoder; snapshot projection and voice BSI learning run only on the site observer. */
+    public void setControlSnapshotSupplier(Supplier<P25NetworkConfigurationSnapshot> supplier)
+    {
+        mControlSnapshotSupplier = supplier;
+    }
+
+    public P25NetworkConfigurationSnapshot getSiteSnapshot()
+    {
+        mVoiceBsi.generation(mParentChannel.getProcessingIncarnation(), mParentChannel.getSiteEvidenceTuningGeneration());
+        var supplier = mControlSnapshotSupplier;
+        return supplier != null ? mVoiceBsi.merge(supplier.get()) : null;
+    }
+
+    /** Captures only small references on the decoder thread. The existing bounded observer owns all projection. */
+    public SiteMetadataSnapshotRequest voiceBsiRequest(Channel traffic,
+        LCMotorolaBaseStationId bsi,
+        long frequency, long timestamp)
+    {
+        if(!traffic.isTrafficChannel() || !mParentChannel.isStandardChannel() || frequency <= 0 ||
+            bsi == null || !bsi.isValid() || bsi.isEncrypted() || mControlSnapshotSupplier == null) return null;
+        var parentContext = SiteReceiverContext.capture(mParentChannel, Protocol.APCO25);
+        if(traffic.getSiteEvidenceProcessingIncarnation() != parentContext.processingIncarnation() ||
+            traffic.getSiteEvidenceTuningGeneration() != parentContext.siteEvidenceTuningGeneration()) return null;
+        var trafficContext = SiteReceiverContext.capture(traffic, Protocol.APCO25, frequency);
+        return new SiteMetadataSnapshotRequest(mParentChannel, parentContext, () -> {
+            if(!trafficContext.matchesCurrentChannel(traffic) ||
+                traffic.getSiteEvidenceProcessingIncarnation() != parentContext.processingIncarnation()) return null;
+            mVoiceBsi.generation(parentContext.processingIncarnation(), parentContext.siteEvidenceTuningGeneration());
+            mVoiceBsi.observe(frequency, bsi.getCallsign(), timestamp);
+            return getSiteSnapshot();
+        }, timestamp);
     }
 
     /**

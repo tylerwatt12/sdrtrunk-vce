@@ -38,9 +38,22 @@ class P25SiteFactFreshnessTest
             ReceiverActivitySchema.insertSite(connection, withChannels(original, List.of(control, bsi)));
             assertEquals(1, scalar(connection, "SELECT count(*) FROM p25_site_channel_summary"));
             assertEquals(1, scalar(connection, "SELECT count(*) FROM p25_site_channel"));
-            assertEquals(1, scalar(connection, "SELECT count(*) FROM p25_site_channel_summary WHERE callsign='WTEST77'"));
+            assertEquals(1, scalar(connection, "SELECT count(*) FROM p25_site_bsi WHERE callsign='WTEST77'"));
+            var voice = new P25NetworkConfigurationSnapshot.Channel("base_station_voice", null,
+                control.downlink(), null, false, 1, "VOICE77", 60_001L);
+            ReceiverActivitySchema.insertSite(connection, withChannels(snapshot(62_000, 62_000, "c"),
+                List.of(control, bsi, voice)));
+            assertEquals(2, scalar(connection, "SELECT count(*) FROM p25_site_bsi"));
             ReceiverActivitySchema.insertSite(connection, snapshot(71_000, 71_000, "b"));
-            assertEquals(1, scalar(connection, "SELECT count(*) FROM p25_site_channel_summary WHERE callsign='WTEST77'"));
+            assertEquals(60_000, scalar(connection, "SELECT last_heard_ms FROM p25_site_bsi WHERE source=0"));
+            assertEquals(60_001, scalar(connection, "SELECT last_heard_ms FROM p25_site_bsi WHERE source=1"));
+            assertEquals(1, scalar(connection, "SELECT count(*) FROM p25_site_bsi WHERE callsign='WTEST77'"));
+            try(var statement = connection.createStatement(); var plan = statement.executeQuery(
+                "EXPLAIN QUERY PLAN SELECT callsign,last_heard_ms FROM p25_site_bsi WHERE channel_id=1 AND frequency_hz=770606250"))
+            {
+                assertTrue(plan.next());
+                assertTrue(plan.getString("detail").contains("PRIMARY KEY"));
+            }
             assertEquals(61_000, scalar(connection, "SELECT first_seen_ms FROM p25_site_channel_summary"));
         }
     }

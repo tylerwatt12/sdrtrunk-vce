@@ -146,7 +146,7 @@ final class ReceiverActivityScopedDeletion
         {
             addAnalogSummary(plan, target);
             for(String table: List.of("conventional_activity_summary", "dmr_conventional_radio_summary",
-                "dmr_conventional_talkgroup_summary", "p25_site_channel_tag_summary",
+                "dmr_conventional_talkgroup_summary", "p25_site_bsi", "p25_site_channel_tag_summary",
                 "p25_site_channel_summary", "p25_site_frequency_band_summary",
                 "p25_foreign_system_band_summary", "p25_site_neighbor_summary",
                 "p25_site_patch_group_radio_summary", "p25_site_patch_group_talkgroup_summary",
@@ -345,6 +345,7 @@ final class ReceiverActivityScopedDeletion
                             "WHERE summary.channel_id=p25_site_channel_summary.channel_id " +
                             "AND coalesce(current.downlink_hz,summary.downlink_hz)=?)";
                         plan.channel("summary", "p25_site_channel_summary", displayedFrequency, value);
+                        plan.channel("summary", "p25_site_bsi", frequency, value);
                         plan.channel("summary", "trunked_site_channel_summary", frequency, value);
                     }
                     if(has(target, "current"))

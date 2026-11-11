@@ -229,7 +229,9 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
         mNetworkConfigurationStabilizer = networkConfigurationStabilizer != null ?
             networkConfigurationStabilizer : new P25NetworkConfigurationStabilizer("P25_PHASE_2");
         mNetworkConfigurationMonitor = new P25P2NetworkConfigurationMonitor(mNetworkConfigurationStabilizer);
-        mSiteMetadataPublisher = new P25SiteMetadataPublisher(mChannel, mNetworkConfigurationStabilizer::getSnapshot,
+        if(channel.isStandardChannel())
+            mTrafficChannelManager.setControlSnapshotSupplier(mNetworkConfigurationStabilizer::getSnapshot);
+        mSiteMetadataPublisher = new P25SiteMetadataPublisher(mChannel, mTrafficChannelManager::getSiteSnapshot,
             this::hasInterModuleEventBus,
             event -> getInterModuleEventBus().post(event), siteMetadataRateLimiter, () -> mSourceFrequency);
 

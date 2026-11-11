@@ -858,9 +858,11 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
                 continue;
             }
 
-            if(channel.callsign() != null && !channel.callsign().isBlank())
+            if(channel.callsign() != null && !channel.callsign().isBlank() &&
+                ("base_station".equals(channel.role()) || "base_station_voice".equals(channel.role())))
             {
-                for(ChannelActivityRow callsignRow: session.callsign(channel.downlink(), channel.callsign()))
+                for(ChannelActivityRow callsignRow: session.observeBsi(channel.downlink(), channel.callsign(),
+                    "base_station_voice".equals(channel.role()) ? "voice" : "control", channel.observedAtMs()))
                 {
                     table.refresh(callsignRow);
                 }
