@@ -846,6 +846,13 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
             return;
         }
 
+        if(event.isSourceAdvertisedControlChannel())
+        {
+            for(ChannelActivityRow row: session.observeBsiSite(P25SiteIdentity.from(snapshot)))
+            {
+                table.refresh(row);
+            }
+        }
         table.setSiteContext(siteContext(mSiteIdentities.get(parentChannel)));
         table.setIdentifiers(identifierFields(snapshot));
         expireTrafficRows(session, table, parentChannel);

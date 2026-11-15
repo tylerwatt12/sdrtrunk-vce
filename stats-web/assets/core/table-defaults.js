@@ -117,10 +117,10 @@ const TABLE_DEFAULTS = Object.freeze({
     grow: ['name', 'list']
   },
   'channel-frequencies-p25': {
-    widths: { descriptor: 104, callsign: 110, tags: 130, downlink: 94, uplink: 94,
+    widths: { descriptor: 104, callsign: 300, tags: 130, downlink: 94, uplink: 94,
       tdma: 60, slots: 56, state: 86, 'voice-observations': 80,
       'data-observations': 70, 'last-seen': 116 },
-    hidden: ['callsign', 'tdma', 'data-observations'],
+    hidden: ['tdma', 'data-observations'],
     grow: ['descriptor', 'callsign', 'tags']
   },
   'channel-frequency-bands': {

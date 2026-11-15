@@ -1656,6 +1656,93 @@ class StatsWebDatabaseTest
     }
 
     @Test
+    void bsiDetailsStayOnTheSelectedCarrierAndPreserveSourceEvidence() throws Exception
+    {
+        try(Connection connection = openFixture(); Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO p25_site_bsi(channel_id,frequency_hz,source,callsign,last_heard_ms)
+                VALUES(71,851012500,0,'WTEST77',1000),(71,851012500,1,'WTEST77',2000),
+                    (71,852012500,0,'WOTHER88',9000),(72,851012500,1,'WSITE99',9000)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO p25_site_channel_summary(channel_id,channel_key,descriptor,downlink_hz,uplink_hz,
+                    tdma,timeslots,first_seen_ms,last_seen_ms,observation_count)
+                VALUES(71,'0-1','0-1',851012500,806012500,0,1,1000,4000,2)
+                """);
+        }
+        Map<String,Object> detail = map(mDatabase.channelDetail(P25_CHANNEL_A, request("/")), "channel");
+        assertEquals(851012500, number(detail.get("bsi_frequency_hz")));
+        List<Map<String,Object>> evidence = rowsFrom(detail, "bsi");
+        assertEquals(List.of("voice", "control"), evidence.stream().map(row -> row.get("source")).toList());
+        assertEquals(List.of("WTEST77", "WTEST77"), evidence.stream().map(row -> row.get("callsign")).toList());
+        assertEquals(List.of(2000L, 1000L), evidence.stream().map(row -> number(row.get("lastHeardMs"))).toList());
+        assertFalse(detail.containsKey("callsign"), "A site must not imply one callsign across its carriers");
+        assertFalse(detail.containsKey("bsi_last_heard_ms"));
+        assertEquals("WTEST77", rows(mDatabase.channelFrequencies(P25_CHANNEL_A, request("/"))).getFirst().get("callsign"));
+
+        try(Connection connection = openFixture(); Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("UPDATE p25_site_bsi SET callsign='WTEST88' WHERE channel_id=71 " +
+                "AND frequency_hz=851012500 AND source=1");
+        }
+        List<Map<String,Object>> conflict = rowsFrom(map(mDatabase.channelDetail(P25_CHANNEL_A, request("/")),
+            "channel"), "bsi");
+        assertEquals(List.of("WTEST88", "WTEST77"), conflict.stream().map(row -> row.get("callsign")).toList());
+        Map<String,Object> frequencyRow = rows(mDatabase.channelFrequencies(P25_CHANNEL_A, request("/"))).getFirst();
+        assertEquals(conflict, rowsFrom(frequencyRow, "bsi"));
+        assertEquals("WTEST88", frequencyRow.get("callsign"), "The export selects the newest source observation");
+        String csv = new String(mDatabase.csvExport("channel-frequencies",
+            request("/?configuration_id=" + P25_CHANNEL_A)).content(), StandardCharsets.UTF_8);
+        assertTrue(csv.contains("WTEST88"));
+
+        try(Connection connection = openFixture(); Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("UPDATE p25_site_bsi SET last_heard_ms=2000 WHERE channel_id=71 " +
+                "AND frequency_hz=851012500 AND source=0");
+        }
+        assertEquals("WTEST77", rows(mDatabase.channelFrequencies(P25_CHANNEL_A, request("/"))).getFirst()
+            .get("callsign"), "Control is the deterministic tie-breaker when reception times match");
+
+        try(Connection connection = openFixture(); Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("UPDATE p25_site_snapshot SET current_control_hz=853012500 WHERE channel_id=71");
+        }
+        Map<String,Object> changed = map(mDatabase.channelDetail(P25_CHANNEL_A, request("/")), "channel");
+        assertEquals(853012500, number(changed.get("bsi_frequency_hz")));
+        assertTrue(rowsFrom(changed, "bsi").isEmpty(), "Do not substitute the newest BSI from another carrier");
+    }
+
+    @Test
+    void bsiDetailsUseConfiguredFrequencyWhenControlIsUnknownAndKeepUnknownReceptionTimes() throws Exception
+    {
+        try(Connection connection = openFixture(); Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("UPDATE p25_site_snapshot SET current_control_hz=NULL WHERE channel_id=71");
+            statement.executeUpdate("""
+                INSERT INTO p25_site_bsi(channel_id,frequency_hz,source,callsign,last_heard_ms)
+                VALUES(71,851012500,1,'WTEST77',NULL),(71,852012500,0,'WOTHER88',9000)
+                """);
+        }
+        Map<String,Object> detail = map(mDatabase.channelDetail(P25_CHANNEL_A, request("/")), "channel");
+        assertEquals(851012500, number(detail.get("bsi_frequency_hz")));
+        List<Map<String,Object>> evidence = rowsFrom(detail, "bsi");
+        assertEquals(1, evidence.size());
+        assertEquals("voice", evidence.getFirst().get("source"));
+        assertEquals("WTEST77", evidence.getFirst().get("callsign"));
+        assertNull(evidence.getFirst().get("lastHeardMs"));
+        try(Connection connection = openFixture(); Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("UPDATE configuration_channel SET primary_frequency_hz=NULL WHERE configuration_id='" +
+                P25_CHANNEL_A + "'");
+            statement.executeUpdate("UPDATE p25_site_snapshot SET primary_frequency_hz=NULL WHERE channel_id=71");
+        }
+        Map<String,Object> unknown = map(mDatabase.channelDetail(P25_CHANNEL_A, request("/")), "channel");
+        assertNull(unknown.get("bsi_frequency_hz"));
+        assertTrue(rowsFrom(unknown, "bsi").isEmpty());
+    }
+
+    @Test
     void trunkedChannelFrequencyMetricMatchesTheFrequencyTable() throws Exception
     {
         try(Connection connection = openFixture();

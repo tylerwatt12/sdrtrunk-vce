@@ -707,10 +707,10 @@ class StatsWebInteractionUiContractTest
         String trunkedNeighbors = function(source, "function trunkedChannelNeighborColumns(channel)");
         assertTrue(callsign.contains("externalAnchor(callsign"));
         assertTrue(callsign.contains("encodeURIComponent(callsign)"));
-        assertTrue(source.contains("['Control BSI', callsignLink(channel.callsign)]"));
+        assertTrue(source.contains("['BSI', bsiCallsigns(channel)]"));
         assertTrue(source.contains("render: bsiCallsigns"));
-        assertTrue(function(source, "function bsiCallsigns(row)").contains("callsignLink(observation.callsign)"));
-        assertTrue(function(source, "function bsiCallsigns(row)").contains("bsiFreshness(observation)"));
+        assertTrue(function(source, "function bsiCallsigns(row)").contains("callsignLink(summary.callsign)"));
+        assertTrue(function(source, "function bsiCallsigns(row)").contains("bsiEvidenceText(observation, summary.conflict)"));
         assertTrue(neighbor.contains("entityRefHref(row?.entity_ref)"));
         assertFalse(neighbor.contains("neighbor_guid"));
         assertFalse(neighbor.contains("href('site'"));

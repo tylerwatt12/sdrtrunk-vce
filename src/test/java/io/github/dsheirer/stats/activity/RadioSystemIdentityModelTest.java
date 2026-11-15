@@ -1615,6 +1615,8 @@ class RadioSystemIdentityModelTest
             insertChannel(connection, P25_A, "TRUNKED", "P25_PHASE1", 1, "P25 A", correlation(1));
             ReceiverActivitySchema.insertSite(connection, p25Site(P25_A, 100, 0xBEE00, 0x3A9, 1, 1));
             long channelId = channelId(connection, P25_A);
+            execute(connection, "INSERT INTO p25_site_bsi(channel_id,frequency_hz,source,callsign,last_heard_ms) " +
+                "VALUES(" + channelId + ",851012500,0,'WOLD77',100)");
             record(connection, p25Presence(P25_A, 125, 123,
                 ReceiverActivityRecords.P25Identity.ORDINARY, false));
 
@@ -1635,6 +1637,8 @@ class RadioSystemIdentityModelTest
             assertEquals(2, scalar(connection,
                 "SELECT site FROM p25_site_snapshot WHERE channel_id=" + channelId));
             assertEquals(0, scalar(connection, "SELECT COUNT(*) FROM trunked_radio_channel_presence"));
+            assertEquals(0, scalar(connection, "SELECT COUNT(*) FROM p25_site_bsi"),
+                "The existing site-projection cascade removes the former system's carrier callsigns");
             ActivityTestDatabase.validateCurrent(connection);
 
             execute(connection, """
@@ -1655,6 +1659,8 @@ class RadioSystemIdentityModelTest
             insertChannel(connection, P25_A, "TRUNKED", "P25_PHASE1", 1, "P25 A", correlation(1));
             ReceiverActivitySchema.insertSite(connection, p25Site(P25_A, 100, 0xBEE00, 0x3A9, 1, 1));
             long channelId = channelId(connection, P25_A);
+            execute(connection, "INSERT INTO p25_site_bsi(channel_id,frequency_hz,source,callsign,last_heard_ms) " +
+                "VALUES(" + channelId + ",851012500,1,'WOLD77',100)");
             long radioSystemId = radioSystemId(connection, P25_A);
             record(connection, p25Presence(P25_A, 125, 123,
                 ReceiverActivityRecords.P25Identity.ORDINARY, false));
@@ -1672,6 +1678,8 @@ class RadioSystemIdentityModelTest
             assertEquals(3, scalar(connection,
                 "SELECT site FROM p25_site_snapshot WHERE channel_id=" + channelId));
             assertEquals(0, scalar(connection, "SELECT COUNT(*) FROM trunked_radio_channel_presence"));
+            assertEquals(0, scalar(connection, "SELECT COUNT(*) FROM p25_site_bsi"),
+                "The existing site-projection cascade removes the former site's carrier callsigns");
             assertEquals(200, scalar(connection,
                 "SELECT radio_system_assigned_at_ms FROM receiver_channel WHERE id=" + channelId));
             ActivityTestDatabase.validateCurrent(connection);

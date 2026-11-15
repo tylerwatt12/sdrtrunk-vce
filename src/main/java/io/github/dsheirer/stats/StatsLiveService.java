@@ -1151,6 +1151,13 @@ final class StatsLiveService implements AutoCloseable
         putText(row, "target_alias", snapshot.targetAlias(), MAXIMUM_LIVE_TEXT_LENGTH);
         putText(row, "target_alias_description", snapshot.targetAliasDescription(), MAXIMUM_LIVE_TEXT_LENGTH);
         putText(row, "callsign", snapshot.callsign(), MAXIMUM_LIVE_TEXT_LENGTH);
+        row.put("bsi", snapshot.bsi().stream().limit(2).map(observation -> {
+            Map<String,Object> bsi = new LinkedHashMap<>();
+            bsi.put("source", boundedText(observation.source(), MAXIMUM_LIVE_TEXT_LENGTH));
+            bsi.put("callsign", boundedText(observation.callsign(), MAXIMUM_LIVE_TEXT_LENGTH));
+            bsi.put("lastHeardMs", observation.lastHeardMs());
+            return bsi;
+        }).toList());
         putText(row, "decoder", snapshot.decoder(), MAXIMUM_LIVE_TEXT_LENGTH);
         putText(row, "encryption_details", snapshot.encryptionDetails(), MAXIMUM_LIVE_TEXT_LENGTH);
 

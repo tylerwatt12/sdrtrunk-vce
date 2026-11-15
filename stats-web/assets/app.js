@@ -1,12 +1,13 @@
 import * as routeFoundation from './core/routes.js?v=12';
 import * as preferenceSchema from './core/preference-schema.js?v=12';
 import { formatSourceName } from './core/source-names.js?v=1';
+import { summarizeBsi, bsiObservationFreshness } from './core/bsi.js?v=1';
 import { receiverDisplayName } from './core/receiver-names.js?v=1';
 import { createMessageTypeCatalog } from './core/message-types.js?v=1';
 import { systemCallTitle, callCountDateRows, CALL_COUNT_HELP } from './core/call-count-labels.js?v=1';
 import { Controller as UserPreferenceController } from './core/user-preferences.js?v=4';
 import * as tableLayouts from './core/table-layout.js?v=7';
-import * as tableDefaults from './core/table-defaults.js?v=37';
+import * as tableDefaults from './core/table-defaults.js?v=38';
 import { createTableOverflow } from './core/table-overflow.js?v=2';
 import { Controller as PageTitleController } from './core/page-title.js?v=3';
 import { href as entityRefHref } from './core/entity-ref.js?v=1';
@@ -2120,20 +2121,29 @@ function callsignLink(value) {
 }
 
 function bsiFreshness(observation, now = Date.now()) {
-  const lastHeard = Number(observation?.lastHeardMs ?? observation?.last_heard_ms);
-  if (!Number.isFinite(lastHeard) || lastHeard <= 0) return 'Last heard unknown';
-  const freshness = now - lastHeard <= 60 * 60 * 1000 ? 'Fresh' : 'Historical';
-  return `${freshness} · Last heard ${dateTime(lastHeard).textContent}`;
+  const { lastHeardMs, freshness } = bsiObservationFreshness(observation, now);
+  return freshness ? `${freshness} · Last heard ${dateTime(lastHeardMs).textContent}` : 'Last heard unknown';
+}
+
+function bsiEvidenceText(observation, includeCallsign = false) {
+  const source = observation.source === 'voice' ? 'Voice' : 'Control';
+  return `${source}${includeCallsign ? `: ${observation.callsign}` : ''} · ${bsiFreshness(observation)}`;
 }
 
 function bsiCallsigns(row) {
+  const summary = summarizeBsi(row.bsi);
+  if (!summary.callsign) return '';
   const container = node('div', 'live-event-stack');
-  for (const observation of row.bsi || []) {
-    const line = node('div');
-    const source = observation.source === 'voice' ? 'Voice BSI' : 'Control BSI';
-    line.append(node('span', '', `${source}: `), callsignLink(observation.callsign),
-      node('div', 'muted', bsiFreshness(observation)));
-    container.append(line);
+  const heading = node('div', 'ui-badge-group');
+  heading.append(callsignLink(summary.callsign));
+  if (summary.conflict) {
+    const warning = badge('Conflict', 'ui-pill-warning');
+    warning.dataset.uiHint = 'Control and voice callsigns disagree. Compare the reception times below.';
+    heading.append(warning);
+  }
+  container.append(heading);
+  for (const observation of summary.observations) {
+    container.append(node('div', 'muted', bsiEvidenceText(observation, summary.conflict)));
   }
   return container;
 }
@@ -5268,7 +5278,7 @@ function standardMapIcons() {
 
 function mapIconUrl(slug) {
   const safe = /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(String(slug)) ? slug : 'no-icon';
-  return `/api/v1/listen/map/icons/${encodeURIComponent(safe)}`;
+  return `/api/v1/listen/map/icons/${encodeURIComponent(safe)}?v=2`;
 }
 
 function aliasIconPreview(select) {
@@ -19347,13 +19357,14 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
       const tableSystemName = String(table?.system_name || '').trim();
       const tableSiteName = String(table?.site_name || '').trim();
       const tableIdentifiers = Array.isArray(table?.identifiers) ? table.identifiers : [];
+      const tableBsiScope = table.table_id;
       (Array.isArray(table?.rows) ? table.rows : []).forEach((row) => {
         const frequencyHz = Number(row?.frequency_hz);
         const status = tunerActivityStatus(row, includeIdle);
         if (!Number.isFinite(frequencyHz) || frequencyHz < viewport.startHz ||
             frequencyHz > viewport.endHz || !status) return;
         const decorated = { ...row, status, frequencyHz, tableChannelName, tableSystemName, tableSiteName,
-          tableIdentifiers };
+          tableIdentifiers, tableBsiScope };
         let carrier = byFrequency.get(frequencyHz);
         if (!carrier) {
           carrier = { frequencyHz, status, rows: [] };
@@ -19375,6 +19386,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   }
 
   function activityTokenLabel(value) {
+    if (String(value || '').toUpperCase() === 'BSI') return 'BSI';
     return String(value || '').toLowerCase().split('_').filter(Boolean)
       .map((word) => `${word.charAt(0).toUpperCase()}${word.slice(1)}`).join(' ');
   }
@@ -19418,10 +19430,21 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
     add('Channel', activityValues(rows, (row) => row.channel_name || row.tableChannelName));
     add('Call type', TUNER_ACTIVITY_LABELS[carrier?.status] || TUNER_ACTIVITY_LABELS.ACTIVE);
     add('Role', activityValues(rows, (row) => (row.tags || []).map(activityTokenLabel)));
-    for (const source of ['control', 'voice']) {
-      add(source === 'voice' ? 'Voice BSI' : 'Control BSI',
-        rows.flatMap((row) => (row.bsi || []).filter((bsi) => bsi.source === source)
-          .map((bsi) => `${bsi.callsign} · ${bsiFreshness(bsi)}`)));
+    // A spectrum carrier can contain rows from different parent sites on the same RF frequency.
+    const bsiBySite = new Map();
+    for (const row of rows) {
+      if (!row.tableBsiScope || !row.bsi?.length) continue;
+      if (!bsiBySite.has(row.tableBsiScope)) bsiBySite.set(row.tableBsiScope, { row, observations: [] });
+      bsiBySite.get(row.tableBsiScope).observations.push(...row.bsi);
+    }
+    for (const { row, observations } of bsiBySite.values()) {
+      const summary = summarizeBsi(observations);
+      if (!summary.callsign) continue;
+      const context = bsiBySite.size > 1 ? ` · ${[row.tableSystemName,
+        row.tableSiteName || row.tableChannelName].filter(Boolean).join(' / ')}` : '';
+      add(`BSI${context}`, `${summary.callsign}${summary.conflict ? ' · Conflict' : ''}`);
+      add(`BSI source${context}`, summary.observations.map((observation) =>
+        bsiEvidenceText(observation, summary.conflict)));
     }
     add('LCN', activityValues(rows, (row) => row.lcn));
     add('Timeslot', activityValues(rows, (row) => row.timeslot));
@@ -23327,9 +23350,8 @@ function p25DecoderMode(value) {
 
 function p25ChannelDetailRows(channel) {
   return [
-    ['Control BSI', callsignLink(channel.callsign)],
-    ['BSI status', channel.callsign ? bsiFreshness({lastHeardMs: channel.bsi_last_heard_ms}) : ''],
-    ['BSI frequency', channel.callsign ? frequency(channel.bsi_frequency_hz) : ''],
+    ['BSI', bsiCallsigns(channel)],
+    ['BSI frequency', channel.bsi?.length ? frequency(channel.bsi_frequency_hz) : ''],
     ['WACN', hexDecimalPair(channel.wacn, 5)],
     ['SysID', hexDecimalPair(channel.system_id, 3)], ['NAC', hexDecimalPair(channel.nac, 3)],
     ['RFSS', hexDecimalPair(channel.rfss, 2)], ['Site', hexDecimalPair(channel.site_id, 2)],
@@ -23415,7 +23437,7 @@ function p25ChannelFrequencyColumns() {
   return [
     { id: 'descriptor', label: 'LCN', fullLabel: 'Logical Channel Number and Modes', key: 'descriptor' },
     { id: 'callsign', label: 'BSI', render: bsiCallsigns,
-      sortValue: (row) => row.callsign || '' },
+      sortValue: (row) => summarizeBsi(row.bsi).callsign },
     { id: 'tags', label: 'Tags', key: 'tags', render: channelTags },
     { id: 'downlink', label: 'Down MHz', fullLabel: 'Downlink MHz',
       render: (row) => frequency(row.downlink_hz), className: 'numeric',

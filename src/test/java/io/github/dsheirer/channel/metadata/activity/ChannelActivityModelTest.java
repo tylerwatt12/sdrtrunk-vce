@@ -1160,6 +1160,64 @@ class ChannelActivityModelTest
     }
 
     @Test
+    void bsiEvidenceSurvivesPartialUpdatesAndRotationButDoesNotCrossAConfirmedSiteRebind() throws Exception
+    {
+        var model = new ChannelActivityModel(new AliasModel(), new NowPlayingPreference(type -> {}));
+        Channel parent = trunkedChannel("Primary", "County", "Downtown", new DecodeConfigP25Phase1(),
+            851_012_500L);
+        var firstSite = new io.github.dsheirer.module.decode.p25.P25SiteIdentity(0xBEE00, 0x348, 2, 1);
+        var nextSite = new io.github.dsheirer.module.decode.p25.P25SiteIdentity(0xABCDE, 0x456, 3, 2);
+        parent.setP25SiteIdentity(firstSite);
+        var control = new P25NetworkConfigurationSnapshot.Channel("current_control", "0-1", 851_012_500L,
+            null, false, 1);
+        var controlBsi = new P25NetworkConfigurationSnapshot.Channel("base_station", "0-1", 851_012_500L,
+            null, false, 1, "WOLD77", 1_000L);
+        var original = new P25NetworkConfigurationSnapshot("P25_PHASE_1",
+            new P25NetworkConfigurationSnapshot.Network(firstSite.wacn(), firstSite.system(), 0x343, null),
+            new P25NetworkConfigurationSnapshot.CurrentSite(firstSite.system(), 0x343, firstSite.rfss(),
+                firstSite.site(), null, true), List.of(control, controlBsi), List.of(), List.of(), List.of(), List.of());
+        try
+        {
+            run(model, () -> {
+                model.channelStarted(parent, List.of());
+                model.receiveSiteMetadata(new SiteMetadataEvent(parent, original, 1_000L, 851_012_500L));
+            });
+            ChannelActivityRow row = model.getTables().get(1).getRows().stream()
+                .filter(candidate -> candidate.getFrequency() == 851_012_500L).findFirst().orElseThrow();
+            assertEquals("WOLD77", row.getBsi().getFirst().callsign());
+
+            var partial = new P25NetworkConfigurationSnapshot("P25_PHASE_1", null,
+                new P25NetworkConfigurationSnapshot.CurrentSite(firstSite.system(), null, null, null, null, true),
+                List.of(control), List.of(), List.of(), List.of(), List.of());
+            run(model, () -> model.receiveSiteMetadata(new SiteMetadataEvent(parent, partial, 1_500L, 851_012_500L)));
+            assertEquals("WOLD77", row.getBsi().getFirst().callsign(), "Partial identity cannot withdraw BSI");
+
+            var rotated = new P25NetworkConfigurationSnapshot("P25_PHASE_1",
+                new P25NetworkConfigurationSnapshot.Network(firstSite.wacn(), firstSite.system(), 0x344, null),
+                new P25NetworkConfigurationSnapshot.CurrentSite(firstSite.system(), 0x344, firstSite.rfss(),
+                    firstSite.site(), null, true),
+                List.of(new P25NetworkConfigurationSnapshot.Channel("current_control", "0-2", 852_012_500L,
+                    null, false, 1)), List.of(), List.of(), List.of(), List.of());
+            run(model, () -> model.receiveSiteMetadata(new SiteMetadataEvent(parent, rotated, 1_600L, 852_012_500L)));
+            assertEquals("WOLD77", row.getBsi().getFirst().callsign(), "Control/NAC rotation retains carrier identity");
+            run(model, () -> { model.channelStopped(parent); model.channelStarted(parent, List.of()); });
+            assertEquals("WOLD77", row.getBsi().getFirst().callsign(), "Restart retains the same site's BSI");
+
+            parent.setP25SiteIdentity(nextSite);
+            var voiceBsi = new P25NetworkConfigurationSnapshot.Channel("base_station_voice", null, 851_012_500L,
+                null, false, 1, "WNEW88", 2_000L);
+            var replacement = new P25NetworkConfigurationSnapshot("P25_PHASE_1",
+                new P25NetworkConfigurationSnapshot.Network(nextSite.wacn(), nextSite.system(), 0x456, null),
+                new P25NetworkConfigurationSnapshot.CurrentSite(nextSite.system(), 0x456, nextSite.rfss(),
+                    nextSite.site(), null, true), List.of(control, voiceBsi), List.of(), List.of(), List.of(), List.of());
+            run(model, () -> model.receiveSiteMetadata(new SiteMetadataEvent(parent, replacement, 2_000L, 851_012_500L)));
+            assertEquals(List.of(new BaseStationIdentification("voice", "WNEW88", 2_000L)), row.getBsi(),
+                "Another site's control callsign must not fabricate a conflict with the new voice observation");
+        }
+        finally { model.close(); }
+    }
+
+    @Test
     void ignoresSiteMetadataCapturedBeforeTheLiveChannelWasReconfigured() throws Exception
     {
         ChannelActivityModel model = new ChannelActivityModel(new AliasModel(), new NowPlayingPreference(type -> {}));

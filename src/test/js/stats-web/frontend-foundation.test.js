@@ -2351,7 +2351,7 @@ async function main() {
   const compactColumns = [{ id: 'descriptor' }, { id: 'downlink' }, { id: 'state' }];
   assert.deepEqual(tableDefaults.layout('channel-frequencies-p25', [
     ...compactColumns, { id: 'callsign' }, { id: 'tdma' }, { id: 'data-observations' }
-  ]).hidden_columns, ['callsign', 'tdma', 'data-observations']);
+  ]).hidden_columns, ['tdma', 'data-observations']);
   assert.deepEqual(tableDefaults.fittedWidths('channel-frequencies-p25', compactColumns,
     [104, 94, 86], {}, 400), [220, 94, 86]);
   assert.deepEqual(tableDefaults.fittedWidths('channel-frequencies-p25', compactColumns,

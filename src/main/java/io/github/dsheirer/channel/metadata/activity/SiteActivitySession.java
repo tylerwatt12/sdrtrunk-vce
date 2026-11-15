@@ -25,6 +25,7 @@ import io.github.dsheirer.module.decode.dmr.channel.DMRChannel;
 import io.github.dsheirer.module.decode.nxdn.channel.NXDNChannelDFA;
 import io.github.dsheirer.module.decode.nxdn.channel.NXDNChannelLookup;
 import io.github.dsheirer.module.decode.p25.identifier.channel.APCO25Channel;
+import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -45,6 +46,7 @@ public class SiteActivitySession
     private final Map<Long,ChannelActivityRow> mControlRows = new HashMap<>();
     private final Map<String,ChannelActivityRow> mTrafficRows = new HashMap<>();
     private final Map<Long,Map<String,BaseStationIdentification>> mBsi = new HashMap<>();
+    private P25SiteIdentity mBsiSiteIdentity;
     private Long mCurrentControlFrequency;
 
     public SiteActivitySession(Channel parentChannel, ChannelActivityTableState tableState)
@@ -240,6 +242,31 @@ public class SiteActivitySession
     public List<ChannelActivityRow> getTrafficRows()
     {
         return new ArrayList<>(mTrafficRows.values());
+    }
+
+    /**
+     * BSI belongs to the verified site, even when one saved receiver is deliberately rebound to another site.
+     * Missing/partial identity and ordinary control-frequency rotation do not withdraw learned carrier callsigns.
+     */
+    public List<ChannelActivityRow> observeBsiSite(P25SiteIdentity identity)
+    {
+        if(identity == null) return List.of();
+        boolean changed = mBsiSiteIdentity != null && !mBsiSiteIdentity.equals(identity);
+        mBsiSiteIdentity = identity;
+        if(!changed) return List.of();
+
+        mBsi.clear();
+        List<ChannelActivityRow> updated = new ArrayList<>();
+        for(ChannelActivityRow row: mTableState.getRows())
+        {
+            if(!row.getBsi().isEmpty() || row.getTags().contains(ChannelTag.BSI))
+            {
+                row.setBsi(List.of());
+                row.removeTag(ChannelTag.BSI);
+                updated.add(row);
+            }
+        }
+        return updated;
     }
 
     /**

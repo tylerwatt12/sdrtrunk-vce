@@ -17,6 +17,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.channel.metadata.activity.ChannelActivityEvent;
+import io.github.dsheirer.channel.metadata.activity.BaseStationIdentification;
 import io.github.dsheirer.channel.metadata.activity.ChannelActivitySnapshot;
 import io.github.dsheirer.channel.metadata.activity.ChannelActivityTableState;
 import io.github.dsheirer.alias.AliasModel;
@@ -39,6 +40,48 @@ import org.junit.jupiter.api.Test;
 
 class StatsLiveServiceTest
 {
+    @Test
+    void bsiSourceTimesReachLiveAndSpectrumAndRefreshWithTheSourceSnapshot() throws Exception
+    {
+        var source = new TestChannelActivitySource();
+        try(StatsLiveService service = StatsLiveService.fromActivitySource(source, null))
+        {
+            service.start();
+            try(var live = service.subscribeChannelActivity(); var spectrum = service.subscribeChannelActivity(true))
+            {
+                source.publish(bsiActivity(List.of(new BaseStationIdentification("control", "WTEST77", null),
+                    new BaseStationIdentification("voice", "WTEST77", 2000L))));
+                var liveEvidence = (List<?>)firstRow(live.poll(2, TimeUnit.SECONDS)).get("bsi");
+                assertEquals(2, liveEvidence.size());
+                assertEquals("control", ((Map<?,?>)liveEvidence.getFirst()).get("source"));
+                assertEquals("WTEST77", ((Map<?,?>)liveEvidence.getFirst()).get("callsign"));
+                assertTrue(((Map<?,?>)liveEvidence.getFirst()).containsKey("lastHeardMs"));
+                assertEquals(null, ((Map<?,?>)liveEvidence.getFirst()).get("lastHeardMs"));
+                assertEquals(2000L, ((Map<?,?>)liveEvidence.getLast()).get("lastHeardMs"));
+                assertEquals(liveEvidence, firstRow(spectrum.poll(2, TimeUnit.SECONDS)).get("bsi"));
+
+                source.publish(bsiActivity(List.of(new BaseStationIdentification("control", "WTEST77", null),
+                    new BaseStationIdentification("voice", "WTEST88", 3000L))));
+                var updated = (List<?>)firstRow(live.poll(2, TimeUnit.SECONDS)).get("bsi");
+                assertEquals("WTEST88", ((Map<?,?>)updated.getLast()).get("callsign"));
+                assertEquals(3000L, ((Map<?,?>)updated.getLast()).get("lastHeardMs"));
+                assertEquals(updated, firstRow(spectrum.poll(2, TimeUnit.SECONDS)).get("bsi"));
+                assertTrue(snapshotWireText(service).contains("\"bsi\""));
+            }
+        }
+    }
+
+    private static ChannelActivityEvent bsiActivity(List<BaseStationIdentification> observations)
+    {
+        var row = new ChannelActivitySnapshot.Row("traffic:851012500", "Carrier", "configuration-17", "CALL",
+            List.of("VOICE"), 0L, "0-1", 851012500L, "WTEST77", null, null, 0L, 0L, 0L, 0L, 0L, 0L, 0L,
+            null, null, null, null, null, null, null, null, null, null, null, null, "P25 Phase 1", null,
+            null, "TRAFFIC", null, 12500, "p25:bee00:349", null, observations);
+        var snapshot = new ChannelActivitySnapshot("p25", "P25", "Metro", "North", "Control", "configuration-17",
+            false, true, List.of(), List.of(row));
+        return new ChannelActivityEvent(ChannelActivityEvent.Operation.UPSERT, snapshot);
+    }
+
     @Test
     void currentReceiverKeepsOpaqueIdentityAndLabelChangesRefreshWithoutActivity() throws Exception
     {

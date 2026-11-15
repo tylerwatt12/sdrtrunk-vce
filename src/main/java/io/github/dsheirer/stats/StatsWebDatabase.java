@@ -4105,6 +4105,13 @@ class StatsWebDatabase
                 mConfiguredEntities.requireChannel(connection, configurationId);
             Map<String,Object> channel = configuredTrunkedChannelReadModel(connection, configured);
             StatsApiProtocol apiProtocol = configured.protocol();
+            if(apiProtocol == StatsApiProtocol.P25)
+            {
+                long frequency = number(channel.get("current_control_hz"));
+                if(frequency <= 0) frequency = number(channel.get("primary_frequency_hz"));
+                channel.put("bsi_frequency_hz", frequency > 0 ? frequency : null);
+                channel.put("bsi", queryP25Bsi(connection, configured.channelId(), frequency));
+            }
             Map<String,Boolean> capabilities = new LinkedHashMap<>(apiProtocol.trunkedChannelCapabilities());
             if((apiProtocol == StatsApiProtocol.DMR || apiProtocol == StatsApiProtocol.NXDN) &&
                 !configured.hasChannelScopedRadioSystem())
@@ -4367,15 +4374,23 @@ class StatsWebDatabase
         addP25ChannelTags(rows);
         for(var row: rows)
         {
-            var bsi = queryRows(connection, """
-                SELECT CASE source WHEN 0 THEN 'control' ELSE 'voice' END AS source,
-                    callsign, last_heard_ms AS lastHeardMs FROM p25_site_bsi
-                WHERE channel_id=? AND frequency_hz=? ORDER BY source
-                """, configured.channelId(), row.get("downlink_hz"));
+            var bsi = queryP25Bsi(connection, configured.channelId(), number(row.get("downlink_hz")));
             row.put("bsi", bsi);
+            // The frequency CSV has one callsign column; source evidence remains available in bsi.
             row.put("callsign", bsi.isEmpty() ? null : bsi.getFirst().get("callsign"));
         }
         return rows;
+    }
+
+    private static List<Map<String,Object>> queryP25Bsi(Connection connection, Long channelId, long frequency)
+        throws SQLException
+    {
+        if(channelId == null || frequency <= 0) return List.of();
+        return queryRows(connection, """
+            SELECT CASE source WHEN 0 THEN 'control' ELSE 'voice' END AS source,
+                callsign, last_heard_ms AS lastHeardMs FROM p25_site_bsi
+            WHERE channel_id=? AND frequency_hz=? ORDER BY last_heard_ms DESC,source
+            """, channelId, frequency);
     }
 
     private static void addP25ChannelTags(List<Map<String,Object>> rows)
@@ -7355,9 +7370,6 @@ class StatsWebDatabase
                 site.voice_service,
                 site.primary_frequency_hz, site.current_control_hz, site.first_seen_ms, site.last_seen_ms,
                 site.observation_count,
-                header_bsi.callsign AS callsign,
-                header_bsi.last_heard_ms AS bsi_last_heard_ms,
-                header_bsi.frequency_hz AS bsi_frequency_hz,
                 (SELECT COUNT(DISTINCT CASE WHEN channel.downlink_hz > 0
                     THEN 'f:' || channel.downlink_hz ELSE 'k:' || channel.channel_key END)
                     FROM p25_site_channel_summary channel WHERE channel.channel_id = site.channel_id) AS frequencies,
@@ -7368,12 +7380,6 @@ class StatsWebDatabase
                 (SELECT COUNT(*) FROM p25_site_patch_group patch
                     WHERE patch.channel_id = site.channel_id) AS patches
             FROM p25_site_snapshot site
-            LEFT JOIN p25_site_bsi header_bsi ON header_bsi.channel_id=site.channel_id AND header_bsi.source=0
-                AND header_bsi.frequency_hz=coalesce(
-                    (SELECT bsi.frequency_hz FROM p25_site_bsi bsi WHERE bsi.channel_id=site.channel_id
-                        AND bsi.source=0 AND bsi.frequency_hz=site.current_control_hz LIMIT 1),
-                    (SELECT bsi.frequency_hz FROM p25_site_bsi bsi WHERE bsi.channel_id=site.channel_id
-                        AND bsi.source=0 ORDER BY bsi.last_heard_ms DESC,bsi.frequency_hz LIMIT 1))
             JOIN receiver_channel channel ON channel.id = site.channel_id
             JOIN configuration_channel config ON config.configuration_id = channel.configuration_id
             LEFT JOIN alias_list ON alias_list.id = config.alias_list_id
