@@ -40,6 +40,10 @@ import org.junit.jupiter.api.Test;
 
 class DMRAudioModuleTest
 {
+    //Upstream PR #2608 recording fixture, with valid protected bits in all three AMBE frames.
+    private static final String VALID_VOICE_BURST =
+        "5A3AC4B9E881526173002A6BB9E881526755FD7DF75F7173002A6BB9E881526173002A6B";
+
     @Test
     void callResetClearsLegacyToneSequenceAndCurrentDuration() throws Exception
     {
@@ -61,6 +65,39 @@ class DMRAudioModuleTest
     private static final int TIMESLOT = 1;
     private DMRAudioModule mAudioModule;
     private List<AudioCallEvent> mEvents;
+
+    @Test
+    void invalidVoiceCannotStartAMetadataOnlyCall()
+    {
+        mAudioModule.receive(invalidVoice(1_000L));
+        assertTrue(mEvents.isEmpty());
+    }
+
+    @Test
+    void invalidVoiceCannotExtendAnEstablishedCall()
+    {
+        mAudioModule.receive(clearVoiceHeader(1_000L));
+        mAudioModule.receive(voice(1_200L));
+        mAudioModule.receive(invalidVoice(5_000L));
+        mAudioModule.receive(terminator(2_000L));
+
+        assertEquals(2_000L, completedEvents().getFirst().snapshot().lastActivityTimestamp());
+    }
+
+    private static VoiceAMessage invalidVoice(long timestamp)
+    {
+        CorrectedBinaryMessage bits = validVoiceBits();
+
+        for(int offset: new int[]{24, 96, 216})
+        {
+            for(int bit = 0; bit < 16; bit += 4)
+            {
+                bits.flip(offset + bit);
+            }
+        }
+
+        return new VoiceAMessage(DMRSyncPattern.BASE_STATION_VOICE, bits, null, timestamp, TIMESLOT);
+    }
 
     @BeforeEach
     void setUp()
@@ -88,7 +125,7 @@ class DMRAudioModuleTest
     {
         mAudioModule.receive(encryptedVoiceHeader(1_000L));
         mAudioModule.receive(new VoiceAMessage(DMRSyncPattern.BASE_STATION_VOICE,
-            new CorrectedBinaryMessage(288), null, 1_200L, TIMESLOT));
+            validVoiceBits(), null, 1_200L, TIMESLOT));
         mAudioModule.receive(new Terminator(DMRSyncPattern.BASE_STATION_DATA,
             new CorrectedBinaryMessage(288), null, null, 2_000L, TIMESLOT, null));
 
@@ -229,7 +266,7 @@ class DMRAudioModuleTest
     void directModePlaybackAssumptionDoesNotAssertClearWithoutDecodedAudio()
     {
         mAudioModule.receive(new VoiceAMessage(DMRSyncPattern.DIRECT_VOICE_TIMESLOT_1,
-            new CorrectedBinaryMessage(288), null, 1_000L, TIMESLOT));
+            validVoiceBits(), null, 1_000L, TIMESLOT));
         mAudioModule.receive(terminator(2_000L));
 
         assertEquals(CallEncryptionState.UNKNOWN, completedEvents().getFirst().snapshot().encryptionState());
@@ -304,7 +341,7 @@ class DMRAudioModuleTest
             for(int index = 0; index < voiceMessages; index++)
             {
                 module.receive(new VoiceAMessage(DMRSyncPattern.BASE_STATION_VOICE,
-                    new CorrectedBinaryMessage(288), null, 1_000L + index, TIMESLOT));
+                    validVoiceBits(), null, 1_000L + index, TIMESLOT));
             }
 
             assertEquals(DMRAudioModule.MAX_PENDING_AMBE_FRAMES, pendingFrameCount(module));
@@ -356,7 +393,12 @@ class DMRAudioModuleTest
     private static VoiceAMessage voice(long timestamp)
     {
         return new VoiceAMessage(DMRSyncPattern.BASE_STATION_VOICE,
-            new CorrectedBinaryMessage(288), null, timestamp, TIMESLOT);
+            validVoiceBits(), null, timestamp, TIMESLOT);
+    }
+
+    private static CorrectedBinaryMessage validVoiceBits()
+    {
+        return CorrectedBinaryMessage.loadHex(VALID_VOICE_BURST);
     }
 
     private static Terminator terminator(long timestamp)

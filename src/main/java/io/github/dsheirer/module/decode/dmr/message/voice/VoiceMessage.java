@@ -40,6 +40,7 @@ public abstract class VoiceMessage extends DMRBurst
     private static final int[] FRAME_1_IV_FRAGMENT = new int[]{95, 91, 87, 83};
     private static final int[] FRAME_2_IV_FRAGMENT = new int[]{215, 211, 207, 203};
     private static final int[] FRAME_3_IV_FRAGMENT = new int[]{287, 283, 279, 275};
+    private Boolean mValid;
 
     /**
      * DMR message frame.  This message is comprised of a 24-bit prefix and a 264-bit message frame.  Outbound base
@@ -73,8 +74,8 @@ public abstract class VoiceMessage extends DMRBurst
         {
             frame_2[i] = getMessage().getByte(96 + i * 8);
         }
-        // 4 bits and 4 bits
-        frame_2[4] = (byte)((getMessage().getByte(128) & 0xF0) | (getMessage().getByte(180) >> 4));
+        //Mask the shifted signed byte so it cannot replace the upper four voice bits.
+        frame_2[4] = (byte)((getMessage().getByte(128) & 0xF0) | ((getMessage().getByte(180) >> 4) & 0x0F));
         // copy last 4 byte
         for(int i = 0; i < 4; i++)
         {
@@ -112,7 +113,12 @@ public abstract class VoiceMessage extends DMRBurst
     @Override
     public boolean isValid()
     {
-        return true;
+        if(mValid == null)
+        {
+            mValid = AMBEFrameValidator.isValid(getMessage());
+        }
+
+        return mValid;
     }
 
     @Override

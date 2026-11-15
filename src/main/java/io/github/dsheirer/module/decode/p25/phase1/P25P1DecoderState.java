@@ -125,7 +125,6 @@ import io.github.dsheirer.module.decode.p25.phase1.message.pdu.ambtc.osp.AMBTCIn
 import io.github.dsheirer.module.decode.p25.phase1.message.pdu.ambtc.osp.AMBTCMessageUpdate;
 import io.github.dsheirer.module.decode.p25.phase1.message.pdu.ambtc.osp.AMBTCMotorolaGroupRegroupChannelGrant;
 import io.github.dsheirer.module.decode.p25.phase1.message.pdu.ambtc.osp.AMBTCNetworkStatusBroadcast;
-import io.github.dsheirer.module.decode.p25.phase1.message.pdu.ambtc.osp.AMBTCProtectionParameterBroadcast;
 import io.github.dsheirer.module.decode.p25.phase1.message.pdu.ambtc.osp.AMBTCRFSSStatusBroadcast;
 import io.github.dsheirer.module.decode.p25.phase1.message.pdu.ambtc.osp.AMBTCStatusUpdate;
 import io.github.dsheirer.module.decode.p25.phase1.message.pdu.ambtc.osp.AMBTCTelephoneInterconnectChannelGrant;
@@ -240,6 +239,11 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
     private long mControlNACFrequency;
     private volatile long mSourceFrequency;
     private ServiceOptions mCurrentServiceOptions;
+    //HDU/LDU2 algorithm IDs take precedence over a contradictory encrypted LC service flag.
+    private Boolean mCallEncryptedByAlgorithm;
+    //Keep raw LC participants separate from patch-resolved presentation identifiers.
+    private Identifier<?> mAlgorithmSource;
+    private Identifier<?> mAlgorithmTarget;
     private RadioIdentifier mHarrisTalkerAliasRadio;
     private boolean mHarrisTalkerAliasSourceInvalid;
 
@@ -640,11 +644,40 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
      */
     private void processLCChannelUser(LinkControlWord lcw, long timestamp)
     {
+        for(Identifier<?> participant: lcw.getIdentifiers())
+        {
+            if(!participant.isValid() || (participant.getRole() != Role.FROM && participant.getRole() != Role.TO))
+            {
+                continue;
+            }
+
+            Identifier<?> previous = participant.getRole() == Role.FROM ? mAlgorithmSource : mAlgorithmTarget;
+
+            if(previous != null && !java.util.Objects.equals(previous.getValue(), participant.getValue()))
+            {
+                mCallEncryptedByAlgorithm = null;
+            }
+
+            if(participant.getRole() == Role.FROM)
+            {
+                mAlgorithmSource = participant;
+            }
+            else
+            {
+                mAlgorithmTarget = participant;
+            }
+        }
+
         ServiceOptions serviceOptions;
 
         if(lcw instanceof IServiceOptionsProvider sop)
         {
             serviceOptions = sop.getServiceOptions();
+
+            if(serviceOptions != null && serviceOptions.isEncrypted() && Boolean.FALSE.equals(mCallEncryptedByAlgorithm))
+            {
+                serviceOptions = VoiceServiceOptions.createUnencrypted(serviceOptions);
+            }
         }
         else if(lcw.isEncrypted())
         {
@@ -870,6 +903,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
 
                 //Network configuration messages
                 case OSP_ADJACENT_STATUS_BROADCAST:
+                case OSP_ADJACENT_STATUS_BROADCAST_UNCOORDINATED_BAND_PLAN:
                     observeNetworkConfiguration(mNetworkConfigurationMonitor.process(ambtc), ambtc.getTimestamp());
                     break;
                 case OSP_NETWORK_STATUS_BROADCAST:
@@ -962,16 +996,6 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                     {
                         broadcastEvent(ambtc.getIdentifiers(), ambtc.getTimestamp(), DecodeEventType.SDM, MESSAGE_LABEL +
                                 mu.getShortDataMessage());
-                    }
-                    break;
-                case OSP_ADJACENT_STATUS_BROADCAST_UNCOORDINATED_BAND_PLAN:
-                    if(ambtc instanceof AMBTCProtectionParameterBroadcast ppb)
-                    {
-                        String encryptionDetails = VoiceEncryptionDisplay.format(ppb.getEncryptionKey());
-                        broadcastEvent(ambtc, DecodeEventType.RESPONSE, "USE ENCRYPTION " +
-                                (encryptionDetails != null ? encryptionDetails : ppb.getEncryptionKey()) +
-                                " OUTBOUND MI:" + ppb.getOutboundMessageIndicator() +
-                                " INBOUND MI:" + ppb.getInboundMessageIndicator());
                     }
                     break;
                 case OSP_ROAMING_ADDRESS_UPDATE:
@@ -1125,10 +1149,12 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
         if(message.isValid() && message instanceof HDUMessage hdu)
         {
             resetHarrisTalkerAliasSource();
+            clearAlgorithmAuthority();
             HeaderData headerData = hdu.getHeaderData();
 
             if(headerData.isValid())
             {
+                mCallEncryptedByAlgorithm = headerData.isEncryptedAudio();
                 Identifier talkgroup = headerData.getTalkgroup();
 
                 //Run the talkgroup through the patch group manager so we don't get a plain talkgroup in addition to the patch
@@ -1184,6 +1210,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
 
             if(esp != null && esp.isValid())
             {
+                mCallEncryptedByAlgorithm = esp.isEncryptedAudio();
                 getIdentifierCollection().update(esp.getIdentifiers());
 
                 if(esp.isEncryptedAudio())
@@ -1212,6 +1239,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
     /** Process Terminator Data Unit (TDU). */
     private void processTDU(P25P1Message message)
     {
+        clearAlgorithmAuthority();
         resetHarrisTalkerAliasSource();
         mTrafficChannelManager.processP1TrafficCallEnd(getCurrentFrequency(), message.getTimestamp());
         broadcast(new DecoderStateEvent(this, Event.DECODE, State.ACTIVE));
@@ -1243,6 +1271,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
 
             if(message.isValid() && lcw != null && lcw.isValid())
             {
+                clearAlgorithmAuthority();
                 recoverTerminatorIdentifiers(lcw, message.getTimestamp());
                 mTrafficChannelManager.processP1TrafficCallEnd(getCurrentFrequency(), message.getTimestamp());
                 broadcast(new DecoderStateEvent(this, Event.DECODE, State.ACTIVE));
@@ -2577,6 +2606,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
 
                 if(mSourceFrequency != frequency)
                 {
+                    clearAlgorithmAuthority();
                     resetHarrisTalkerAliasSource();
                     mSourceFrequency = frequency;
 
@@ -2601,9 +2631,17 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
         }
     }
 
+    private void clearAlgorithmAuthority()
+    {
+        mCallEncryptedByAlgorithm = null;
+        mAlgorithmSource = null;
+        mAlgorithmTarget = null;
+    }
+
     @Override
     public synchronized void reset()
     {
+        clearAlgorithmAuthority();
         super.reset();
         resetHarrisTalkerAliasSource();
         clearControlNAC();
@@ -2617,6 +2655,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
     @Override
     protected void resetState()
     {
+        clearAlgorithmAuthority();
         super.resetState();
         mTrafficChannelManager.processTrafficCallEnd(getCurrentFrequency(), TimeslotMessage.TIMESLOT_1,
             System.currentTimeMillis(), false);

@@ -108,8 +108,8 @@ public class LRRPPacket extends Packet
         {
             mTokens = new ArrayList<>();
 
-            int characterCount = getHeader().getPayloadLength();
             int offset = getOffset() + TOKEN_START;
+            int characterCount = Math.min(getHeader().getPayloadLength(), Math.max(0, (getMessage().size() - offset) / 8));
 
             if(isResponsePacket())
             {
@@ -129,17 +129,18 @@ public class LRRPPacket extends Packet
                 while(characterCount > 0 && offset < getMessage().size())
                 {
                     String tokenId = getTokenIdentifier(offset);
-                    TokenType tokenType = TokenType.fromValue(tokenId);
+                    TokenType tokenType = TokenType.fromRequestValue(tokenId);
 
                     if(tokenType.isRequestParameterToken())
                     {
-                        Token token = TokenFactory.createToken(tokenId, getMessage(), offset, characterCount);
+                        Token token = TokenFactory.createToken(tokenType, getMessage(), offset, characterCount);
                         mTokens.add(token);
                         characterCount -= token.getByteLength();
                         offset += (8 * token.getByteLength());
                     }
                     else
                     {
+                        //Single-byte flag naming a field that the radio should include in its location report
                         if(tokenType != TokenType.UNKNOWN)
                         {
                             requestedTokens.add(tokenType);

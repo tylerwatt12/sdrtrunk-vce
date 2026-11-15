@@ -39,6 +39,7 @@ import io.github.dsheirer.module.decode.p25.phase1.message.pdu.ambtc.isp.AMBTCUn
 import io.github.dsheirer.module.decode.p25.phase1.message.pdu.ambtc.isp.AMBTCUnitToUnitAnswerResponse;
 import io.github.dsheirer.module.decode.p25.phase1.message.pdu.ambtc.isp.AMBTCUnitToUnitVoiceServiceRequest;
 import io.github.dsheirer.module.decode.p25.phase1.message.pdu.ambtc.osp.AMBTCAdjacentStatusBroadcast;
+import io.github.dsheirer.module.decode.p25.phase1.message.pdu.ambtc.osp.AMBTCAdjacentStatusBroadcastUncoordinated;
 import io.github.dsheirer.module.decode.p25.phase1.message.pdu.ambtc.osp.AMBTCCallAlert;
 import io.github.dsheirer.module.decode.p25.phase1.message.pdu.ambtc.osp.AMBTCFrequencyBandUpdateTDMA;
 import io.github.dsheirer.module.decode.p25.phase1.message.pdu.ambtc.osp.AMBTCGroupAffiliationQuery;
@@ -117,6 +118,11 @@ public class PDUMessageFactory
             case RESPONSE_PACKET_HEADER_FORMAT:
                 return new ResponseMessage(pduSequence, nac, timestamp);
             case UNCONFIRMED_MULTI_BLOCK_TRUNKING_CONTROL:
+                if(pduSequence.getHeader() instanceof PacketHeader)
+                {
+                    return createPacketData(pduSequence, nac, timestamp);
+                }
+
                 return createUMBTC(pduSequence, nac, timestamp);
             default:
                 return new PDUSequenceMessage(pduSequence, nac, timestamp);
@@ -248,7 +254,7 @@ public class PDUMessageFactory
             case OSP_NETWORK_STATUS_BROADCAST:
                 return new AMBTCNetworkStatusBroadcast(pduSequence, nac, timestamp);
             case OSP_ADJACENT_STATUS_BROADCAST_UNCOORDINATED_BAND_PLAN:
-                return new AMBTCProtectionParameterBroadcast(pduSequence, nac, timestamp);
+                return new AMBTCAdjacentStatusBroadcastUncoordinated(pduSequence, nac, timestamp);
             case OSP_RFSS_STATUS_BROADCAST:
                 return new AMBTCRFSSStatusBroadcast(pduSequence, nac, timestamp);
             case OSP_ROAMING_ADDRESS_UPDATE:

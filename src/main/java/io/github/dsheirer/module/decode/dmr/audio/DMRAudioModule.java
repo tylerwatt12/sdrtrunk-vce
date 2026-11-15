@@ -54,6 +54,7 @@ import io.github.dsheirer.module.decode.dmr.message.data.lc.full.EncryptionParam
 import io.github.dsheirer.module.decode.dmr.message.data.terminator.Terminator;
 import io.github.dsheirer.module.decode.dmr.message.type.EncryptionAlgorithm;
 import io.github.dsheirer.module.decode.dmr.message.voice.VoiceEMBMessage;
+import io.github.dsheirer.module.decode.dmr.message.voice.AMBEFrameValidator;
 import io.github.dsheirer.module.decode.dmr.message.voice.VoiceMessage;
 import io.github.dsheirer.module.decode.dmr.message.voice.embedded.EmbeddedParameters;
 import io.github.dsheirer.module.decode.dmr.message.voice.embedded.EmbeddedEncryptionParameters;
@@ -112,6 +113,7 @@ public class DMRAudioModule extends AmbeAudioModule implements IdentifierUpdateP
                           CallLegSource callLegSource)
     {
         super(userPreferences, aliasList, timeslot, callLegSource);
+        AMBEFrameValidator.initialize();
         super.setAudioCallEventListener(this::observeToneAudioCallEvent);
         mEncryptionKeyResolver = new VoiceEncryptionKeyResolver(userPreferences.getEncryptionKeyPreference());
         mVoiceFrameDecryptorFactory = new VoiceFrameDecryptorFactory(userPreferences
@@ -176,6 +178,12 @@ public class DMRAudioModule extends AmbeAudioModule implements IdentifierUpdateP
     public void receive(IMessage message)
     {
         if(message == null || message.getTimeslot() != getTimeslot())
+        {
+            return;
+        }
+
+        //False voice sync must not create a call or establish its encryption state, including without JMBE.
+        if(message instanceof VoiceMessage voice && !voice.isValid())
         {
             return;
         }

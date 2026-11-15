@@ -83,6 +83,66 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class P25TrafficChannelManagerTest
 {
     @Test
+    void harrisDataGrantsRespectDataSkipOnBothCarrierTypes() throws Exception
+    {
+        for(boolean tdma: new boolean[]{false, true})
+        {
+            for(MacOpcode opcode: new MacOpcode[]{MacOpcode.L3HARRIS_A0_PRIVATE_DATA_CHANNEL_GRANT,
+                MacOpcode.L3HARRIS_AC_UNIT_TO_UNIT_DATA_CHANNEL_GRANT})
+            {
+                assertHarrisDataGrant(tdma, opcode, true, false);
+                assertHarrisDataGrant(tdma, opcode, false, false);
+                assertHarrisDataGrant(tdma, opcode, true, true);
+            }
+        }
+    }
+
+    private static void assertHarrisDataGrant(boolean tdma, MacOpcode opcode, boolean ignore,
+                                               boolean remote) throws Exception
+    {
+        Channel parent = new Channel("Control", Channel.ChannelType.STANDARD);
+        DecodeConfigP25Phase1 config = new DecodeConfigP25Phase1();
+        config.setTrafficChannelPoolSize(2);
+        config.setIgnoreDataCalls(ignore);
+        parent.setDecodeConfiguration(config);
+        if(remote)
+        {
+            SourceConfigRemote source = new SourceConfigRemote();
+            source.setSenderId("54ad3a5c-c1cb-446f-bef7-c358fb14b7a8");
+            source.setFeedId("14dc0718-2970-4147-9185-7f4119810dca");
+            source.setFrequency(851_000_000L);
+            parent.setSourceConfiguration(source);
+        }
+        P25TrafficChannelManager manager = new P25TrafficChannelManager(parent);
+        IFrequencyBand band = band(0, 851_000_000L, tdma ? 12_500L : 6_250L, tdma ? 2 : 1);
+        manager.processFrequencyBand(band);
+        manager.processFrequencyBand(band);
+        StartRequestSubscriber subscriber = new StartRequestSubscriber();
+        EventBus events = new EventBus();
+        events.register(subscriber);
+        manager.setInterModuleEventBus(events);
+        APCO25Channel data = APCO25Channel.create(0, 0);
+        MutableIdentifierCollection dataIdentifiers = identifiers(1201, null);
+        dataIdentifiers.update(APCO25Nac.create(0x346));
+
+        manager.processP2ChannelGrant(data, null, dataIdentifiers, opcode, 1_000L);
+        manager.processP2ChannelGrant(data, null, dataIdentifiers, opcode, 1_100L);
+
+        assertEquals(ignore || remote ? 0 : 1, subscriber.requests.size(),
+            "repeated Harris data grants must respect data skipping and remote allocation ownership");
+        assertEquals(ignore && !remote,
+            trafficTrackers(manager).get(data.getDownlinkFrequency()).getEvent().getDetails().contains("IGNORED"));
+
+        MutableIdentifierCollection voiceIdentifiers = identifiers(1202, null);
+        voiceIdentifiers.update(APCO25Nac.create(0x346));
+        manager.processP2ChannelGrant(APCO25Channel.create(0, 2), VoiceServiceOptions.createUnencrypted(),
+            voiceIdentifiers, MacOpcode.TDMA_05_GROUP_VOICE_CHANNEL_GRANT_UPDATE_MULTIPLE_IMPLICIT, 1_200L);
+        assertEquals(remote ? 0 : (ignore ? 1 : 2), subscriber.requests.size(),
+            "ordinary clear voice must still start after the data grant");
+        assertEquals(ignore, config.getIgnoreDataCalls(), "saved configuration must remain intact");
+    }
+
+    @Test
     void remoteControlGrantsIgnoreLocalTrafficSkipPreferences() throws Exception
     {
         Channel parent = new Channel("Remote control", Channel.ChannelType.STANDARD);

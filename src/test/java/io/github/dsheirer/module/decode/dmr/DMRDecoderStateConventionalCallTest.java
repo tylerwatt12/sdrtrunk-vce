@@ -39,6 +39,7 @@ import io.github.dsheirer.module.decode.dmr.message.data.lc.full.GroupVoiceChann
 import io.github.dsheirer.module.decode.dmr.message.data.terminator.Terminator;
 import io.github.dsheirer.module.decode.dmr.message.type.ServiceOptions;
 import io.github.dsheirer.module.decode.dmr.message.voice.embedded.EmbeddedEncryptionParameters;
+import io.github.dsheirer.module.decode.dmr.message.voice.VoiceAMessage;
 import io.github.dsheirer.module.decode.dmr.sync.DMRSyncPattern;
 import io.github.dsheirer.module.decode.event.DecodeEvent;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
@@ -53,6 +54,33 @@ import org.junit.jupiter.api.Test;
 
 class DMRDecoderStateConventionalCallTest
 {
+    @Test
+    void invalidVoiceCannotRefreshDecoderCallState()
+    {
+        DMRDecoderState state = new DMRDecoderState(
+            channel(DMRChannelMode.CONVENTIONAL, ChannelType.STANDARD), 1, null);
+        List<DecoderStateEvent> events = new CopyOnWriteArrayList<>();
+        state.setDecoderStateListener(events::add);
+        CorrectedBinaryMessage valid = CorrectedBinaryMessage.loadHex(
+            "5A3AC4B9E881526173002A6BB9E881526755FD7DF75F7173002A6BB9E881526173002A6B");
+        CorrectedBinaryMessage invalid = CorrectedBinaryMessage.loadHex(valid.toHexString());
+
+        for(int offset: new int[]{24, 96, 216})
+        {
+            for(int bit = 0; bit < 16; bit += 4)
+            {
+                invalid.flip(offset + bit);
+            }
+        }
+
+        state.receive(new VoiceAMessage(DMRSyncPattern.BASE_STATION_VOICE, invalid, null, 1_000L, 1));
+        assertTrue(events.isEmpty());
+
+        state.receive(new VoiceAMessage(DMRSyncPattern.BASE_STATION_VOICE, valid, null, 1_100L, 1));
+        assertEquals(1, events.size());
+        assertEquals(State.CALL, events.getFirst().getState());
+    }
+
     @Test
     void embeddedEncryptionUsesHexKeyIdInEventDetails() throws ReflectiveOperationException
     {

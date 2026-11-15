@@ -25,6 +25,9 @@ import io.github.dsheirer.module.decode.p25.P25FrequencyBandValidator;
 import io.github.dsheirer.module.decode.p25.P25FrequencyBandConfirmationTracker;
 import io.github.dsheirer.module.decode.p25.identifier.channel.APCO25Channel;
 import io.github.dsheirer.module.decode.p25.phase1.message.IFrequencyBand;
+import io.github.dsheirer.module.decode.p25.phase1.message.P25FrequencyBand;
+import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
+import io.github.dsheirer.module.decode.p25.reference.ChannelType;
 import io.github.dsheirer.module.decode.p25.phase1.message.lc.LinkControlWord;
 import io.github.dsheirer.module.decode.p25.phase1.message.lc.standard.LCAdjacentSiteStatusBroadcast;
 import io.github.dsheirer.module.decode.p25.phase1.message.lc.standard.LCAdjacentSiteStatusBroadcastExplicit;
@@ -37,6 +40,7 @@ import io.github.dsheirer.module.decode.p25.phase1.message.lc.standard.LCSeconda
 import io.github.dsheirer.module.decode.p25.phase1.message.lc.standard.LCSystemServiceBroadcast;
 import io.github.dsheirer.module.decode.p25.phase1.message.pdu.ambtc.AMBTCMessage;
 import io.github.dsheirer.module.decode.p25.phase1.message.pdu.ambtc.osp.AMBTCAdjacentStatusBroadcast;
+import io.github.dsheirer.module.decode.p25.phase1.message.pdu.ambtc.osp.AMBTCAdjacentStatusBroadcastUncoordinated;
 import io.github.dsheirer.module.decode.p25.phase1.message.pdu.ambtc.osp.AMBTCFrequencyBandUpdateTDMA;
 import io.github.dsheirer.module.decode.p25.phase1.message.pdu.ambtc.osp.AMBTCNetworkStatusBroadcast;
 import io.github.dsheirer.module.decode.p25.phase1.message.pdu.ambtc.osp.AMBTCRFSSStatusBroadcast;
@@ -62,6 +66,7 @@ import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -76,6 +81,7 @@ import org.slf4j.LoggerFactory;
 public class P25P1NetworkConfigurationMonitor
 {
     private final static Logger mLog = LoggerFactory.getLogger(P25P1NetworkConfigurationMonitor.class);
+    static final int MAX_UNCOORDINATED_NEIGHBOR_SITES = 256;
 
     private Map<Integer,IFrequencyBand> mFrequencyBandMap = new HashMap<>();
     private final P25FrequencyBandConfirmationTracker mFrequencyBandConfirmationTracker =
@@ -107,6 +113,8 @@ public class P25P1NetworkConfigurationMonitor
 
     //Neighbor Sites
     private Map<Integer,AMBTCAdjacentStatusBroadcast> mAMBTCNeighborSites = new HashMap<>();
+    private final LinkedHashMap<String,AMBTCAdjacentStatusBroadcastUncoordinated> mUncoordinatedNeighborSites =
+        new LinkedHashMap<>();
     private Map<Integer,LCAdjacentSiteStatusBroadcast> mLCNeighborSites = new HashMap<>();
     private Map<Integer,LCAdjacentSiteStatusBroadcastExplicit> mLCNeighborSitesExplicit = new HashMap<>();
     private Map<Integer,AdjacentStatusBroadcast> mTSBKNeighborSites = new HashMap<>();
@@ -277,6 +285,22 @@ public class P25P1NetworkConfigurationMonitor
     {
         switch(ambtc.getHeader().getOpcode())
         {
+            case OSP_ADJACENT_STATUS_BROADCAST_UNCOORDINATED_BAND_PLAN:
+                if(ambtc instanceof AMBTCAdjacentStatusBroadcastUncoordinated adjacent && adjacent.isValid())
+                {
+                    resolveNeighborFrequencyBands(adjacent);
+                    String key = adjacent.getWacn().getValue() + ":" + adjacent.getSystem().getValue() + ":" +
+                        adjacent.getRfss().getValue() + ":" + adjacent.getSite().getValue();
+                    if(!mUncoordinatedNeighborSites.containsKey(key) &&
+                        mUncoordinatedNeighborSites.size() >= MAX_UNCOORDINATED_NEIGHBOR_SITES)
+                    {
+                        mUncoordinatedNeighborSites.pollFirstEntry();
+                    }
+                    mUncoordinatedNeighborSites.put(key, adjacent);
+                    return observation(null, null, Collections.emptyList(), List.of(getNeighborSiteSnapshot(adjacent)),
+                        Collections.emptyList());
+                }
+                break;
             case OSP_ADJACENT_STATUS_BROADCAST:
                 if(ambtc instanceof AMBTCAdjacentStatusBroadcast)
                 {
@@ -440,6 +464,7 @@ public class P25P1NetworkConfigurationMonitor
         mTSBKSystemServiceBroadcast = null;
         mLCSystemServiceBroadcast = null;
         mAMBTCNeighborSites = new HashMap<>();
+        mUncoordinatedNeighborSites.clear();
         mLCNeighborSites.clear();
         mLCNeighborSitesExplicit.clear();
         mTSBKNeighborSites.clear();
@@ -715,7 +740,60 @@ public class P25P1NetworkConfigurationMonitor
             }
         }
 
+        for(AMBTCAdjacentStatusBroadcastUncoordinated adjacent: mUncoordinatedNeighborSites.values())
+        {
+            neighbors.add(getNeighborSiteSnapshot(adjacent));
+        }
+
         return neighbors;
+    }
+
+    /** Resolve identifiers within the advertised neighboring system, never by band number alone. */
+    private void resolveNeighborFrequencyBands(AMBTCAdjacentStatusBroadcastUncoordinated adjacent)
+    {
+        IChannelDescriptor channel = adjacent.getChannel();
+        P25SiteIdentity serving = mNetworkConfigurationStabilizer.getStableSiteIdentity();
+        Integer wacn = intValue(adjacent.getWacn());
+        Integer system = intValue(adjacent.getSystem());
+        if(wacn != null && wacn == 0 && serving != null)
+        {
+            wacn = serving.wacn();
+        }
+
+        for(int bandIdentifier: channel.getFrequencyBandIdentifiers())
+        {
+            IFrequencyBand band = null;
+            if(serving != null && Integer.valueOf(serving.wacn()).equals(wacn) &&
+                Integer.valueOf(serving.system()).equals(system))
+            {
+                band = mFrequencyBandMap.get(bandIdentifier);
+            }
+            else
+            {
+                P25NetworkConfigurationSnapshot.ForeignSystemBand foreign =
+                    mForeignSystemBands.get(wacn + ":" + system + ":" + bandIdentifier);
+                if(foreign != null && foreign.base() != null && foreign.spacing() != null &&
+                    foreign.channelType() != null)
+                {
+                    ChannelType type = ChannelType.fromValue(foreign.channelType());
+                    band = new P25FrequencyBand(bandIdentifier, foreign.base(),
+                        foreign.transmitOffset() != null ? foreign.transmitOffset() : 0L, foreign.spacing(),
+                        type.getBandwidth(), type.getSlotsPerCarrier())
+                    {
+                        @Override
+                        public long getUplinkFrequency(int channelNumber)
+                        {
+                            return foreign.transmitOffset() != null ? super.getUplinkFrequency(channelNumber) : 0L;
+                        }
+                    };
+                }
+            }
+
+            if(band != null && P25FrequencyBandValidator.validate(band) == null)
+            {
+                channel.setFrequencyBand(band);
+            }
+        }
     }
 
     private P25NetworkConfigurationSnapshot.NeighborSite getNeighborSiteSnapshot(

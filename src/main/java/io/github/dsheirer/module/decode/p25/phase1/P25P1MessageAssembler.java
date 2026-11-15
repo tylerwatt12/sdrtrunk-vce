@@ -48,6 +48,8 @@ public class P25P1MessageAssembler implements Listener<Dibit>
     private SymbolMessage mSymbolMessage;
     private P25P1DataUnitID mDataUnitID;
     private int mNac;
+    private int mElapsedDibitLength;
+    private int mPduSymbolCapacity;
 
     /**
      * Constructs an instance
@@ -63,6 +65,7 @@ public class P25P1MessageAssembler implements Listener<Dibit>
     {
         mNac = nac;
         mDataUnitID = duid;
+        mElapsedDibitLength = duid.getElapsedDibitLength();
         int length = duid.getMessageLength();
 
         if(length < 0)
@@ -83,18 +86,23 @@ public class P25P1MessageAssembler implements Listener<Dibit>
      */
     public void reconfigure(P25P1DataUnitID duid)
     {
-        mDataUnitID = duid;
+        reconfigure(duid, duid.getMessageLength(), duid.getElapsedDibitLength());
+    }
 
-        if(mMessage != null)
-        {
-            mMessage.setSize(duid.getMessageLength());
-            mSymbolMessage.setSize(duid.getMessageLength() / 2);
-        }
-        else
-        {
-            mMessage = new CorrectedBinaryMessage(duid.getMessageLength());
-            mSymbolMessage = new SymbolMessage(duid.getMessageLength() / 2);
-        }
+    /** Continues a variable-length PDU without changing its already assembled bits or symbols. */
+    public void reconfigure(P25P1DataUnitID duid, int messageLength, int elapsedDibitLength)
+    {
+        mDataUnitID = duid;
+        mElapsedDibitLength = elapsedDibitLength;
+        mMessage.setSize(messageLength);
+        mSymbolMessage.setSize(Math.max(messageLength / 2, mPduSymbolCapacity));
+    }
+
+    /** Reserves the bounded symbol history once after a valid PDU header announces the total block count. */
+    public void reservePduSymbolCapacity(int dataBlockCount)
+    {
+        mPduSymbolCapacity = P25P1DataUnitID.getPDUMessageLength(dataBlockCount) / 2;
+        mSymbolMessage.setSize(mPduSymbolCapacity);
     }
 
     /**
@@ -109,7 +117,9 @@ public class P25P1MessageAssembler implements Listener<Dibit>
      */
     public int forceCompletion(P25P1DataUnitID previous, P25P1DataUnitID next)
     {
-        if(mDataUnitID == P25P1DataUnitID.PLACE_HOLDER)
+        boolean placeHolder = mDataUnitID == P25P1DataUnitID.PLACE_HOLDER;
+
+        if(placeHolder)
         {
             int length = getMessage().currentSize();
 
@@ -198,8 +208,10 @@ public class P25P1MessageAssembler implements Listener<Dibit>
             mDataUnitID = P25P1DataUnitID.TERMINATOR_DATA_UNIT;
         }
 
-        getMessage().setSize(mDataUnitID.getMessageLength());
-        getSymbolMessage().setSize(mDataUnitID.getMessageLength() / 2);
+        if(placeHolder)
+        {
+            setDataUnitID(mDataUnitID);
+        }
         return getMessage().size() - getMessage().currentSize();
     }
 
@@ -283,9 +295,17 @@ public class P25P1MessageAssembler implements Listener<Dibit>
      */
     public void setDataUnitID(P25P1DataUnitID dataUnitID)
     {
+        mPduSymbolCapacity = 0;
         mMessage.setSize(dataUnitID.getMessageLength());
         mSymbolMessage.setSize(dataUnitID.getMessageLength() / 2);
+        mElapsedDibitLength = dataUnitID.getElapsedDibitLength();
         mDataUnitID = dataUnitID;
+    }
+
+    /** Elapsed dibits for the complete unit, including variable-length PDU blocks. */
+    public int getElapsedDibitLength()
+    {
+        return mElapsedDibitLength;
     }
 
     @Override

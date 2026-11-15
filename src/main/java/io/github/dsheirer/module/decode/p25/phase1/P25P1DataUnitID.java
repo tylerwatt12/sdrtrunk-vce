@@ -58,6 +58,26 @@ public enum P25P1DataUnitID
     private final String mLabel;
 
     /**
+     * Sync (48 bits) + NID (64 bits) that precede every data unit
+     */
+    private static final int SYNC_AND_NID_BIT_LENGTH = 112;
+
+    /**
+     * Interleaved and trellis encoded PDU header or data block length in bits
+     */
+    public static final int PDU_BLOCK_BIT_LENGTH = 196;
+
+    /**
+     * Number of transmitted bits between status symbols
+     */
+    private static final int STATUS_SYMBOL_INTERVAL_BIT_LENGTH = 70;
+
+    /**
+     * Maximum number of data blocks that a PDU header can specify in the 7-bit blocks to follow field.
+     */
+    public static final int PDU_MAXIMUM_DATA_BLOCK_COUNT = 127;
+
+    /**
      * Constructs a Data Unit ID (DUID) entry
      * @param value transmitted in the NID
      * @param messageLength in bits
@@ -129,6 +149,55 @@ public enum P25P1DataUnitID
     public String getLabel()
     {
         return mLabel;
+    }
+
+    /**
+     * Number of status symbols (dibits) that are transmitted from the start of the sync pattern through the end of a
+     * PDU header followed by the specified number of data blocks.  The final data block is followed by null bits that
+     * pad the data unit out to the last status symbol.
+     *
+     * @param dataBlockCount that follow the PDU header (0 - 127)
+     * @return status symbol count
+     */
+    private static int getPDUStatusSymbolCount(int dataBlockCount)
+    {
+        if(dataBlockCount < 0 || dataBlockCount > PDU_MAXIMUM_DATA_BLOCK_COUNT)
+        {
+            throw new IllegalArgumentException("PDU block count must be between 0 and 127");
+        }
+
+        int bits = SYNC_AND_NID_BIT_LENGTH + PDU_BLOCK_BIT_LENGTH * (dataBlockCount + 1);
+        return (bits + STATUS_SYMBOL_INTERVAL_BIT_LENGTH - 1) / STATUS_SYMBOL_INTERVAL_BIT_LENGTH;
+    }
+
+    /**
+     * Message length in bits for a PDU header followed by the specified number of data blocks, including the trailing
+     * null bits that pad the final data block out to the last status symbol.  This is the value that
+     * getMessageLength() provides for the PACKET_DATA_UNIT (0 data blocks) and PACKET_DATA_UNIT_BLOCK_1 (1 data block)
+     * entries, generalized to any data block count.
+     *
+     * @param dataBlockCount that follow the PDU header (0 - 127)
+     * @return message length in bits
+     */
+    public static int getPDUMessageLength(int dataBlockCount)
+    {
+        int statusSymbols = getPDUStatusSymbolCount(dataBlockCount);
+        return statusSymbols * STATUS_SYMBOL_INTERVAL_BIT_LENGTH - SYNC_AND_NID_BIT_LENGTH;
+    }
+
+    /**
+     * Elapsed dibit length from sync detection to the next sync detection for a PDU header followed by the
+     * specified number of data blocks (sync + NID + message + status symbols + trailing null bits).  This is the value
+     * that getElapsedDibitLength() provides for the PACKET_DATA_UNIT (0 data blocks) and PACKET_DATA_UNIT_BLOCK_1
+     * (1 data block) entries, generalized to any data block count.
+     *
+     * @param dataBlockCount that follow the PDU header (0 - 127)
+     * @return elapsed dibit length
+     */
+    public static int getPDUElapsedDibitLength(int dataBlockCount)
+    {
+        //Each status symbol interval is 35 data dibits plus the status dibit
+        return getPDUStatusSymbolCount(dataBlockCount) * (STATUS_SYMBOL_INTERVAL_BIT_LENGTH / 2 + 1);
     }
 
     /**

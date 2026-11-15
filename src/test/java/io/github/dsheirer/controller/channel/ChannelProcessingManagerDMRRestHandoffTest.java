@@ -1738,8 +1738,10 @@ class ChannelProcessingManagerDMRRestHandoffTest
 
     private static VoiceAMessage voiceMessage(long timestamp)
     {
-        return new VoiceAMessage(DMRSyncPattern.DIRECT_VOICE_TIMESLOT_1, new CorrectedBinaryMessage(288), null,
-            timestamp, 1);
+        //Upstream PR #2608 AMBE fixture, with valid protected bits in all three voice frames.
+        CorrectedBinaryMessage bits = CorrectedBinaryMessage.loadHex(
+            "5A3AC4B9E881526173002A6BB9E881526755FD7DF75F7173002A6BB9E881526173002A6B");
+        return new VoiceAMessage(DMRSyncPattern.DIRECT_VOICE_TIMESLOT_1, bits, null, timestamp, 1);
     }
 
     private static Terminator terminator(long timestamp)

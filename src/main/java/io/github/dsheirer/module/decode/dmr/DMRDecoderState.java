@@ -96,6 +96,7 @@ import io.github.dsheirer.module.decode.dmr.message.type.Reason;
 import io.github.dsheirer.module.decode.dmr.message.type.Tier3Gateway;
 import io.github.dsheirer.module.decode.dmr.message.voice.VoiceEMBMessage;
 import io.github.dsheirer.module.decode.dmr.message.voice.VoiceMessage;
+import io.github.dsheirer.module.decode.dmr.message.voice.AMBEFrameValidator;
 import io.github.dsheirer.module.decode.dmr.message.voice.embedded.EmbeddedEncryptionParameters;
 import io.github.dsheirer.module.decode.dmr.message.voice.embedded.EmbeddedParameters;
 import io.github.dsheirer.module.decode.dmr.sync.DMRSyncPattern;
@@ -169,6 +170,7 @@ public class DMRDecoderState extends TimeslotDecoderState
     public DMRDecoderState(Channel channel, int timeslot, DMRTrafficChannelManager trafficChannelManager)
     {
         super(timeslot);
+        AMBEFrameValidator.initialize();
         mTrafficChannelEventManager = trafficChannelManager;
         DecodeConfigDMR config = channel.getDecodeConfiguration() instanceof DecodeConfigDMR dmrConfig ?
             dmrConfig : null;
@@ -450,7 +452,10 @@ public class DMRDecoderState extends TimeslotDecoderState
         {
             if(message instanceof VoiceMessage voice)
             {
-                processVoice(voice);
+                if(isValid(voice))
+                {
+                    processVoice(voice);
+                }
             }
             else if(message instanceof DataMessage data)
             {

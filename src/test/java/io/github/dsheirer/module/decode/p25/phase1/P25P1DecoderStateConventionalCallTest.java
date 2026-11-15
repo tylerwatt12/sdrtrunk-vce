@@ -28,9 +28,11 @@ import io.github.dsheirer.bits.BinaryMessage;
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
 import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.identifier.Identifier;
+import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.IdentifierClass;
 import io.github.dsheirer.identifier.Role;
 import io.github.dsheirer.identifier.Form;
+import io.github.dsheirer.identifier.patch.PatchGroupPreLoadDataContent;
 import io.github.dsheirer.module.decode.p25.phase1.message.lc.LinkControlWord;
 import io.github.dsheirer.module.decode.p25.phase1.message.lc.LinkControlOpcode;
 import io.github.dsheirer.module.decode.p25.phase1.message.lc.LinkControlWordFactory;
@@ -61,6 +63,7 @@ import io.github.dsheirer.module.decode.p25.audio.P25P1AudioModule;
 import io.github.dsheirer.module.decode.p25.identifier.channel.APCO25Channel;
 import io.github.dsheirer.module.decode.p25.identifier.channel.StandardChannel;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
+import io.github.dsheirer.module.decode.p25.identifier.patch.APCO25PatchGroup;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
 import io.github.dsheirer.module.decode.p25.reference.VoiceServiceOptions;
 import io.github.dsheirer.eventbus.MyEventBus;
@@ -79,6 +82,124 @@ import org.junit.jupiter.api.Test;
 
 class P25P1DecoderStateConventionalCallTest
 {
+    @Test
+    void freshClearHeaderOverridesContradictoryLcAfterTalkgroupReuse()
+    {
+        try(Pipeline pipeline = new Pipeline())
+        {
+            List<State> states = new CopyOnWriteArrayList<>();
+            pipeline.state.setDecoderStateListener(event -> states.add(event.getState()));
+            pipeline.state.receive(voice(900L, 101));
+            assertEquals(1201, pipeline.state.getIdentifierCollection().getToIdentifier().getValue());
+
+            pipeline.state.receive(header(1_000L, false, 0, 2402));
+            assertEquals(1201, pipeline.state.getIdentifierCollection().getToIdentifier().getValue(),
+                "the decoder collection still carries the preceding call's target before the first new LC");
+
+            pipeline.state.receive(ldu(1_100L, user(1_100L, 202, true, false, 2402)));
+            assertEquals(State.CALL, states.getLast(),
+                "the old decoder target cannot invalidate the new call's clear algorithm");
+            pipeline.state.receive(ldu(1_200L, user(1_200L, 202, true, false, 2402)));
+            assertEquals(State.CALL, states.getLast());
+        }
+    }
+
+    @Test
+    void patchResolvedTargetDoesNotInvalidateUnchangedRawLcAlgorithmAuthority()
+    {
+        try(Pipeline pipeline = new Pipeline())
+        {
+            List<State> states = new CopyOnWriteArrayList<>();
+            pipeline.state.setDecoderStateListener(event -> states.add(event.getState()));
+            APCO25PatchGroup patch = APCO25PatchGroup.create(1201);
+            patch.getValue().addPatchedTalkgroup(APCO25Talkgroup.create(2402));
+            pipeline.state.process(new PatchGroupPreLoadDataContent(new IdentifierCollection(List.of(patch)), 900L));
+
+            pipeline.state.receive(header(1_000L));
+            pipeline.state.receive(voice(1_100L, 101, true));
+            assertEquals(Form.PATCH_GROUP, pipeline.state.getIdentifierCollection().getToIdentifier().getForm());
+            assertEquals(State.CALL, states.getLast());
+
+            pipeline.state.receive(voice(1_200L, 101, true));
+            assertEquals(State.CALL, states.getLast(),
+                "the unchanged raw LC target remains the same call after patch resolution");
+            assertEquals(Form.PATCH_GROUP, pipeline.state.getIdentifierCollection().getToIdentifier().getForm());
+        }
+    }
+
+    @Test
+    void clearAlgorithmOverridesContradictoryLinkControlAndExpiresAtCallBoundaries()
+    {
+        try(Pipeline pipeline = new Pipeline())
+        {
+            List<State> states = new CopyOnWriteArrayList<>();
+            pipeline.state.setDecoderStateListener(event -> states.add(event.getState()));
+            pipeline.state.receive(header(1_000L));
+            pipeline.state.receive(voice(1_100L, 101, true));
+            assertEquals(State.CALL, states.getLast());
+
+            pipeline.state.receive(new TDUMessage(new CorrectedBinaryMessage(0), 0x123, 1_200L));
+            pipeline.state.receive(voice(1_300L, 202, true));
+            assertEquals(State.ENCRYPTED, states.getLast());
+
+            pipeline.state.receive(clearLdu2(1_400L));
+            pipeline.state.receive(voice(1_500L, 202, true));
+            assertEquals(State.CALL, states.getLast());
+
+            pipeline.state.reset();
+            pipeline.state.receive(voice(1_600L, 303, true));
+            assertEquals(State.ENCRYPTED, states.getLast());
+
+            pipeline.state.receive(header(1_700L, true));
+            pipeline.state.receive(voice(1_800L, 303, true));
+            assertEquals(State.ENCRYPTED, states.getLast());
+
+            pipeline.state.receive(header(1_900L));
+            pipeline.state.receive(terminator(2_000L));
+            pipeline.state.receive(voice(2_100L, 404, true));
+            assertEquals(State.ENCRYPTED, states.getLast());
+        }
+    }
+
+    @Test
+    void algorithmAuthorityExpiresOnFrequencyChangeButSurvivesDuplicateNotifications()
+    {
+        try(Pipeline pipeline = new Pipeline())
+        {
+            List<State> states = new CopyOnWriteArrayList<>();
+            pipeline.state.setDecoderStateListener(event -> states.add(event.getState()));
+            DecoderStateEvent sameFrequency = new DecoderStateEvent(this,
+                DecoderStateEvent.Event.NOTIFICATION_SOURCE_FREQUENCY, State.IDLE, 851_012_500L);
+            pipeline.state.receiveDecoderStateEvent(sameFrequency);
+            pipeline.state.receive(header(1_000L));
+            pipeline.state.receive(voice(1_100L, 101, true));
+            assertEquals(State.CALL, states.getLast());
+
+            pipeline.state.receiveDecoderStateEvent(sameFrequency);
+            pipeline.state.receive(voice(1_200L, 101, true));
+            assertEquals(State.CALL, states.getLast(), "a duplicate frequency event retains the active call authority");
+
+            pipeline.state.receiveDecoderStateEvent(new DecoderStateEvent(this,
+                DecoderStateEvent.Event.NOTIFICATION_SOURCE_FREQUENCY, State.IDLE, 851_025_000L));
+            pipeline.state.receive(voice(1_300L, 101, true));
+            assertEquals(State.ENCRYPTED, states.getLast(),
+                "the old frequency's clear header cannot override the new frequency's encryption indication");
+        }
+    }
+
+    @Test
+    void clearingEncryptionRetainsOtherVoiceServiceOptions()
+    {
+        VoiceServiceOptions encrypted = new VoiceServiceOptions(0xF7);
+        VoiceServiceOptions clear = VoiceServiceOptions.createUnencrypted(encrypted);
+        assertFalse(clear.isEncrypted());
+        assertTrue(encrypted.isEncrypted());
+        assertEquals(encrypted.isEmergency(), clear.isEmergency());
+        assertEquals(encrypted.getPriority(), clear.getPriority());
+        assertEquals(encrypted.getDuplex(), clear.getDuplex());
+        assertEquals(encrypted.getSessionMode(), clear.getSessionMode());
+    }
+
     @Test
     void forwardsPrivatelyManagedConventionalCallEvents() throws Exception
     {
@@ -830,10 +951,15 @@ class P25P1DecoderStateConventionalCallTest
 
     private static HDUMessage header(long timestamp, boolean encrypted, int keyId)
     {
+        return header(timestamp, encrypted, keyId, 1201);
+    }
+
+    private static HDUMessage header(long timestamp, boolean encrypted, int keyId, int talkgroup)
+    {
         BinaryMessage bits = new BinaryMessage(120);
         bits.setInt(encrypted ? 0x84 : 0x80, IntField.length8(80));
         bits.setInt(keyId, IntField.length16(88));
-        bits.setInt(1201, IntField.length16(104));
+        bits.setInt(talkgroup, IntField.length16(104));
         HeaderData data = new HeaderData(bits);
         return new HDUMessage(new CorrectedBinaryMessage(648), 0x123, timestamp)
         {

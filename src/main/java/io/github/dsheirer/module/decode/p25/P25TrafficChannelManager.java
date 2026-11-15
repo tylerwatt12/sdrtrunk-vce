@@ -2483,7 +2483,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             //Even though we have a tracked event, the initial channel grant may have been rejected.  Check to see if there
             //is a traffic channel allocated.  If not, allocate one and update the event description.
             if(mGrantAllocationEnabled && needsAllocation && !skipEncryptedAllocation &&
-                !(mIgnoreDataCalls && isDataChannelGrant))
+                !shouldIgnoreDataCall(isDataChannelGrant, decodeEventType))
             {
                 Channel trafficChannel = mAvailablePhase1TrafficChannelQueue.poll();
 
@@ -2511,7 +2511,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             return;
         }
 
-        if(mIgnoreDataCalls && isDataChannelGrant)
+        if(shouldIgnoreDataCall(isDataChannelGrant, decodeEventType))
         {
             if(tracker == null)
             {
@@ -2631,7 +2631,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             //Even though we have a tracked event, the initial channel grant may have been rejected.  Check to see if there
             //is a traffic channel allocated.  If not, allocate one and update the event description.
             if(mGrantAllocationEnabled && needsAllocation && !skipEncryptedAllocation &&
-                !(mIgnoreDataCalls && isDataChannelGrant))
+                !shouldIgnoreDataCall(isDataChannelGrant, decodeEventType))
             {
                 Channel trafficChannel = mAvailablePhase2TrafficChannelQueue.poll();
 
@@ -2651,7 +2651,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             return;
         }
 
-        if(mIgnoreDataCalls && isDataChannelGrant && tracker == null)
+        if(shouldIgnoreDataCall(isDataChannelGrant, decodeEventType) && tracker == null)
         {
             P25ChannelGrantEvent event = P25ChannelGrantEvent.builder(decodeEventType, timestamp, serviceOptions)
                 .channelDescriptor(apco25Channel)
@@ -2697,6 +2697,13 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
         }
 
         broadcast(tracker, timestamp);
+    }
+
+    /** Data event types also cover vendor grants absent from the standard data-opcode set. */
+    private boolean shouldIgnoreDataCall(boolean isDataChannelGrant, DecodeEventType eventType)
+    {
+        return mIgnoreDataCalls && (isDataChannelGrant || eventType == DecodeEventType.DATA_CALL ||
+            eventType == DecodeEventType.DATA_CALL_ENCRYPTED);
     }
 
     /**
