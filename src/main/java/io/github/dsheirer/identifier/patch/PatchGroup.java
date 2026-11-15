@@ -24,16 +24,24 @@ import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Temporary grouping or regrouping of talkgroups or individual radios.
  */
 public class PatchGroup
 {
-    private TalkgroupIdentifier mPatchGroupIdentifier;
-    private List<TalkgroupIdentifier> mPatchedTalkgroupIdentifiers = new ArrayList<>();
-    private List<RadioIdentifier> mPatchedRadioIdentifiers = new ArrayList<>();
-    private int mVersion;
+    private final TalkgroupIdentifier mPatchGroupIdentifier;
+    private final AtomicReference<Members> mMembers = new AtomicReference<>(new Members(List.of(), List.of()));
+    private final int mVersion;
+
+    /**
+     * Readers capture one immutable membership version without a lock or a collection copy. In particular, a slow
+     * formatter never holds anything needed by the decoder. New lists are prepared only for membership changes;
+     * repeated grants and duplicate member observations retain the existing version. CAS preserves concurrent
+     * add/expiry updates without making a writer acquire an observer's lock.
+     */
+    private record Members(List<TalkgroupIdentifier> talkgroups, List<RadioIdentifier> radios) {}
 
     /**
      * Constructs an instance
@@ -99,14 +107,20 @@ public class PatchGroup
      */
     public boolean addPatchedTalkgroup(TalkgroupIdentifier patchedGroupIdentifier)
     {
-        boolean added = false;
-
-        if(!mPatchedTalkgroupIdentifiers.contains(patchedGroupIdentifier))
+        while(true)
         {
-            added |= mPatchedTalkgroupIdentifiers.add(patchedGroupIdentifier);
+            Members before = mMembers.get();
+            if(before.talkgroups().contains(patchedGroupIdentifier))
+            {
+                return false;
+            }
+            List<TalkgroupIdentifier> updated = new ArrayList<>(before.talkgroups());
+            updated.add(patchedGroupIdentifier);
+            if(mMembers.compareAndSet(before, new Members(List.copyOf(updated), before.radios())))
+            {
+                return true;
+            }
         }
-
-        return added;
     }
 
     /**
@@ -115,7 +129,20 @@ public class PatchGroup
      */
     public void removePatchedTalkgroup(TalkgroupIdentifier talkgroup)
     {
-        mPatchedTalkgroupIdentifiers.remove(talkgroup);
+        while(true)
+        {
+            Members before = mMembers.get();
+            if(!before.talkgroups().contains(talkgroup))
+            {
+                return;
+            }
+            List<TalkgroupIdentifier> updated = new ArrayList<>(before.talkgroups());
+            updated.remove(talkgroup);
+            if(mMembers.compareAndSet(before, new Members(List.copyOf(updated), before.radios())))
+            {
+                return;
+            }
+        }
     }
 
 
@@ -137,11 +164,11 @@ public class PatchGroup
 
     /**
      * List of patched group identifiers that are part of this patch group.
-     * @return patched talkgroups.
+     * @return immutable membership version; later additions and removals do not change this list.
      */
     public List<TalkgroupIdentifier> getPatchedTalkgroupIdentifiers()
     {
-        return mPatchedTalkgroupIdentifiers;
+        return mMembers.get().talkgroups();
     }
 
     /**
@@ -150,13 +177,20 @@ public class PatchGroup
      */
     public boolean addPatchedRadio(RadioIdentifier patchedRadioIdentifier)
     {
-        if(!mPatchedRadioIdentifiers.contains(patchedRadioIdentifier))
+        while(true)
         {
-            mPatchedRadioIdentifiers.add(patchedRadioIdentifier);
-            return true;
+            Members before = mMembers.get();
+            if(before.radios().contains(patchedRadioIdentifier))
+            {
+                return false;
+            }
+            List<RadioIdentifier> updated = new ArrayList<>(before.radios());
+            updated.add(patchedRadioIdentifier);
+            if(mMembers.compareAndSet(before, new Members(before.talkgroups(), List.copyOf(updated))))
+            {
+                return true;
+            }
         }
-
-        return false;
     }
 
     /**
@@ -165,7 +199,20 @@ public class PatchGroup
      */
     public void removePatchedRadio(RadioIdentifier radioIdentifier)
     {
-        mPatchedRadioIdentifiers.remove(radioIdentifier);
+        while(true)
+        {
+            Members before = mMembers.get();
+            if(!before.radios().contains(radioIdentifier))
+            {
+                return;
+            }
+            List<RadioIdentifier> updated = new ArrayList<>(before.radios());
+            updated.remove(radioIdentifier);
+            if(mMembers.compareAndSet(before, new Members(before.talkgroups(), List.copyOf(updated))))
+            {
+                return;
+            }
+        }
     }
 
     /**
@@ -187,27 +234,28 @@ public class PatchGroup
 
     /**
      * List of patched radio identifiers that are part of this patch group.
-     * @return patched radios.
+     * @return immutable membership version; later additions and removals do not change this list.
      */
     public List<RadioIdentifier> getPatchedRadioIdentifiers()
     {
-        return mPatchedRadioIdentifiers;
+        return mMembers.get().radios();
     }
 
     @Override
     public String toString()
     {
+        Members members = mMembers.get();
         StringBuilder sb = new StringBuilder();
         sb.append("P:").append(getPatchGroup());
 
-        if(hasPatchedTalkgroups())
+        if(!members.talkgroups().isEmpty())
         {
-            sb.append(" ").append(getPatchedTalkgroupIdentifiers());
+            sb.append(" ").append(members.talkgroups());
         }
 
-        if(hasPatchedRadios())
+        if(!members.radios().isEmpty())
         {
-            sb.append(" ").append(getPatchedRadioIdentifiers());
+            sb.append(" ").append(members.radios());
         }
 
         return sb.toString();

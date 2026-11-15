@@ -1142,8 +1142,9 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
         }
 
         row.setState(getStickyTrafficState(row, state, wasEncrypted));
-        table.refresh(row);
+        //Projection can fail independently of the grant; quiet traffic must still return to idle.
         scheduleTrafficGrantAgeOut(row, table, parentChannel);
+        table.refresh(row);
     }
 
     /**

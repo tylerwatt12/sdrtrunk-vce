@@ -442,8 +442,8 @@ class DecodeEventViewServiceTest
                 "RADIO".equals(member.form()) && member.radioMembers().isEmpty()));
             assertThrows(UnsupportedOperationException.class, () -> party.radioMembers().clear());
             assertThrows(UnsupportedOperationException.class, () -> party.talkgroupMembers().clear());
-            patch.getPatchedRadioIdentifiers().clear();
-            patch.getPatchedTalkgroupIdentifiers().clear();
+            patch.getPatchedRadioIdentifiers().forEach(patch::removePatchedRadio);
+            patch.getPatchedTalkgroupIdentifiers().forEach(patch::removePatchedTalkgroup);
             assertEquals(3, party.radioMembers().size(), "mutable patch updates cannot change the captured projection");
             assertEquals(List.of("91"), party.talkgroupMembers().stream().map(DecodeEventViewService.PartyIdentifier::text).toList());
             assertEquals("PATCH " + rawPatch, view.details());
