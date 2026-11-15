@@ -26525,7 +26525,7 @@ function renderNestedRadioDirectory(renderContext, directory, currentQuality = [
   };
 }
 
-async function renderModernChannelCatalog(renderContext, revealId = null) {
+async function renderModernChannelCatalog(renderContext) {
   if (!renderIsCurrent(renderContext)) return;
   const loading = createAsyncSection('Channels', {
     bare: true,
@@ -26545,14 +26545,12 @@ async function renderModernChannelCatalog(renderContext, revealId = null) {
     return { catalog, protocols, options };
   }, ({ catalog, protocols, options }) => {
     const selected = new Set();
-    const state = { revision: Number(catalog.revision), catalog, visibleRows: [], pageRows: [], selectionAnchor: null };
+    const state = { revision: Number(catalog.revision), catalog, visibleRows: [], selectionAnchor: null };
     // Tutorial data is a view over the latest receiver catalog, never a saved
     // configuration. The same registry can serve any page or UI region.
     const displayedCatalog = () => guideSampleData.read('channel-catalog', state.catalog);
     const displayedSelection = () => guideSampleData.isActive('channel-catalog') ?
       new Set(displayedCatalog().selected_channel_ids || []) : selected;
-    const pageSize = 20;
-    let pageIndex = 0;
     const wrapper = node('div', 'channel-admin-catalog ui-catalog editor-workspace');
     wrapper.dataset.uiDensity = 'comfortable';
     const summaryHost = node('div', 'channel-summary-text');
@@ -26574,7 +26572,6 @@ async function renderModernChannelCatalog(renderContext, revealId = null) {
     const viewToggle = uiActionButton('Startup order', 'icon-scan-lists', () => {
       activeCatalogView = activeCatalogView === 'grouped' ? 'auto-start' : 'grouped';
       viewToggle.setAttribute('aria-pressed', String(activeCatalogView === 'auto-start'));
-      pageIndex = 0;
       draw({ rebuild: true });
     }, 'ui-button ui-button-secondary channel-order-mode');
     viewToggle.setAttribute('aria-pressed', 'false');
@@ -26589,7 +26586,6 @@ async function renderModernChannelCatalog(renderContext, revealId = null) {
     statusFilter.setAttribute('aria-label', 'Filter channels by status');
     statusFilter.addEventListener('change', () => {
       activeStatus = statusFilter.value;
-      pageIndex = 0;
       draw();
     });
     const protocolFilter = uiSelect([{ value: 'all', label: 'All protocols' },
@@ -26598,7 +26594,6 @@ async function renderModernChannelCatalog(renderContext, revealId = null) {
     protocolFilter.setAttribute('aria-label', 'Filter channels by protocol');
     protocolFilter.addEventListener('change', () => {
       activeProtocol = protocolFilter.value;
-      pageIndex = 0;
       draw();
     });
     const statusHost = node('div', 'channel-admin-status');
@@ -26796,7 +26791,7 @@ async function renderModernChannelCatalog(renderContext, revealId = null) {
             const orderChanged = previousOrder !== confirmedOrder;
             const scrollPosition = { x: window.scrollX, y: window.scrollY };
             const restoreFocus = shouldRestoreFocus?.() === true;
-            if (refreshed && applyCatalog(refreshed)) draw({ revealId: configurationId });
+            if (refreshed && applyCatalog(refreshed)) draw();
             if (verificationPending) {
               autoStartVerificationNotice = uiStatus('Order saved; live verification is pending', 'warning');
               statusHost.replaceChildren(autoStartVerificationNotice);
@@ -26847,11 +26842,9 @@ async function renderModernChannelCatalog(renderContext, revealId = null) {
             String(value || '').toLowerCase().includes(term))));
       return rows.sort(activeCatalogView === 'auto-start' ? channelAutoStartOrder : channelProtocolOrder);
     };
-    const navigation = browsingWorkflows.createBrowsingPager({ node, ariaLabel: 'Channel pages' });
-    navigation.querySelector('.ui-browse-pager-count').setAttribute('role', 'status');
     let channelTable = null;
     const renderChannelTable = () => {
-      channelTable = table(state.pageRows,
+      channelTable = table(state.visibleRows,
         channelAdminColumns(displayedSelection(), state, updateSelection, renderSelectionHeader,
           moveAutoStart),
         'No channels match this view', {
@@ -26877,27 +26870,15 @@ async function renderModernChannelCatalog(renderContext, revealId = null) {
         });
       if (!channelTable.parentElement) tableHost.append(channelTable);
     };
-    draw = ({ rebuild = false, revealId = null } = {}) => {
-      if (guideSampleData.isActive('channel-catalog')) pageIndex = 0;
+    draw = ({ rebuild = false } = {}) => {
       state.visibleRows = filteredRows();
-      if (revealId) {
-        const index = state.visibleRows.findIndex((row) => row.configuration_id === revealId);
-        if (index >= 0) pageIndex = Math.floor(index / pageSize);
-      }
-      pageIndex = Math.min(pageIndex, Math.max(0, Math.ceil(state.visibleRows.length / pageSize) - 1));
-      const offset = pageIndex * pageSize;
-      state.pageRows = state.visibleRows.slice(offset, offset + pageSize);
       if (rebuild || !tableController.reconcileRows) renderChannelTable();
-      else tableController.reconcileRows(state.pageRows);
-      navigation.update({ countText: browsingWorkflows.pageRangeText({ offset,
-        visible: state.pageRows.length, total: state.visibleRows.length, label: 'Channels' }),
-        previous: { enabled: pageIndex > 0, onClick: () => { pageIndex -= 1; draw(); } },
-        next: { enabled: offset + pageSize < state.visibleRows.length, onClick: () => { pageIndex += 1; draw(); } } });
+      else tableController.reconcileRows(state.visibleRows);
       updateSelection();
       createActionWorkflow({ surface: statusHost }).refreshControls();
     };
-    search.addEventListener('input', () => { pageIndex = 0; draw(); });
-    draw({ rebuild: true, revealId: revealId || route.get('channel') });
+    search.addEventListener('input', () => draw());
+    draw({ rebuild: true });
     wrapper.addEventListener('click', (event) => {
       if (statusHost.getAttribute('aria-busy') === 'true' && event.target.closest(
           '.channel-selection-bar button, .channel-order-controls button, .channel-edit-name, ' +
@@ -26905,16 +26886,9 @@ async function renderModernChannelCatalog(renderContext, revealId = null) {
         event.preventDefault(); event.stopImmediatePropagation();
       }
     }, true);
-    wrapper.append(catalogHeader, statusHost, selectedBar, tableHost, navigation);
+    wrapper.append(catalogHeader, statusHost, selectedBar, tableHost);
     updateSelection();
-    let samplePageIndex = null;
     const unregisterGuideData = guideSampleData.register('channel-catalog', () => {
-      const active = guideSampleData.isActive('channel-catalog');
-      if (active && samplePageIndex === null) samplePageIndex = pageIndex;
-      if (!active && samplePageIndex !== null) {
-        pageIndex = samplePageIndex;
-        samplePageIndex = null;
-      }
       summaryHost.replaceChildren(channelSetupSummary(displayedCatalog()));
       draw({ rebuild: true });
     }, { root: wrapper });
@@ -28355,7 +28329,7 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
           revision = Number(result.revision);
         }, {
           onSuccess: async () => {
-            await renderChannelSetup({ revealId: editing ? configurationId : null });
+            await renderChannelSetup();
             if (activeReadOnlyModal === modal.state) closeReadOnlyModal(true);
           },
           onError: (error) => {
@@ -28396,9 +28370,9 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
   }
 }
 
-async function renderChannelSetup(options = null) {
+async function renderChannelSetup() {
   const renderContext = captureRenderContext();
-  await renderModernChannelCatalog(renderContext, typeof options?.revealId === 'string' ? options.revealId : null);
+  await renderModernChannelCatalog(renderContext);
 }
 
 function identityActivityValue(row) {

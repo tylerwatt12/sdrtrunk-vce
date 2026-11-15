@@ -782,20 +782,17 @@ test('startup-order view moves keyed rows without replacing the page or losing p
   const startupOrder = page.getByRole('button', { name: 'Startup order', exact: true });
   await expect(startupOrder).toHaveAttribute('aria-pressed', 'false');
   await expect(page.getByRole('button', { name: 'Grouped', exact: true })).toHaveCount(0);
-  await expect(catalog.locator('.table-row-group-disclosure')).toHaveCount(1);
-  await expect(catalog.locator('.table-row-group-label')).toHaveText(['P25 Trunked']);
+  await expect(catalog.locator('.table-row-group-disclosure')).toHaveCount(3);
+  await expect(catalog.locator('.table-row-group-label')).toHaveText(['P25 Trunked', 'DMR Trunked', 'FM']);
 
   await page.getByRole('button', { name: 'Startup order', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Startup order', exact: true }))
     .toHaveAttribute('aria-pressed', 'true');
   await expect(catalog.locator('.table-row-group-disclosure')).toHaveCount(0);
-  await expect(catalog.locator('tbody tr[data-id]')).toHaveCount(20);
+  await expect(catalog.locator('tbody tr[data-id]')).toHaveCount(60);
   await expect(catalog.locator('tbody tr[data-id]').first()).toHaveAttribute('data-id', 'channel-01');
-  await expect(catalog.locator('tbody tr[data-id]').last()).toHaveAttribute('data-id', 'channel-20');
-  await page.getByRole('button', { name: 'Next', exact: true }).click();
-  await expect(catalog.locator('tbody tr[data-id]').first()).toHaveAttribute('data-id', 'channel-21');
-  await expect(catalog.locator('tbody tr[data-id]').last()).toHaveAttribute('data-id', 'channel-40');
-  await page.getByRole('button', { name: 'Previous', exact: true }).click();
+  await expect(catalog.locator('tbody tr[data-id]').last()).toHaveAttribute('data-id', 'channel-60');
+  await expect(page.getByRole('navigation', { name: 'Channel pages', exact: true })).toHaveCount(0);
 
   const search = page.getByLabel('Search channels, systems, protocols, frequencies, or alias lists');
   await search.fill('Channel 2');

@@ -10,7 +10,7 @@ test.beforeAll(async () => {
     '../../../../../stats-web/assets/core/preference-schema.js')).href)).defaults;
 });
 
-async function openCatalog(page, { theme = 'light', obsoleteLayout = false } = {}) {
+async function openCatalog(page, { theme = 'light', obsoleteLayout = false, allProtocols = false } = {}) {
   let revision = 1;
   const writes = [];
   const preferences = structuredClone(defaults);
@@ -45,6 +45,13 @@ async function openCatalog(page, { theme = 'light', obsoleteLayout = false } = {
     { ...base, configuration_id: 'combined', name: `${system} · West Ridge`, site: 'West Ridge' },
     { ...base, configuration_id: 'beyond-page', name: 'ZZZ Island Control', site: 'Outer Island Simulcast' }
   ];
+  if (allProtocols) {
+    for (const [protocol, count] of [['am', 5], ['nbfm', 3]]) {
+      channels.push(...Array.from({ length: count }, (_, index) => ({ ...base,
+        protocol_id: protocol, protocol_label: protocol === 'am' ? 'AM' : 'FM', channel_kind: 'CONVENTIONAL',
+        configuration_id: `${protocol}-${index}`, name: `${protocol.toUpperCase()} channel ${index}` })));
+    }
+  }
   await page.route('**/api/v1/**', async (route) => {
     const pathname = new URL(route.request().url()).pathname;
     const respond = (data) => route.fulfill({ json: { data } });
@@ -97,43 +104,33 @@ test('Channel Setup shows one active, last, or configured frequency with a backw
   }
 });
 
-test('saving a channel on a later page reveals its row and returns focus to its name', async ({ page }) => {
+test('saving a channel beyond the former first page keeps its row and returns focus to its name', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   const { writes } = await openCatalog(page);
   const row = page.locator('tr[data-id="beyond-page"]');
-  await expect(row).toHaveCount(0);
-  await expect(page.getByRole('navigation', { name: 'Channel pages', exact: true }))
-    .toContainText('Channels 1–20 of 50');
-  for (let index = 0; index < 2; index += 1) {
-    await page.getByRole('button', { name: 'Next', exact: true }).click();
-  }
-  await expect(page.getByRole('navigation', { name: 'Channel pages', exact: true }))
-    .toContainText('Channels 41–50 of 50');
-  await expect(page.locator('.channel-catalog-table tr[data-id]')).toHaveCount(10);
+  await expect(row).toBeVisible();
+  await expect(page.locator('.channel-catalog-table tr[data-id]')).toHaveCount(50);
+  await expect(page.getByRole('navigation', { name: 'Channel pages', exact: true })).toHaveCount(0);
   await row.getByRole('button', { name: 'ZZZ Island Control', exact: true }).click();
   const editor = page.getByRole('dialog', { name: 'Edit ZZZ Island Control', exact: true });
   await editor.getByRole('textbox', { name: 'Name', exact: true }).fill('ZZZ Island Control Updated');
   await editor.getByRole('button', { name: 'Save changes', exact: true }).click();
   await expect(editor).toHaveCount(0);
   await expect(row.getByRole('button', { name: 'ZZZ Island Control Updated', exact: true })).toBeFocused();
-  await expect(page.getByRole('navigation', { name: 'Channel pages', exact: true }))
-    .toContainText('Channels 41–50 of 50');
-  await expect(page.getByRole('button', { name: 'Next', exact: true })).toBeDisabled();
+  await expect(page.locator('.channel-catalog-table tr[data-id]')).toHaveCount(50);
   expect(writes).toHaveLength(1);
 });
 
-test('Channel Setup searches site names beyond the first page and keeps duplicate-name sites visible', async ({ page }) => {
+test('Channel Setup searches the complete catalog and keeps duplicate-name sites visible', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   const { system } = await openCatalog(page);
   const rows = page.locator('.channel-catalog-table tr[data-id]');
-  await expect(rows).toHaveCount(20);
-  await expect(page.locator('tr[data-id="beyond-page"]')).toHaveCount(0);
+  await expect(rows).toHaveCount(50);
+  await expect(page.locator('tr[data-id="beyond-page"]')).toBeVisible();
   const search = page.getByRole('searchbox');
   await search.fill('Outer Island Simulcast');
   await expect(rows).toHaveCount(1);
   await expect(page.locator('tr[data-id="beyond-page"] .channel-site-value')).toHaveText('Outer Island Simulcast');
-  await expect(page.getByRole('navigation', { name: 'Channel pages', exact: true }))
-    .toContainText('Channels 1–1 of 1');
   await search.fill(system);
   for (const [id, site] of [['duplicate', 'East and Lake Shore Simulcast'], ['combined', 'West Ridge']]) {
     const row = page.locator(`tr[data-id="${id}"]`);
@@ -143,6 +140,49 @@ test('Channel Setup searches site names beyond the first page and keeps duplicat
   }
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
 });
+
+for (const theme of ['light', 'dark']) {
+  for (const width of [1280, 390]) {
+    test(`Channel Setup keeps every collapsed protocol visible without paging ${theme} ${width}`, async ({ page }, testInfo) => {
+      await page.setViewportSize({ width, height: 900 });
+      await openCatalog(page, { theme, allProtocols: true });
+      const catalog = page.locator('.channel-admin-catalog');
+      const rows = catalog.locator('tr[data-id]');
+      await expect(rows).toHaveCount(58);
+      await expect(catalog.locator('.table-row-group-label')).toHaveText(['P25 Trunked', 'FM', 'AM']);
+      await expect(catalog.locator('.table-row-group-count')).toHaveText(['50 channels', '3 channels', '5 channels']);
+      await expect(page.getByRole('navigation', { name: 'Channel pages', exact: true })).toHaveCount(0);
+      for (const label of ['P25 Trunked', 'FM', 'AM']) {
+        await catalog.getByRole('button', { name: `Collapse ${label}`, exact: true }).click();
+      }
+      await expect(catalog.locator('tr[data-id]:visible')).toHaveCount(0);
+      await expect(catalog.getByRole('button', { name: 'Expand AM', exact: true })).toBeVisible();
+      await page.screenshot({ path: testInfo.outputPath(`collapsed-protocols-${theme}-${width}.png`), fullPage: true });
+      const am = catalog.getByRole('button', { name: 'Expand AM', exact: true });
+      await am.focus();
+      await page.keyboard.press('Enter');
+      await expect(catalog.locator('tr[data-id^="am-"]:visible')).toHaveCount(5);
+      await catalog.getByRole('checkbox', { name: 'Select all matching channels', exact: true }).check();
+      await expect(catalog.locator('.channel-selection-bar')).toContainText('58 selected');
+      await page.getByRole('searchbox').fill('AM channel');
+      await expect(rows).toHaveCount(5);
+      await expect(catalog.locator('.table-row-group-count')).toHaveText('5 channels');
+      await expect(catalog.locator('.channel-selection-bar')).toContainText('53 outside this filter');
+      await page.getByRole('searchbox').fill('no matching channel');
+      await expect(catalog).toContainText('No channels match this view');
+      await page.getByRole('searchbox').fill('');
+      await expect(catalog.getByRole('button', { name: 'Expand P25 Trunked', exact: true })).toBeVisible();
+      await page.getByRole('combobox', { name: 'Filter channels by status', exact: true }).selectOption('running');
+      await expect(rows).toHaveCount(1);
+      await expect(catalog.locator('.table-row-group-count')).toHaveText('1 channel');
+      await page.getByRole('combobox', { name: 'Filter channels by status', exact: true }).selectOption('all');
+      await page.getByRole('combobox', { name: 'Filter channels by protocol', exact: true }).selectOption('am');
+      await expect(rows).toHaveCount(5);
+      await expect(catalog.locator('.table-row-group-label')).toHaveText('AM');
+      expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+    });
+  }
+}
 
 for (const theme of ['light']) {
   test(`Channel Setup matches the quiet mockup and fits all columns with obsolete widths ${theme}`, async ({ page }, testInfo) => {
