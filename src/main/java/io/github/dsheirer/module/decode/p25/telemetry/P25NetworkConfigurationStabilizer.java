@@ -39,8 +39,8 @@ public class P25NetworkConfigurationStabilizer
     static final long DISCOVERY_WINDOW_MILLISECONDS = TimeUnit.SECONDS.toMillis(60);
     static final int GUARDED_STATIC_OBSERVATION_THRESHOLD = 3;
     static final long GUARDED_STATIC_MINIMUM_AGE_MILLISECONDS = TimeUnit.SECONDS.toMillis(60);
-    static final int DYNAMIC_OBSERVATION_THRESHOLD = 2;
-    static final long DYNAMIC_MINIMUM_AGE_MILLISECONDS = TimeUnit.SECONDS.toMillis(10);
+    static final int TALKER_ALIAS_OBSERVATION_THRESHOLD = 2;
+    static final long TALKER_ALIAS_MINIMUM_AGE_MILLISECONDS = TimeUnit.SECONDS.toMillis(10);
     static final long CANDIDATE_EXPIRATION_MILLISECONDS = TimeUnit.MINUTES.toMillis(10);
     static final long STABLE_BROADCAST_FACT_EXPIRATION_MILLISECONDS = TimeUnit.MINUTES.toMillis(10);
     static final long PATCH_GROUP_FRESHNESS_MILLISECONDS = TimeUnit.SECONDS.toMillis(30);
@@ -54,8 +54,8 @@ public class P25NetworkConfigurationStabilizer
     // the normal static-site 60-second minimum would discard these bursts.
     private static final FactConfirmationPolicy BSI_POLICY =
         new FactConfirmationPolicy(3, 1000, TimeUnit.MINUTES.toMillis(1), false);
-    private static final FactConfirmationPolicy DYNAMIC_POLICY =
-        new FactConfirmationPolicy(DYNAMIC_OBSERVATION_THRESHOLD, DYNAMIC_MINIMUM_AGE_MILLISECONDS,
+    private static final FactConfirmationPolicy TALKER_ALIAS_POLICY =
+        new FactConfirmationPolicy(TALKER_ALIAS_OBSERVATION_THRESHOLD, TALKER_ALIAS_MINIMUM_AGE_MILLISECONDS,
             CANDIDATE_EXPIRATION_MILLISECONDS, false);
 
     private final String mDecoder;
@@ -336,7 +336,7 @@ public class P25NetworkConfigurationStabilizer
 
         try
         {
-            removePatchGroupValue(patchGroupIdentifier);
+            removePatchGroupValue(patchGroupIdentifier, Long.MAX_VALUE);
             resetPatchCompleteness();
         }
         finally
@@ -357,7 +357,7 @@ public class P25NetworkConfigurationStabilizer
             timestamp = observationTimestamp(timestamp);
             expireCandidates(timestamp);
             noteFreshPatchScopeObservation(timestamp);
-            removePatchGroupValue(patchGroupIdentifier);
+            removePatchGroupValue(patchGroupIdentifier, timestamp);
         }
         finally
         {
@@ -374,7 +374,7 @@ public class P25NetworkConfigurationStabilizer
 
         try
         {
-            removePatchGroupsFromIdentifiersValue(identifiers);
+            removePatchGroupsFromIdentifiersValue(identifiers, Long.MAX_VALUE);
             resetPatchCompleteness();
         }
         finally
@@ -395,7 +395,7 @@ public class P25NetworkConfigurationStabilizer
             timestamp = observationTimestamp(timestamp);
             expireCandidates(timestamp);
             noteFreshPatchScopeObservation(timestamp);
-            removePatchGroupsFromIdentifiersValue(identifiers);
+            removePatchGroupsFromIdentifiersValue(identifiers, timestamp);
         }
         finally
         {
@@ -551,12 +551,12 @@ public class P25NetworkConfigurationStabilizer
         }
     }
 
-    private <T> void observeDynamic(Map<String,StableFactTracker<T,T>> trackers, String key, T value, long timestamp)
+    private <T> void observeTalkerAliasValue(Map<String,StableFactTracker<T,T>> trackers, String key, T value, long timestamp)
     {
         if(key != null && value != null)
         {
             trackers.computeIfAbsent(key, ignored -> tracker())
-                .observe(value, timestamp, DYNAMIC_POLICY, ignored -> true);
+                .observe(value, timestamp, TALKER_ALIAS_POLICY, ignored -> true);
         }
     }
 
@@ -565,10 +565,11 @@ public class P25NetworkConfigurationStabilizer
     {
         for(P25NetworkConfigurationSnapshot.PatchGroup patchGroup: list(patchGroups))
         {
-            if(patchGroup != null)
+            if(patchGroup != null && patchGroupKey(patchGroup) != null)
             {
-                observeDynamic(mPatchGroups, patchGroupKey(patchGroup), patchGroup.withoutObservedAt(),
-                    patchGroup.observedAtMs() != null ? patchGroup.observedAtMs() : timestamp);
+                mPatchGroups.computeIfAbsent(patchGroupKey(patchGroup), ignored -> tracker())
+                    .observeAuthoritative(patchGroup.withoutObservedAt(),
+                        patchGroup.observedAtMs() != null ? patchGroup.observedAtMs() : timestamp, ignored -> true);
             }
         }
     }
@@ -630,7 +631,7 @@ public class P25NetworkConfigurationStabilizer
             talkerAlias = talkerAlias.withoutObservedAt();
         }
 
-        observeDynamic(mTalkerAliases, talkerAliasKey(talkerAlias), talkerAlias, timestamp);
+        observeTalkerAliasValue(mTalkerAliases, talkerAliasKey(talkerAlias), talkerAlias, timestamp);
     }
 
     private boolean allowChannelPromotion(P25NetworkConfigurationSnapshot.Channel channel)
@@ -929,19 +930,25 @@ public class P25NetworkConfigurationStabilizer
         private static final PatchCompleteness EMPTY = new PatchCompleteness(0, 0);
     }
 
-    private void removePatchGroupValue(PatchGroupIdentifier patchGroupIdentifier)
+    private void removePatchGroupValue(PatchGroupIdentifier patchGroupIdentifier, long timestamp)
     {
         if(patchGroupIdentifier != null)
         {
             P25NetworkConfigurationSnapshot.PatchGroup snapshot = toSnapshot(patchGroupIdentifier);
             if(snapshot != null)
             {
-                mPatchGroups.remove(patchGroupKey(snapshot));
+                var tracker = mPatchGroups.get(patchGroupKey(snapshot));
+                if(tracker != null && tracker.getStableValue() != null &&
+                    java.util.Objects.equals(tracker.getStableValue().version(), snapshot.version()) &&
+                    timestamp >= tracker.getStableObservation().lastSeenTimestamp())
+                {
+                    mPatchGroups.remove(patchGroupKey(snapshot));
+                }
             }
         }
     }
 
-    private void removePatchGroupsFromIdentifiersValue(List<Identifier> identifiers)
+    private void removePatchGroupsFromIdentifiersValue(List<Identifier> identifiers, long timestamp)
     {
         if(identifiers == null || identifiers.isEmpty())
         {
@@ -952,7 +959,7 @@ public class P25NetworkConfigurationStabilizer
         {
             if(identifier instanceof PatchGroupIdentifier patchGroupIdentifier)
             {
-                removePatchGroupValue(patchGroupIdentifier);
+                removePatchGroupValue(patchGroupIdentifier, timestamp);
             }
         }
     }
@@ -975,7 +982,7 @@ public class P25NetworkConfigurationStabilizer
         }
 
         return new P25NetworkConfigurationSnapshot.PatchGroup(patchGroup.getPatchGroup().getValue(),
-            patchGroup.getVersion(),
+            patchGroup.getVersion(), patchGroup.getType().getCode(),
             patchGroup.getPatchedTalkgroupIdentifiers().stream()
                 .filter(member -> !(member instanceof FullyQualifiedTalkgroupIdentifier))
                 .map(TalkgroupIdentifier::getValue).filter(java.util.Objects::nonNull)
@@ -984,6 +991,6 @@ public class P25NetworkConfigurationStabilizer
             patchGroup.getPatchedRadioIdentifiers().stream()
                 .map(RadioIdentifier::getValue).filter(java.util.Objects::nonNull)
                 .filter(value -> value >= 1 && value <= RadioSystemIdentityKey.MAX_P25_WORKING_UNIT_ID)
-                .distinct().sorted().toList());
+                .distinct().sorted().toList(), null);
     }
 }

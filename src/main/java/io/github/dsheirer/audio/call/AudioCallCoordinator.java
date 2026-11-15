@@ -1768,7 +1768,7 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
             return winnerDestination;
         }
 
-        PatchGroup promoted = new PatchGroup(talkgroup, original.getVersion());
+        PatchGroup promoted = new PatchGroup(talkgroup, original.getVersion(), original.getType());
         promoted.addPatchedTalkgroups(original.getPatchedTalkgroupIdentifiers());
         promoted.addPatchedRadios(original.getPatchedRadioIdentifiers());
         return APCO25PatchGroup.create(promoted);

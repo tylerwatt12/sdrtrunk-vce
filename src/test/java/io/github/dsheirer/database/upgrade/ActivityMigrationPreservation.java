@@ -48,6 +48,8 @@ final class ActivityMigrationPreservation
                             if(currentProjection && table.equals("receiver_activity_event") &&
                                 Set.of("denial_reason_code", "denial_reason_vendor_specific").contains(
                                     rows.getMetaData().getColumnName(column))) continue;
+                            if(currentProjection && Set.of("p25_site_patch_group", "p25_site_patch_group_summary")
+                                .contains(table) && rows.getMetaData().getColumnName(column).equals("regroup_type")) continue;
                             Object field = rows.getObject(column);
                             if(currentProjection && table.equals("receiver_activity_event") &&
                                 rows.getMetaData().getColumnName(column).equals("encrypted"))

@@ -27,7 +27,7 @@ class Format73To74DatabaseMigrationTest
             c.setAutoCommit(false);
             new Format73To74DatabaseMigration().migrate(c); DatabaseFormatCatalog.stamp(c,74);
             assertEquals(74, DatabaseFormatCatalog.inspect(c).version());
-            assertEquals(ConfigurationHistoryDatabase.HISTORY_FINGERPRINT, SqliteSchemaValidator.fingerprint(c,"activity"));
+            assertEquals(ConfigurationHistoryDatabase.FORMAT_74_HISTORY_FINGERPRINT, SqliteSchemaValidator.fingerprint(c,"activity"));
             assertEquals(trees, eventTrees(c));
             assertEquals(0,scalar(c,"SELECT count(*) FROM activity.receiver_activity_event WHERE denial_reason_code IS NOT NULL OR denial_reason_vendor_specific IS NOT NULL"));
             c.rollback();
@@ -53,8 +53,11 @@ class Format73To74DatabaseMigrationTest
             c.rollback();
             try(var r=s.executeQuery("PRAGMA activity.quick_check")) { assertTrue(r.next()); assertEquals("ok",r.getString(1)); }
             try(var r=s.executeQuery("PRAGMA activity.foreign_key_check")) { assertFalse(r.next()); }
+            assertEquals(74, DatabaseFormatCatalog.inspect(c).version());
+            ConfigurationHistoryDatabase.validateAdmittedRole(c, ConfigurationHistorySchema.HISTORY_ROLE,
+                SqliteSchemaValidator.fingerprint(c, "activity"), "activity");
         }
-        ConfigurationHistoryDatabase.validatePair(database);
+        ConfigurationHistoryDatabase.validatePairIdentity(database);
     }
 
     @Test void fullMigratorPreservesHistoryAndRetriesUnchangedSource() throws Exception

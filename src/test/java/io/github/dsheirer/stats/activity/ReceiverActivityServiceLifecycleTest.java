@@ -675,7 +675,8 @@ class ReceiverActivityServiceLifecycleTest
             assertTrue(barrier.result().get(5, TimeUnit.SECONDS).checkOk());
             assertEquals(3, service.getStatus().recordsWritten(), "initial record, new callsign, minute heartbeat");
             assertEquals(0, service.getStatus().recordsDropped());
-            assertEquals("WTEST77", scalarText(database, "SELECT callsign FROM p25_site_channel_summary"));
+            assertEquals("WTEST77", scalarText(database,
+                "SELECT callsign FROM p25_site_bsi WHERE source=0 AND frequency_hz=851012500"));
         }
         finally { disposeAndAwait(service); }
     }

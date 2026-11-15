@@ -222,10 +222,26 @@ public class ReceiverActivitySchema
         upgradeFrom59(connection);
         createFreshEncryptionState(connection);
         createBsiTable(connection, "main");
+        addPatchRegroupType(connection, "main");
         try(var statement = connection.createStatement())
         {
             statement.executeUpdate("ALTER TABLE p25_site_channel DROP COLUMN callsign");
             statement.executeUpdate("ALTER TABLE p25_site_channel_summary DROP COLUMN callsign");
+        }
+    }
+
+    /** Authoritative regroup field definition for fresh creation and the adjacent Application Migrator. */
+    public static void addPatchRegroupType(Connection connection, String schema) throws SQLException
+    {
+        if(!Set.of("main", "activity").contains(schema)) throw new SQLException("Invalid patch Activity store");
+        try(var statement = connection.createStatement())
+        {
+            for(String table: List.of("p25_site_patch_group", "p25_site_patch_group_summary"))
+            {
+                statement.executeUpdate("ALTER TABLE " + schema + "." + table +
+                    " ADD COLUMN regroup_type INTEGER NOT NULL DEFAULT 0 " +
+                    "CHECK(typeof(regroup_type) = 'integer' AND regroup_type IN (0, 1, 2))");
+            }
         }
     }
 
@@ -4105,9 +4121,9 @@ public class ReceiverActivitySchema
         table("p25_site_neighbor_summary", "channel_id", "neighbor_key", "system_id", "rfss", "site", "lra",
             "channel_descriptor", "downlink_hz", "uplink_hz", "status", "first_seen_ms", "last_seen_ms",
             "observation_count"),
-        table("p25_site_patch_group", "channel_id", "local_patch_group_id", "version", "confirmed_at_ms"),
+        table("p25_site_patch_group", "channel_id", "local_patch_group_id", "version", "confirmed_at_ms", "regroup_type"),
         table("p25_site_patch_group_summary", "channel_id", "local_patch_group_id", "version", "first_seen_ms", "last_seen_ms",
-            "observation_count"),
+            "observation_count", "regroup_type"),
         table("p25_site_patch_group_talkgroup", "channel_id", "local_patch_group_id", "local_talkgroup_id", "confirmed_at_ms"),
         table("p25_site_patch_group_talkgroup_summary", "channel_id", "local_patch_group_id", "local_talkgroup_id", "first_seen_ms",
             "last_seen_ms", "observation_count"),
@@ -5086,10 +5102,11 @@ public class ReceiverActivitySchema
 
             try(PreparedStatement statement = connection.prepareStatement("""
                 INSERT INTO p25_site_patch_group_summary (
-                    channel_id, local_patch_group_id, version, first_seen_ms, last_seen_ms, observation_count
-                ) VALUES (?, ?, ?, ?, ?, 1)
+                    channel_id, local_patch_group_id, version, first_seen_ms, last_seen_ms, observation_count, regroup_type
+                ) VALUES (?, ?, ?, ?, ?, 1, ?)
                 ON CONFLICT(channel_id, local_patch_group_id) DO UPDATE SET
                     version = coalesce(excluded.version, p25_site_patch_group_summary.version),
+                    regroup_type = excluded.regroup_type,
                     last_seen_ms = excluded.last_seen_ms,
                     observation_count = p25_site_patch_group_summary.observation_count + 1
                 WHERE excluded.last_seen_ms > p25_site_patch_group_summary.last_seen_ms
@@ -5100,6 +5117,7 @@ public class ReceiverActivitySchema
                 setInteger(statement, 3, patchGroup.version());
                 statement.setLong(4, siteFactTimestamp(patchGroup.observedAtMs(), snapshot));
                 statement.setLong(5, siteFactTimestamp(patchGroup.observedAtMs(), snapshot));
+                statement.setInt(6, patchGroup.regroupType());
                 statement.executeUpdate();
             }
 
@@ -5367,7 +5385,7 @@ public class ReceiverActivitySchema
 
         try(PreparedStatement group = connection.prepareStatement("""
                 INSERT INTO p25_site_patch_group
-                    (channel_id, local_patch_group_id, version, confirmed_at_ms) VALUES (?, ?, ?, ?)
+                    (channel_id, local_patch_group_id, version, confirmed_at_ms, regroup_type) VALUES (?, ?, ?, ?, ?)
                 """);
             PreparedStatement talkgroup = connection.prepareStatement("""
                 INSERT INTO p25_site_patch_group_talkgroup
@@ -5389,6 +5407,7 @@ public class ReceiverActivitySchema
                 group.setInt(2, patch.localPatchGroupId());
                 setInteger(group, 3, patch.version());
                 group.setLong(4, siteFactTimestamp(patch.observedAtMs(), snapshot));
+                group.setInt(5, patch.regroupType());
                 group.addBatch();
 
                 for(Integer member: list(patch.localTalkgroupIds()))

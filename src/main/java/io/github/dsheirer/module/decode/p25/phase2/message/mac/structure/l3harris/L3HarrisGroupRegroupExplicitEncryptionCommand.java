@@ -45,15 +45,12 @@ public class L3HarrisGroupRegroupExplicitEncryptionCommand extends MacStructureV
     private static final IntField SUPERGROUP_ADDRESS = IntField.length16(OCTET_5_BIT_32);
     private static final IntField KEY_ID = IntField.length16(OCTET_7_BIT_48);
 
-    private static final IntField RADIO_1 = IntField.length24(OCTET_9_BIT_64);
-    private static final IntField RADIO_2 = IntField.length24(OCTET_12_BIT_88);
-    private static final IntField RADIO_3 = IntField.length24(OCTET_15_BIT_112);
-
     private static final IntField ALGORITHM_ID = IntField.length8(OCTET_9_BIT_64);
-    private static final IntField TALKGROUP_1 = IntField.length16(OCTET_10_BIT_72);
-    private static final IntField TALKGROUP_2 = IntField.length16(OCTET_12_BIT_88);
-    private static final IntField TALKGROUP_3 = IntField.length16(OCTET_14_BIT_104);
-    private static final IntField TALKGROUP_4 = IntField.length16(OCTET_16_BIT_120);
+    private static final IntField[] RADIO_FIELDS = {IntField.length24(OCTET_9_BIT_64),
+        IntField.length24(OCTET_12_BIT_88), IntField.length24(OCTET_15_BIT_112)};
+    private static final IntField[] TALKGROUP_FIELDS = {IntField.length16(OCTET_10_BIT_72),
+        IntField.length16(OCTET_12_BIT_88), IntField.length16(OCTET_14_BIT_104),
+        IntField.length16(OCTET_16_BIT_120)};
 
     private RegroupOptions mRegroupOptions;
     private PatchGroupIdentifier mPatchGroupIdentifier;
@@ -173,82 +170,41 @@ public class L3HarrisGroupRegroupExplicitEncryptionCommand extends MacStructureV
     {
         if(mPatchGroupIdentifier == null)
         {
-            int octetLength = getLength();
+            int octetLength = Math.min(getLength(), (getMessage().size() - getOffset()) / 8);
 
             TalkgroupIdentifier patchGroupId = APCO25Talkgroup.create(getInt(SUPERGROUP_ADDRESS));
-            PatchGroup patchGroup = new PatchGroup(patchGroupId, getRegroupOptions().getSupergroupSequenceNumber());
+            PatchGroup patchGroup = new PatchGroup(patchGroupId, getRegroupOptions().getSupergroupSequenceNumber(),
+                getRegroupOptions().isPatch() ? PatchGroup.Type.PATCH : PatchGroup.Type.SIMULSELECT);
 
             if(getRegroupOptions().isTalkgroupAddress())
             {
-                if(octetLength >= 11)
+                for(IntField field: TALKGROUP_FIELDS)
                 {
-                    int talkgroup1 = getInt(TALKGROUP_1);
-
-                    if(talkgroup1 > 0)
+                    if(field.end() >= octetLength * 8)
                     {
-                        patchGroup.addPatchedTalkgroup(APCO25Talkgroup.create(talkgroup1));
+                        break;
+                    }
 
-                        if(octetLength >= 13)
-                        {
-                            int talkgroup2 = getMessage().getInt(TALKGROUP_2, getOffset());
-
-                            if(talkgroup2 > 0)
-                            {
-                                patchGroup.addPatchedTalkgroup(APCO25Talkgroup.create(talkgroup2));
-
-                                if(octetLength >= 15)
-                                {
-                                    int talkgroup3 = getMessage().getInt(TALKGROUP_3, getOffset());
-
-                                    if(talkgroup3 > 0)
-                                    {
-                                        patchGroup.addPatchedTalkgroup(APCO25Talkgroup.create(talkgroup3));
-
-                                        if(octetLength >= 17)
-                                        {
-                                            int talkgroup4 = getMessage().getInt(TALKGROUP_4, getOffset());
-
-                                            if(talkgroup4 > 0)
-                                            {
-                                                patchGroup.addPatchedTalkgroup(APCO25Talkgroup.create(talkgroup4));
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                    int talkgroup = getInt(field);
+                    if(talkgroup > 0)
+                    {
+                        patchGroup.addPatchedTalkgroup(APCO25Talkgroup.create(talkgroup));
                     }
                 }
             }
             else
             {
-                if(octetLength >= 11)
+                for(IntField field: RADIO_FIELDS)
                 {
-                    int radio1 = getInt(RADIO_1);
-
-                    if(radio1 > 0)
+                    if(field.end() >= octetLength * 8)
                     {
-                        patchGroup.addPatchedRadio(APCO25RadioIdentifier.createTo(radio1));
+                        break;
+                    }
 
-                        if(octetLength >= 14)
-                        {
-                            int radio2 = getInt(RADIO_2);
-
-                            if(radio2 > 0)
-                            {
-                                patchGroup.addPatchedRadio(APCO25RadioIdentifier.createTo(radio2));
-
-                                if(octetLength >= 17)
-                                {
-                                    int radio3 = getInt(RADIO_3);
-
-                                    if(radio3 > 0)
-                                    {
-                                        patchGroup.addPatchedRadio(APCO25RadioIdentifier.createTo(radio3));
-                                    }
-                                }
-                            }
-                        }
+                    int radio = getInt(field);
+                    if(radio > 0)
+                    {
+                        patchGroup.addPatchedRadio(APCO25RadioIdentifier.createTo(radio));
                     }
                 }
             }

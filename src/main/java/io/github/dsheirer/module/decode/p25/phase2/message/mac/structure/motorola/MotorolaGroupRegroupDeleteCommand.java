@@ -44,7 +44,7 @@ public class MotorolaGroupRegroupDeleteCommand extends MacStructureVendor
     private static final IntField TALKGROUP_5 = IntField.length16(OCTET_14_BIT_104);
     private static final IntField TALKGROUP_6 = IntField.length16(OCTET_16_BIT_120);
     private PatchGroupIdentifier mPatchGroupIdentifier;
-    private List<Identifier> mDeletedTalkgroups;
+    private List<TalkgroupIdentifier> mDeletedTalkgroups;
     private List<Identifier> mIdentifiers;
 
     /**
@@ -79,7 +79,8 @@ public class MotorolaGroupRegroupDeleteCommand extends MacStructureVendor
         if(mPatchGroupIdentifier == null)
         {
             TalkgroupIdentifier patchGroupId = APCO25Talkgroup.create(getInt(SUPERGROUP_ADDRESS));
-            PatchGroup patchGroup = new PatchGroup(patchGroupId, 0);
+            PatchGroup patchGroup = new PatchGroup(patchGroupId, 0, PatchGroup.Type.PATCH);
+            patchGroup.addPatchedTalkgroups(getDeletedTalkgroups());
             mPatchGroupIdentifier = APCO25PatchGroup.create(patchGroup);
         }
 
@@ -89,7 +90,7 @@ public class MotorolaGroupRegroupDeleteCommand extends MacStructureVendor
     /**
      * Deleted talkgroups that shall be removed from the patch group
      */
-    public List<Identifier> getDeletedTalkgroups()
+    public List<TalkgroupIdentifier> getDeletedTalkgroups()
     {
         if(mDeletedTalkgroups == null)
         {

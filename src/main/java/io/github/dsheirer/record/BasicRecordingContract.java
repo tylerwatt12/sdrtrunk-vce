@@ -90,7 +90,7 @@ public final class BasicRecordingContract
         if(identifier instanceof PatchGroupIdentifier patch && patch.getValue() != null)
         {
             PatchGroup original = patch.getValue();
-            PatchGroup lookup = new PatchGroup(original.getPatchGroup(), original.getVersion());
+            PatchGroup lookup = new PatchGroup(original.getPatchGroup(), original.getVersion(), original.getType());
             lookup.addPatchedTalkgroups(original.getPatchedTalkgroupIdentifiers());
             for(RadioIdentifier radio: original.getPatchedRadioIdentifiers())
             {

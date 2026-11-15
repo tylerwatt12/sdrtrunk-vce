@@ -34,6 +34,24 @@ public class PatchGroup
     private final TalkgroupIdentifier mPatchGroupIdentifier;
     private final AtomicReference<Members> mMembers = new AtomicReference<>(new Members(List.of(), List.of()));
     private final int mVersion;
+    private final Type mType;
+
+    public enum Type
+    {
+        UNKNOWN(0), PATCH(1), SIMULSELECT(2);
+
+        private final int mCode;
+
+        Type(int code)
+        {
+            mCode = code;
+        }
+
+        public int getCode()
+        {
+            return mCode;
+        }
+    }
 
     /**
      * Readers capture one immutable membership version without a lock or a collection copy. In particular, a slow
@@ -51,8 +69,19 @@ public class PatchGroup
      */
     public PatchGroup(TalkgroupIdentifier patchGroupIdentifier, int version)
     {
+        this(patchGroupIdentifier, version, Type.UNKNOWN);
+    }
+
+    public PatchGroup(TalkgroupIdentifier patchGroupIdentifier, int version, Type type)
+    {
         mPatchGroupIdentifier = patchGroupIdentifier;
         mVersion = version;
+        mType = Objects.requireNonNull(type);
+    }
+
+    public Type getType()
+    {
+        return mType;
     }
 
     /**

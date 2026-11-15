@@ -1381,7 +1381,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
             if(primary != after.getValue().getPatchGroup())
             {
                 //Only worker-owned row state carries this copy; published navigation contains immutable scalar facts.
-                PatchGroup patch = new PatchGroup(primary, after.getValue().getVersion());
+                PatchGroup patch = new PatchGroup(primary, after.getValue().getVersion(), after.getValue().getType());
                 patch.addPatchedTalkgroups(after.getValue().getPatchedTalkgroupIdentifiers());
                 patch.addPatchedRadios(after.getValue().getPatchedRadioIdentifiers());
                 return APCO25PatchGroup.create(patch);

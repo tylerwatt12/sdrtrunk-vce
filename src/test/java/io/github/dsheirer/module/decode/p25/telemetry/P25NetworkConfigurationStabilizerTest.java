@@ -695,33 +695,33 @@ public class P25NetworkConfigurationStabilizerTest
     }
 
     @Test
-    public void promotesAccumulatedAlternatingHarrisPhaseOneMembers()
+    public void firstPatchAndEachAccumulatedMemberAreVisibleImmediately()
     {
         PatchGroupManager manager = new PatchGroupManager();
         P25NetworkConfigurationStabilizer stabilizer = new P25NetworkConfigurationStabilizer("P25_PHASE_1");
-
         observeAccumulatedPatchGroup(manager, stabilizer, patchGroup(65191, 9, 40002), 1_000L);
-        observeAccumulatedPatchGroup(manager, stabilizer, patchGroup(65191, 9, 40003), 11_000L);
-        observeAccumulatedPatchGroup(manager, stabilizer, patchGroup(65191, 9, 40002), 21_000L);
-
-        assertEquals(List.of(40002, 40003),
-            stabilizer.getSnapshot().patchGroups().getFirst().localTalkgroupIds());
+        assertEquals(List.of(40002), stabilizer.getSnapshot().patchGroups().getFirst().localTalkgroupIds());
+        observeAccumulatedPatchGroup(manager, stabilizer, patchGroup(65191, 9, 40003), 1_001L);
+        var patch = stabilizer.getSnapshot().patchGroups().getFirst();
+        assertEquals(List.of(40002, 40003), patch.localTalkgroupIds());
+        assertEquals(1_001L, patch.observedAtMs());
+        assertEquals(1, patch.regroupType());
+        assertNull(stabilizer.getSnapshot().activePatchesObservedAtMs(),
+            "one known patch does not establish a complete site inventory");
     }
 
     @Test
-    public void repeatedUnchangedHarrisPhaseTwoObservationCanPromote()
+    public void patchUpdatesAndCancellationRejectOlderEvidenceAndOtherSequences()
     {
-        PatchGroupManager manager = new PatchGroupManager();
         P25NetworkConfigurationStabilizer stabilizer = new P25NetworkConfigurationStabilizer("P25_PHASE_2");
-        PatchGroupIdentifier first = patchGroup(65191, 9, 40002);
-        PatchGroupIdentifier repeated = patchGroup(65191, 9, 40002);
-
-        assertTrue(manager.addPatchGroup(first, 1_000L));
-        stabilizer.observePatchGroup((PatchGroupIdentifier)manager.update(first, 1_000L), 1_000L);
-        assertFalse(manager.addPatchGroup(repeated, 11_000L));
-        stabilizer.observePatchGroup((PatchGroupIdentifier)manager.update(repeated, 11_000L), 11_000L);
-
-        assertEquals(List.of(40002), stabilizer.getSnapshot().patchGroups().getFirst().localTalkgroupIds());
+        stabilizer.observePatchGroup(patchGroup(65191, 9, 40002), 1_000L);
+        stabilizer.observePatchGroup(patchGroup(65191, 10, 40003), 1_001L);
+        stabilizer.observePatchGroup(patchGroup(65191, 9, 40002), 999L);
+        stabilizer.removePatchGroup(patchGroup(65191, 9, 40002), 1_002L);
+        stabilizer.removePatchGroup(patchGroup(65191, 10, 40003), 1_000L);
+        assertEquals(List.of(40003), stabilizer.getSnapshot().patchGroups().getFirst().localTalkgroupIds());
+        stabilizer.removePatchGroup(patchGroup(65191, 10, 40003), 1_003L);
+        assertTrue(stabilizer.getSnapshot().patchGroups().isEmpty());
     }
 
     @Test
@@ -750,7 +750,7 @@ public class P25NetworkConfigurationStabilizerTest
 
     private static PatchGroupIdentifier patchGroup(int supergroup, int version, int member)
     {
-        PatchGroup patchGroup = new PatchGroup(APCO25Talkgroup.create(supergroup), version);
+        PatchGroup patchGroup = new PatchGroup(APCO25Talkgroup.create(supergroup), version, PatchGroup.Type.PATCH);
         patchGroup.addPatchedTalkgroup(APCO25Talkgroup.create(member));
         return APCO25PatchGroup.create(patchGroup);
     }

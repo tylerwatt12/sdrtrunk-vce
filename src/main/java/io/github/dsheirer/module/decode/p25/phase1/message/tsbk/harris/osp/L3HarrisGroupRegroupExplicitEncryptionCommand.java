@@ -102,7 +102,8 @@ public class L3HarrisGroupRegroupExplicitEncryptionCommand extends VendorOSPMess
     {
         if(mPatchGroup == null)
         {
-            PatchGroup patchGroup = new PatchGroup(getSuperGroup(), getRegroupOptions().getSupergroupSequenceNumber());
+            PatchGroup patchGroup = new PatchGroup(getSuperGroup(), getRegroupOptions().getSupergroupSequenceNumber(),
+                getRegroupOptions().isPatch() ? PatchGroup.Type.PATCH : PatchGroup.Type.SIMULSELECT);
 
             if(getTargetAddress() instanceof APCO25Talkgroup talkgroup)
             {

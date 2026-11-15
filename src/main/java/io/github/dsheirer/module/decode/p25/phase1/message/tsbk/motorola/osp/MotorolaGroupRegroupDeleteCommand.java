@@ -74,7 +74,7 @@ public class MotorolaGroupRegroupDeleteCommand extends VendorOSPMessage
     {
         if(mPatchGroup == null)
         {
-            PatchGroup patchGroup = new PatchGroup(APCO25Talkgroup.create(getPatchAddress()));
+            PatchGroup patchGroup = new PatchGroup(APCO25Talkgroup.create(getPatchAddress()), 0, PatchGroup.Type.PATCH);
             patchGroup.addPatchedTalkgroups(getPatchedTalkgroups());
             mPatchGroup = APCO25PatchGroup.create(patchGroup);
         }
@@ -133,7 +133,7 @@ public class MotorolaGroupRegroupDeleteCommand extends VendorOSPMessage
 
     private boolean hasAddress1()
     {
-        return getPatchAddress() != getAddress1();
+        return getAddress1() > 0;
     }
 
     public TalkgroupIdentifier getGroupAddress2()
@@ -153,8 +153,7 @@ public class MotorolaGroupRegroupDeleteCommand extends VendorOSPMessage
 
     public boolean hasGroupAddress2()
     {
-        return getPatchAddress() != getAddress2() &&
-               getAddress1() != getAddress2();
+        return getAddress2() > 0 && getAddress1() != getAddress2();
     }
 
     public TalkgroupIdentifier getGroupAddress3()
@@ -174,9 +173,7 @@ public class MotorolaGroupRegroupDeleteCommand extends VendorOSPMessage
 
     public boolean hasGroupAddress3()
     {
-        return getPatchAddress() != getAddress2() &&
-            getAddress1() != getAddress3() &&
-            getAddress2() != getAddress3();
+        return getAddress3() > 0 && getAddress1() != getAddress3() && getAddress2() != getAddress3();
     }
 
     @Override

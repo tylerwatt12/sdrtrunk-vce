@@ -132,7 +132,7 @@ public record P25GrantObservationEvent(String configurationId, DecoderType decod
             if(identifier instanceof APCO25PatchGroup patchIdentifier && patchIdentifier.getValue() != null)
             {
                 PatchGroup original = patchIdentifier.getValue();
-                PatchGroup snapshot = new PatchGroup(original.getPatchGroup(), original.getVersion());
+                PatchGroup snapshot = new PatchGroup(original.getPatchGroup(), original.getVersion(), original.getType());
                 snapshot.addPatchedTalkgroups(List.copyOf(original.getPatchedTalkgroupIdentifiers()));
                 snapshot.addPatchedRadios(List.copyOf(original.getPatchedRadioIdentifiers()));
                 return APCO25PatchGroup.create(snapshot);

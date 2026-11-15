@@ -4798,7 +4798,7 @@ class StatsWebDatabase
                 SELECT system.id AS radio_system_id, system.system_key AS radio_system_key,
                     system.protocol_code, system.address_domain_code AS address_domain_code,
                     system.p25_wacn AS wacn, system.p25_system_id AS system_id,
-                    current.local_patch_group_id, current.version,
+                    current.local_patch_group_id, current.version, current.regroup_type,
                     current.confirmed_at_ms, summary.first_seen_ms, summary.last_seen_ms,
                     summary.observation_count,
                     (SELECT COUNT(*) FROM p25_site_patch_group_talkgroup member

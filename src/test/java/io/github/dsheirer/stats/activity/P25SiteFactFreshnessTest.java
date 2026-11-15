@@ -8,7 +8,17 @@ package io.github.dsheirer.stats.activity;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 
+import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.controller.channel.Channel;
+import io.github.dsheirer.metadata.site.SiteMetadataEvent;
+import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
+import io.github.dsheirer.module.decode.p25.phase1.P25P1DataUnitID;
+import io.github.dsheirer.module.decode.p25.phase1.P25P1DecoderState;
+import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.TSBKMessage;
+import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.harris.osp.L3HarrisGroupRegroupExplicitEncryptionCommand;
+import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.motorola.osp.MotorolaGroupRegroupAddCommand;
 import io.github.dsheirer.metadata.site.SiteReceiverContext;
 
 import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
@@ -136,6 +146,90 @@ class P25SiteFactFreshnessTest
     }
 
     @Test
+    void firstDecodedHarrisAndMotorolaActivationsReachTheSavedSite() throws Exception
+    {
+        for(String vendor: List.of("Harris", "Motorola"))
+        {
+            try(Connection connection = database())
+            {
+                var channel = new Channel(vendor,
+                    Channel.ChannelType.STANDARD);
+                channel.setConfigurationId(CONFIGURATION);
+                channel.setDecodeConfiguration(new DecodeConfigP25Phase1());
+                var decoder = new P25P1DecoderState(channel, null);
+                var bits = new CorrectedBinaryMessage(96);
+                TSBKMessage message;
+                if(vendor.equals("Harris"))
+                {
+                    bits.load(2, 6, 0x30);
+                    bits.load(8, 8, 0xA4);
+                    bits.load(16, 8, 0x69);
+                    bits.load(24, 16, 100);
+                    bits.load(64, 16, 200);
+                    message = new L3HarrisGroupRegroupExplicitEncryptionCommand(
+                            P25P1DataUnitID.TRUNKING_SIGNALING_BLOCK_1,
+                            bits, 0x123, 1_000L);
+                }
+                else
+                {
+                    bits.load(8, 8, 0x90);
+                    bits.load(16, 16, 100);
+                    bits.load(32, 16, 200);
+                    message = new MotorolaGroupRegroupAddCommand(
+                            P25P1DataUnitID.TRUNKING_SIGNALING_BLOCK_1,
+                            bits, 0x123, 1_000L);
+                }
+                message.setValid(true);
+                decoder.receive(message);
+                var decoded = decoder.getP25NetworkConfigurationSnapshot();
+                assertEquals(1, decoded.patchGroups().size(), vendor);
+                // The fixture supplies the already identified serving site and its advertised control source.
+                var metadata = new P25NetworkConfigurationSnapshot("P25_PHASE_1",
+                    new P25NetworkConfigurationSnapshot.Network(0xBEE00, 0x348, 0x123, 0),
+                    new P25NetworkConfigurationSnapshot.CurrentSite(0x348, 0x123, 2, 7, 0, true),
+                    List.of(new P25NetworkConfigurationSnapshot.Channel("primary_control", "1-1376",
+                        770606250L, 800606250L, false, 1)), List.of(), List.of(), decoded.patchGroups(), List.of());
+                var record = new ReceiverActivityMapper().map(new SiteMetadataEvent(
+                    channel, metadata, 1_000L, 770606250L));
+                assertNotNull(record, vendor);
+                ReceiverActivitySchema.insertSite(connection, record);
+                assertEquals(1, scalar(connection, "SELECT regroup_type FROM p25_site_patch_group"), vendor);
+                assertEquals(200, scalar(connection,
+                    "SELECT local_talkgroup_id FROM p25_site_patch_group_talkgroup"), vendor);
+                assertEquals(1_000, scalar(connection, "SELECT confirmed_at_ms FROM p25_site_patch_group"), vendor);
+            }
+        }
+    }
+
+    @Test
+    void patchAndSimulselectTypesPersistWithoutGuessingHistoricalMembership() throws Exception
+    {
+        try(Connection connection = database())
+        {
+            var original = snapshot(1_000, 1_000, "a");
+            ReceiverActivitySchema.insertSite(connection, original);
+            assertEquals(1, scalar(connection, "SELECT regroup_type FROM p25_site_patch_group"));
+            assertEquals(1, scalar(connection, "SELECT regroup_type FROM p25_site_patch_group_summary"));
+            var changed = new ReceiverActivityRecords.SiteSnapshot(2_000, original.configurationId(),
+                original.receiverKind(), "b".repeat(64), original.protocol(), original.wacn(), original.systemId(),
+                original.nac(), original.rfss(), original.site(), original.lra(), original.activeRfssNetworkConnection(),
+                original.tdma(), original.siteStatus(), original.sourceFrequencyHertz(), original.primaryFrequencyHertz(),
+                original.currentControlHertz(), original.channels(), original.neighborSites(), original.frequencyBands(),
+                List.of(new P25NetworkConfigurationSnapshot.PatchGroup(100, 2, 2, List.of(300), List.of(), 2_000L)),
+                original.foreignSystemBands());
+            ReceiverActivitySchema.insertSite(connection, changed);
+            assertEquals(2, scalar(connection, "SELECT regroup_type FROM p25_site_patch_group"));
+            assertEquals(2, scalar(connection, "SELECT regroup_type FROM p25_site_patch_group_summary"));
+            assertEquals(300, scalar(connection, "SELECT local_talkgroup_id FROM p25_site_patch_group_talkgroup"));
+            assertEquals(2, scalar(connection, "SELECT observation_count FROM p25_site_patch_group_summary"));
+            // An older complete snapshot cannot restore the previous generation or type.
+            ReceiverActivitySchema.insertSite(connection, original);
+            assertEquals(2, scalar(connection, "SELECT regroup_type FROM p25_site_patch_group"));
+            assertEquals(2, scalar(connection, "SELECT version FROM p25_site_patch_group"));
+        }
+    }
+
+    @Test
     void legacyInflatedValuesArePreservedUntilAnActuallyNewerReception() throws Exception
     {
         try(Connection connection = database())
@@ -172,7 +266,7 @@ class P25SiteFactFreshnessTest
                 773831250L, 803831250L, "VALID", received)),
             List.of(new P25NetworkConfigurationSnapshot.FrequencyBand(1, false, 762006250L, 12500,
                 6250L, 30000000L, 1, received)),
-            List.of(new P25NetworkConfigurationSnapshot.PatchGroup(100, 1, List.of(200), List.of(10001), received)),
+            List.of(new P25NetworkConfigurationSnapshot.PatchGroup(100, 1, 1, List.of(200), List.of(10001), received)),
             List.of());
     }
 

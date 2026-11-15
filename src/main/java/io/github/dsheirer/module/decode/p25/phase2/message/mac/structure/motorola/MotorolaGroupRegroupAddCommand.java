@@ -77,7 +77,7 @@ public class MotorolaGroupRegroupAddCommand extends MacStructureVendor
         if(mPatchGroupIdentifier == null)
         {
             TalkgroupIdentifier patchGroupId = APCO25Talkgroup.create(getInt(SUPERGROUP_ADDRESS));
-            PatchGroup patchGroup = new PatchGroup(patchGroupId, 0);
+            PatchGroup patchGroup = new PatchGroup(patchGroupId, 0, PatchGroup.Type.PATCH);
 
             int tg1 = getInt(TALKGROUP_1);
             if(tg1 > 0)

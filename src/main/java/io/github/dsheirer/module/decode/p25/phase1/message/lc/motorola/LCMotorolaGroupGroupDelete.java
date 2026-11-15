@@ -64,7 +64,7 @@ public class LCMotorolaGroupGroupDelete extends LinkControlWord
     {
         if(mSuperGroup == null)
         {
-            PatchGroup patchGroup = new PatchGroup(APCO25Talkgroup.create(getInt(SUPERGROUP)));
+            PatchGroup patchGroup = new PatchGroup(APCO25Talkgroup.create(getInt(SUPERGROUP)), 0, PatchGroup.Type.PATCH);
             patchGroup.addPatchedTalkgroups(getPatchedGroups());
             mSuperGroup = APCO25PatchGroup.create(patchGroup);
         }
@@ -104,8 +104,7 @@ public class LCMotorolaGroupGroupDelete extends LinkControlWord
 
     public boolean hasPatchedGroup1()
     {
-        return getInt(PATCHED_GROUP_1) != 0 &&
-            (getInt(SUPERGROUP) != getInt(PATCHED_GROUP_1));
+        return getInt(PATCHED_GROUP_1) != 0;
     }
 
     /**
@@ -123,8 +122,7 @@ public class LCMotorolaGroupGroupDelete extends LinkControlWord
 
     public boolean hasPatchedGroup2()
     {
-        return getInt(PATCHED_GROUP_2) != 0 &&
-            (getInt(SUPERGROUP) != getInt(PATCHED_GROUP_2));
+        return getInt(PATCHED_GROUP_2) != 0;
     }
 
     /**

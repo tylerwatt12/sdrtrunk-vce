@@ -64,7 +64,7 @@ public class LCMotorolaGroupRegroupAdd extends LinkControlWord
     {
         if(mPatchGroup == null)
         {
-            PatchGroup patchGroup = new PatchGroup(APCO25Talkgroup.create(getInt(SUPERGROUP)));
+            PatchGroup patchGroup = new PatchGroup(APCO25Talkgroup.create(getInt(SUPERGROUP)), 0, PatchGroup.Type.PATCH);
             patchGroup.addPatchedTalkgroups(getPatchedGroups());
             mPatchGroup = APCO25PatchGroup.create(patchGroup);
         }

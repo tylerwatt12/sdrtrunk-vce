@@ -519,7 +519,7 @@ public final class P25IdentityResolver
             PatchGroup original = patch.getValue();
             if(original == null || original.getPatchGroup() == null) return identifier;
             TalkgroupIdentifier primary = (TalkgroupIdentifier)enrichIdentifier(site, original.getPatchGroup(), timestamp, epoch, revision, scope);
-            PatchGroup copy = new PatchGroup(primary, original.getVersion());
+            PatchGroup copy = new PatchGroup(primary, original.getVersion(), original.getType());
             boolean changed = primary != original.getPatchGroup();
             for(TalkgroupIdentifier member: original.getPatchedTalkgroupIdentifiers())
             {

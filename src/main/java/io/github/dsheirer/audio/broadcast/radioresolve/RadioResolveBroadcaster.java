@@ -1486,7 +1486,9 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
 
         if(isTrustedMergeObservation(snapshot.activePatchesObservedAtMs(), observedAt))
         {
-            root.add("active_patches", RadioResolveJson.GSON.toJsonTree(snapshot.patchGroups()));
+            root.add("active_patches", RadioResolveJson.GSON.toJsonTree(snapshot.patchGroups().stream()
+                .map(patch -> new MetadataPatch(patch.localPatchGroupId(), patch.version(),
+                    patch.localTalkgroupIds(), patch.localRadioIds(), patch.observedAtMs())).toList()));
             root.addProperty("active_patches_observed_at_ms", adjustedObservationTime(
                 snapshot.activePatchesObservedAtMs(), serverClockOffsetMilliseconds));
             modes.addProperty("active_patches", "complete_site_scope");
@@ -2077,6 +2079,11 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
     private record MetadataForeignBandplan(Integer wacn, Integer systemId, Integer bandId, Integer channelType,
                                            Long baseFrequencyHz, Long channelSpacingHz, Long transmitOffsetHz,
                                            Long observedAtMs)
+    {
+    }
+
+    private record MetadataPatch(Integer localPatchGroupId, Integer version, List<Integer> localTalkgroupIds,
+                                 List<Integer> localRadioIds, Long observedAtMs)
     {
     }
 

@@ -362,7 +362,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
             if(identifier instanceof PatchGroupIdentifier patchGroupIdentifier)
             {
                 mPatchGroupManager.addPatchGroup(patchGroupIdentifier, preLoadDataContent.getTimestamp());
-                mNetworkConfigurationStabilizer.observePatchGroup(patchGroupIdentifier,
+                observeManagedPatchGroup(patchGroupIdentifier,
                     preLoadDataContent.getTimestamp());
             }
         }
@@ -1531,6 +1531,31 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
         }
     }
 
+    private void observeManagedPatchGroups(List<Identifier> identifiers, long timestamp)
+    {
+        for(Identifier identifier: identifiers)
+        {
+            if(identifier instanceof PatchGroupIdentifier patch)
+            {
+                observeManagedPatchGroup(patch, timestamp);
+            }
+        }
+    }
+
+    private void observeManagedPatchGroup(PatchGroupIdentifier patch, long timestamp)
+    {
+        PatchGroupIdentifier current = mPatchGroupManager.getPatchGroup(
+            patch.getValue().getPatchGroup().getValue(), timestamp);
+        if(current != null)
+        {
+            mNetworkConfigurationStabilizer.observePatchGroup(current, timestamp);
+        }
+        else
+        {
+            mNetworkConfigurationStabilizer.removePatchGroup(patch, timestamp);
+        }
+    }
+
     /**
      * Trunking Signalling Block (TSBK) messages
      */
@@ -1704,12 +1729,12 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                 //MOTOROLA PATCH GROUP OPCODES
                 case MOTOROLA_OSP_GROUP_REGROUP_ADD:
                     mPatchGroupManager.addPatchGroups(tsbk.getIdentifiers(), message.getTimestamp());
-                    mNetworkConfigurationStabilizer.observePatchGroupsFromIdentifiers(tsbk.getIdentifiers(),
+                    observeManagedPatchGroups(tsbk.getIdentifiers(),
                         message.getTimestamp());
                     break;
                 case MOTOROLA_OSP_GROUP_REGROUP_DELETE:
-                    mPatchGroupManager.removePatchGroups(tsbk.getIdentifiers());
-                    mNetworkConfigurationStabilizer.removePatchGroupsFromIdentifiers(tsbk.getIdentifiers(),
+                    mPatchGroupManager.removePatchGroups(tsbk.getIdentifiers(), tsbk.getTimestamp());
+                    observeManagedPatchGroups(tsbk.getIdentifiers(),
                         tsbk.getTimestamp());
                     break;
 
@@ -1720,15 +1745,15 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                         if(regroup.getRegroupOptions().isActivate())
                         {
                             mPatchGroupManager.addPatchGroup(regroup.getPatchGroup(), tsbk.getTimestamp());
-                            mNetworkConfigurationStabilizer.observePatchGroup((PatchGroupIdentifier)
-                                mPatchGroupManager.update(regroup.getPatchGroup(), tsbk.getTimestamp()),
-                                tsbk.getTimestamp());
+                            observeManagedPatchGroup(regroup.getPatchGroup(), tsbk.getTimestamp());
                         }
                         else
                         {
-                            mPatchGroupManager.removePatchGroup(regroup.getPatchGroup());
-                            mNetworkConfigurationStabilizer.removePatchGroup(regroup.getPatchGroup(),
-                                tsbk.getTimestamp());
+                            if(mPatchGroupManager.deactivatePatchGroup(regroup.getPatchGroup(), tsbk.getTimestamp()))
+                            {
+                                mNetworkConfigurationStabilizer.removePatchGroup(regroup.getPatchGroup(),
+                                    tsbk.getTimestamp());
+                            }
                         }
                     }
                     break;
@@ -2094,13 +2119,13 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
             if(mefc.isSupergroupCreate())
             {
                 mPatchGroupManager.addPatchGroup(mefc.getSuperGroup(), tsbk.getTimestamp());
-                mNetworkConfigurationStabilizer.observePatchGroup(mefc.getSuperGroup(), tsbk.getTimestamp());
+                observeManagedPatchGroup(mefc.getSuperGroup(), tsbk.getTimestamp());
                 broadcastEvent(tsbk, DecodeEventType.COMMAND, "CREATE SUPERGROUP:" + mefc.getSuperGroup());
             }
             else if(mefc.isSupergroupCancel())
             {
-                mPatchGroupManager.removePatchGroup(mefc.getSuperGroup());
-                mNetworkConfigurationStabilizer.removePatchGroup(mefc.getSuperGroup(), tsbk.getTimestamp());
+                mPatchGroupManager.removePatchGroup(mefc.getSuperGroup(), tsbk.getTimestamp());
+                observeManagedPatchGroup(mefc.getSuperGroup(), tsbk.getTimestamp());
                 broadcastEvent(tsbk, DecodeEventType.COMMAND, "CANCEL SUPERGROUP:" + mefc.getSuperGroup());
             }
             else
@@ -2396,11 +2421,11 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
             //Patch Group management
             case MOTOROLA_GROUP_REGROUP_ADD:
                 mPatchGroupManager.addPatchGroups(lcw.getIdentifiers(), timestamp);
-                mNetworkConfigurationStabilizer.observePatchGroupsFromIdentifiers(lcw.getIdentifiers(), timestamp);
+                observeManagedPatchGroups(lcw.getIdentifiers(), timestamp);
                 break;
             case MOTOROLA_GROUP_REGROUP_DELETE:
-                mPatchGroupManager.removePatchGroups(lcw.getIdentifiers());
-                mNetworkConfigurationStabilizer.removePatchGroupsFromIdentifiers(lcw.getIdentifiers(), timestamp);
+                mPatchGroupManager.removePatchGroups(lcw.getIdentifiers(), timestamp);
+                observeManagedPatchGroups(lcw.getIdentifiers(), timestamp);
                 break;
             case MOTOROLA_GROUP_REGROUP_VOICE_CHANNEL_UPDATE:
                 //Voice Channel Update message - indicates calls in-progress on another channel - ignored

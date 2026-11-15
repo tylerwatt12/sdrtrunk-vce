@@ -1327,8 +1327,8 @@ class StatsWebDatabaseTest
                 VALUES(7199,71,2,0x92498,0x926,202,1000,4000,'Foreign OTA',4000)
                 """);
             statement.executeUpdate("""
-                INSERT INTO p25_site_patch_group(channel_id, local_patch_group_id, version, confirmed_at_ms)
-                VALUES (71, 500, 1, 4000)
+                INSERT INTO p25_site_patch_group(channel_id, local_patch_group_id, version, confirmed_at_ms, regroup_type)
+                VALUES (71, 500, 1, 4000, 2)
                 """);
             statement.executeUpdate("""
                 INSERT INTO p25_site_patch_group_summary(
@@ -1353,6 +1353,7 @@ class StatsWebDatabaseTest
         Map<String,Object> radio = rowsFrom(response, "radios").getFirst();
 
         assertEquals(500, number(patch.get("local_patch_group_id")));
+        assertEquals(2, number(patch.get("regroup_type")));
         assertEquals(101, number(talkgroup.get("local_talkgroup_id")));
         assertEquals(202, number(radio.get("local_radio_id")));
         assertEquals("Home OTA", radio.get("last_talker_alias"),

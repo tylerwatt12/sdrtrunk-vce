@@ -957,3 +957,18 @@ may scan retained events to validate those constraints but does not rebuild thei
 rollback pages and existing configuration allowance own the temporary workspace; no full history copy or additional
 recovery backup is required. Tests cover exact source/target fingerprints, preserved event/index root pages,
 transactional rollback and unchanged-source retry, old NULL values, paired-value constraints and SQLite integrity.
+
+
+### P25 regroup type (application format 75)
+
+The existing current and summary P25 site patch rows each store one integer `regroup_type`. Its values are 0 unknown,
+1 two-way patch, or 2 one-way simulselect. Those meanings come from decoded regroup commands. Existing historical rows remain
+unknown because their previous fields did not retain the distinction. Membership, ownership, times and counters keep
+their meanings. There is no new history stream, table or index, and ordinary site retention continues to own the rows.
+
+Each retained group adds one small integer field to its current and summary records. Native column additions retain
+table/index pages and avoid an Activity-history rewrite. Constraint validation may read the two compact patch tables.
+Temporary workspace covers schema rollback pages and the existing bounded configuration allowance, with free-space
+headroom budgeted separately. The adjacent migration preserves rows and supports transactional rollback and retry.
+Queries retain the existing saved-channel and group keys. Decoder callbacks continue handing off to the existing
+bounded background writer without database work.

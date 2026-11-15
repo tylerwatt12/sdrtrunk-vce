@@ -44,12 +44,12 @@ import java.util.stream.Collectors;
 public class PatchGroupManager
 {
     private static final long PATCH_GROUP_FRESHNESS_THRESHOLD_MS = Duration.ofSeconds(30).toMillis();
-    private Map<Integer,PatchGroupTracker> mPatchGroupTrackerMap = new HashMap<>();
+    private final Map<Integer,PatchGroupTracker> mPatchGroupTrackerMap = new HashMap<>();
 
     /**
      * Clears any existing patch groups
      */
-    public void clear()
+    public synchronized void clear()
     {
         mPatchGroupTrackerMap.clear();
     }
@@ -71,13 +71,27 @@ public class PatchGroupManager
 
         if(patchGroup > 0)
         {
-            if(mPatchGroupTrackerMap.containsKey(patchGroup))
+            PatchGroupTracker tracker = mPatchGroupTrackerMap.get(patchGroup);
+            if(tracker != null)
             {
-                PatchGroupTracker tracker = mPatchGroupTrackerMap.get(patchGroup);
-
-                if(tracker.isStale(timestamp))
+                if(timestamp < tracker.mLastUpdateTimestamp ||
+                    (!tracker.mActive && (timestamp == tracker.mLastUpdateTimestamp ||
+                        update.getType() == PatchGroup.Type.UNKNOWN)))
                 {
-                    //Replace the existing patch group if it is stale.
+                    return false;
+                }
+                if(tracker.isStale(timestamp) && update.getType() == PatchGroup.Type.UNKNOWN &&
+                    tracker.mPatchGroupIdentifier.getValue().getType() != PatchGroup.Type.UNKNOWN)
+                {
+                    //A bare grant does not establish whether an expired Harris generation is still in use.
+                    return false;
+                }
+                if(tracker.isStale(timestamp) || !tracker.mActive ||
+                    (update.getType() != PatchGroup.Type.UNKNOWN &&
+                        (update.getVersion() != tracker.mPatchGroupIdentifier.getValue().getVersion() ||
+                         update.getType() != tracker.mPatchGroupIdentifier.getValue().getType())))
+                {
+                    //A reused Harris ID starts a new membership generation.
                     mPatchGroupTrackerMap.put(patchGroup, new PatchGroupTracker(patchGroupIdentifier, timestamp));
                     return true;
                 }
@@ -118,22 +132,98 @@ public class PatchGroupManager
      * @param patchGroupIdentifier to remove
      * @return true if the patch group was removed.
      */
-    public synchronized boolean removePatchGroup(PatchGroupIdentifier patchGroupIdentifier)
+    public synchronized boolean removePatchGroup(PatchGroupIdentifier patchGroupIdentifier, long timestamp)
+    {
+        PatchGroup deletion = patchGroupIdentifier.getValue();
+        int id = deletion.getPatchGroup().getValue();
+        if(id <= 0)
+        {
+            return false;
+        }
+        PatchGroupTracker tracker = mPatchGroupTrackerMap.get(id);
+        if(tracker == null)
+        {
+            tracker = new PatchGroupTracker(patchGroupIdentifier, timestamp);
+            tracker.mActive = false;
+            mPatchGroupTrackerMap.put(id, tracker);
+            return false;
+        }
+        if(timestamp < tracker.mLastUpdateTimestamp)
+        {
+            return false;
+        }
+        tracker.mLastUpdateTimestamp = timestamp;
+        if(!tracker.mActive)
+        {
+            return false;
+        }
+        if(!deletion.hasPatchedTalkgroups() || deletion.getPatchedTalkgroupIdentifiers().stream()
+            .anyMatch(talkgroup -> talkgroup.getValue() == id))
+        {
+            tracker.mActive = false;
+            return true;
+        }
+
+        boolean changed = false;
+        for(TalkgroupIdentifier talkgroup: deletion.getPatchedTalkgroupIdentifiers())
+        {
+            changed |= tracker.mTalkgroupTimestampMap.remove(talkgroup) != null;
+            tracker.mPatchGroupIdentifier.getValue().removePatchedTalkgroup(talkgroup);
+        }
+        tracker.mActive = tracker.mPatchGroupIdentifier.getValue().hasPatchedTalkgroups() ||
+            tracker.mPatchGroupIdentifier.getValue().hasPatchedRadios();
+        return changed;
+    }
+
+    /** Cancels only the current Harris supergroup generation. */
+    public synchronized boolean deactivatePatchGroup(PatchGroupIdentifier patchGroupIdentifier, long timestamp)
     {
         int id = patchGroupIdentifier.getValue().getPatchGroup().getValue();
-        return mPatchGroupTrackerMap.remove(id) != null;
+        if(id <= 0)
+        {
+            return false;
+        }
+        PatchGroupTracker tracker = mPatchGroupTrackerMap.get(id);
+        if(tracker == null)
+        {
+            tracker = new PatchGroupTracker(patchGroupIdentifier, timestamp);
+            tracker.mActive = false;
+            mPatchGroupTrackerMap.put(id, tracker);
+            return false;
+        }
+        if(timestamp < tracker.mLastUpdateTimestamp ||
+            tracker.mPatchGroupIdentifier.getValue().getVersion() != patchGroupIdentifier.getValue().getVersion())
+        {
+            return false;
+        }
+        //Retain the cancellation watermark until a newer activation or channel reset replaces it.
+        boolean changed = tracker.mActive;
+        tracker.mActive = false;
+        tracker.mLastUpdateTimestamp = timestamp;
+        return changed;
+    }
+
+    /** Current accumulated membership, or null for an expired or cancelled patch. */
+    public synchronized PatchGroupIdentifier getPatchGroup(int id, long timestamp)
+    {
+        PatchGroupTracker tracker = mPatchGroupTrackerMap.get(id);
+        if(tracker == null || !tracker.mActive || timestamp < tracker.mLastUpdateTimestamp || tracker.isStale(timestamp))
+        {
+            return null;
+        }
+        return tracker.getPatchGroupIdentifier(timestamp);
     }
 
     /**
      * Removes any patch group identifiers contained in the list.
      */
-    public synchronized void removePatchGroups(List<Identifier> identifiers)
+    public synchronized void removePatchGroups(List<Identifier> identifiers, long timestamp)
     {
         for(Identifier identifier : identifiers)
         {
             if(identifier instanceof PatchGroupIdentifier)
             {
-                removePatchGroup((PatchGroupIdentifier)identifier);
+                removePatchGroup((PatchGroupIdentifier)identifier, timestamp);
             }
         }
     }
@@ -145,7 +235,7 @@ public class PatchGroupManager
      * @param referenceTimestamp as a reference for checking staleness of existing patch groups.
      * @return list of identifiers
      */
-    public List<Identifier> update(List<Identifier> identifiers, long referenceTimestamp)
+    public synchronized List<Identifier> update(List<Identifier> identifiers, long referenceTimestamp)
     {
         List<Identifier> updated = new ArrayList<>();
 
@@ -165,52 +255,44 @@ public class PatchGroupManager
      * @param referenceTimestamp as a reference for checking staleness of existing patch groups.
      * @return current patch group or the original identifier
      */
-    public Identifier update(Identifier identifier, long referenceTimestamp)
+    public synchronized Identifier update(Identifier identifier, long referenceTimestamp)
     {
         if(identifier != null && identifier.getIdentifierClass() == IdentifierClass.USER && identifier.getRole() == Role.TO)
         {
-            if(identifier.getForm() == Form.TALKGROUP && identifier instanceof TalkgroupIdentifier talkgroupIdentifier)
+            int id;
+            PatchGroupIdentifier incomingPatch = null;
+            if(identifier.getForm() == Form.TALKGROUP && identifier instanceof TalkgroupIdentifier talkgroup)
             {
-                int id = talkgroupIdentifier.getValue();
-
-                PatchGroupTracker tracker = mPatchGroupTrackerMap.get(id);
-
-                if(tracker != null)
-                {
-                    if(tracker.isStale(referenceTimestamp))
-                    {
-                        mPatchGroupTrackerMap.remove(id);
-                    }
-                    else
-                    {
-                        //Perform substitution - return patch group instead of the original talkgroup
-                        return tracker.getPatchGroupIdentifier(referenceTimestamp);
-                    }
-                }
+                id = talkgroup.getValue();
             }
-            else if(identifier.getForm() == Form.PATCH_GROUP && identifier instanceof PatchGroupIdentifier patchGroupIdentifier)
+            else if(identifier.getForm() == Form.PATCH_GROUP && identifier instanceof PatchGroupIdentifier patch)
             {
-                int id = patchGroupIdentifier.getValue().getPatchGroup().getValue();
+                incomingPatch = patch;
+                id = patch.getValue().getPatchGroup().getValue();
+            }
+            else
+            {
+                return identifier;
+            }
 
-                PatchGroupTracker tracker = mPatchGroupTrackerMap.get(id);
-
-                if(tracker != null)
-                {
-                    if(tracker.isStale(referenceTimestamp) ||
-                            tracker.getPatchGroupIdentifier(referenceTimestamp).getValue().getVersion() !=
-                                    patchGroupIdentifier.getValue().getVersion())
-                    {
-                        mPatchGroupTrackerMap.put(id, new PatchGroupTracker(patchGroupIdentifier, referenceTimestamp));
-                    }
-                    else
-                    {
-                        //Perform substitution - return patch group instead of the original talkgroup
-                        return tracker.getPatchGroupIdentifier(referenceTimestamp);
-                    }
-                }
+            PatchGroupTracker tracker = mPatchGroupTrackerMap.get(id);
+            if(tracker == null || !tracker.mActive || referenceTimestamp < tracker.mLastUpdateTimestamp)
+            {
+                return identifier;
+            }
+            if(incomingPatch != null && incomingPatch.getValue().getType() != PatchGroup.Type.UNKNOWN &&
+                (tracker.isStale(referenceTimestamp) ||
+                 incomingPatch.getValue().getVersion() != tracker.mPatchGroupIdentifier.getValue().getVersion() ||
+                 incomingPatch.getValue().getType() != tracker.mPatchGroupIdentifier.getValue().getType()))
+            {
+                addPatchGroup(incomingPatch, referenceTimestamp);
+            }
+            PatchGroupIdentifier current = getPatchGroup(id, referenceTimestamp);
+            if(current != null)
+            {
+                return current;
             }
         }
-
         return identifier;
     }
 
@@ -222,6 +304,7 @@ public class PatchGroupManager
     {
         private PatchGroupIdentifier mPatchGroupIdentifier;
         private long mLastUpdateTimestamp;
+        private boolean mActive = true;
         private Map<TalkgroupIdentifier,Long> mTalkgroupTimestampMap = new HashMap<>();
         private Map<RadioIdentifier,Long> mRadioTimestampMap = new HashMap<>();
 
