@@ -44,6 +44,7 @@ import io.github.dsheirer.module.decode.nxdn.DecodeConfigNXDN;
 import io.github.dsheirer.module.decode.nxdn.NXDNConventionalCallEvent;
 import io.github.dsheirer.module.decode.nxdn.identifier.NXDNTalkgroupIdentifier;
 import io.github.dsheirer.module.decode.p25.P25ChannelGrantEvent;
+import io.github.dsheirer.module.decode.p25.P25DenialEvent;
 import io.github.dsheirer.module.decode.p25.P25EncryptionConfirmationTracker;
 import io.github.dsheirer.module.decode.p25.P25AffiliationEvent;
 import io.github.dsheirer.module.decode.p25.P25AffiliationSemantics;
@@ -789,7 +790,7 @@ class ReceiverActivityMapper
                     Long.toString(event.getTimeStart()) : "");
         }
 
-        return new ReceiverActivityRecords.ActivityEvent(observedAt, configurationId, receiverKind,
+        var record = new ReceiverActivityRecords.ActivityEvent(observedAt, configurationId, receiverKind,
             protocol, action,
             event.getEventType() != null ? event.getEventType().name() : null, sourceRadioId, targetId,
             targetKind, facts.patchMemberTalkgroupIds(), frequency, lcn, timeslot, encryptionState, encryptionAlgorithmId,
@@ -801,6 +802,8 @@ class ReceiverActivityMapper
             facts.p25PatchMemberIdentities(), radioSystemKey, sourceObservedWorkingId,
             targetObservedWorkingId, p25WuidObservation,
             analogAttribution);
+        return event instanceof P25DenialEvent denial ?
+            record.withDenialReason(denial.getDenyReasonCode(), denial.isVendorSpecificReason()) : record;
     }
 
     private static CallEncryptionState activityEncryptionState(IDecodeEvent event,

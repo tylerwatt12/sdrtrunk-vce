@@ -96,11 +96,22 @@ public class DenyResponse extends OSPMessage
         return Opcode.fromValue(getMessage().getInt(SERVICE_TYPE), Direction.INBOUND, Vendor.STANDARD);
     }
 
+    /** Exact reason byte, including values represented by a shared lookup category. */
+    public int getDenyReasonCode()
+    {
+        return getMessage().getInt(REASON);
+    }
+
+    public boolean isVendorSpecificReason()
+    {
+        return false;
+    }
+
     public DenyReason getDenyReason()
     {
         if(mDenyReason == null)
         {
-            mDenyReason = DenyReason.fromCode(getMessage().getInt(REASON));
+            mDenyReason = DenyReason.fromCode(getDenyReasonCode());
         }
 
         return mDenyReason;

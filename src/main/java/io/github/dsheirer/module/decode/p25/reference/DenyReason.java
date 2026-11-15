@@ -37,7 +37,7 @@ public enum DenyReason
     SUBSCRIBER_UNIT_TERMINATED_CALL(0x52),
     CALL_PREEMPTED(0x5F),
     SITE_ACCESS_DENIAL(0x60),
-    USER_OR_SYSTEM_DEFINED(0x61), //0x61 - 0xEF
+    USER_OR_SYSTEM_DEFINED(0x61), //0x61 - 0xEF, 0xF4 - 0xFE
     PTT_COLLIDE(0x67),
     PTT_BONK(0x77),
     CALL_OPTIONS_NOT_VALID_FOR_SERVICE(0xF0),
@@ -164,6 +164,11 @@ public enum DenyReason
         else if(code == 0xF3)
         {
             return CIRCUIT_OR_PACKET_MODE_OPTION_NOT_VALID;
+        }
+        // TIA-102.AABC-E (2019), Annex B: 0xFF is not in the user/system-defined range.
+        else if(code == 0xFF)
+        {
+            return SYSTEM_DOES_NOT_SUPPORT_SERVICE;
         }
         else if(code == 0x67)
         {

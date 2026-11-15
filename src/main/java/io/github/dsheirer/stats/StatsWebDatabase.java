@@ -356,6 +356,7 @@ class StatsWebDatabase
             activity.channel_kind_code,
             CASE WHEN activity.protocol_code = 11 THEN 'AM' ELSE activity.protocol END AS protocol,
             activity.action, activity.event_type,
+            activity.denial_reason_code, activity.denial_reason_vendor_specific,
             activity.source_observed_local_id AS source_radio_id,
             activity.target_observed_local_id AS target_id,
             activity.source_identity_key, activity.target_identity_key,
@@ -5672,6 +5673,7 @@ class StatsWebDatabase
             {
                 io.github.dsheirer.stats.activity.ToneActivitySchema.enrichPage(connection, rows);
                 enrichActivityEncryption(rows);
+                enrichActivityDenials(rows);
                 enrichActivityEntityReferences(rows);
                 enrichActivityCallSources(connection, rows);
             }
@@ -5911,6 +5913,7 @@ class StatsWebDatabase
             mAliasResolver.enrichActivity(connection, rows);
             io.github.dsheirer.stats.activity.ToneActivitySchema.enrichPage(connection, rows);
             enrichActivityEncryption(rows);
+            enrichActivityDenials(rows);
             enrichActivityEntityReferences(rows);
             return rows;
         });
@@ -8205,6 +8208,19 @@ class StatsWebDatabase
             Integer key = integer(row.get("encryption_key_id"));
             row.put("encryption_display", VoiceEncryptionDisplay.format(protocol, algorithm, key));
             row.put("encryption_full_display", VoiceEncryptionDisplay.formatFull(protocol, algorithm, key));
+        }
+    }
+
+    /** Resolve the saved reason byte in its received code space without storing repeated descriptions. */
+    private static void enrichActivityDenials(List<Map<String,Object>> rows)
+    {
+        for(Map<String,Object> row: rows)
+        {
+            Integer reason = integer(row.get("denial_reason_code"));
+            Integer vendor = integer(row.get("denial_reason_vendor_specific"));
+            row.put("denial_reason_vendor_specific", vendor != null ? vendor != 0 : null);
+            row.put("denial_reason_display", "DENIAL".equals(row.get("action")) && reason != null && vendor != null ?
+                io.github.dsheirer.stats.activity.P25DenialReasonDisplay.format(reason, vendor != 0) : null);
         }
     }
 

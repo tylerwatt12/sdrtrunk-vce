@@ -95,6 +95,37 @@ class ReceiverActivityMapperTest
     private static final String CONFIGURATION_ID = "223e4567-e89b-42d3-a456-426614174000";
 
     @Test
+    void typedDenialsPreserveRawReasonAndVendorFlagThroughRecordCopies()
+    {
+        for(var config : List.of(new DecodeConfigP25Phase1(),
+            new io.github.dsheirer.module.decode.p25.phase2.DecodeConfigP25Phase2()))
+        {
+            Channel channel = new Channel("P25", Channel.ChannelType.STANDARD);
+            channel.setConfigurationId(CONFIGURATION_ID);
+            channel.setDecodeConfiguration(config);
+            for(boolean vendor : List.of(false, true))
+            {
+                var event = new io.github.dsheirer.module.decode.p25.P25DenialEvent(1_000L, 0x00, vendor);
+                event.setIdentifierCollection(new IdentifierCollection(List.of(APCO25RadioIdentifier.createTo(101))));
+                var mapped = new ReceiverActivityMapper().map(channel, event);
+                assertNotNull(mapped);
+                assertEquals(ReceiverActivityRecords.Action.DENIAL, mapped.action());
+                assertEquals(0, mapped.denialReasonCode());
+                assertEquals(vendor, mapped.denialReasonVendorSpecific());
+                var copied = mapped.withDurationMilliseconds(null).withP25Identities(null, "101", "RADIO", List.of(),
+                    mapped.p25SourceIdentity(), mapped.p25TargetIdentity(), null, null);
+                assertEquals(mapped.denialReasonCode(), copied.denialReasonCode());
+                assertEquals(mapped.denialReasonVendorSpecific(), copied.denialReasonVendorSpecific());
+            }
+            var legacy = io.github.dsheirer.module.decode.p25.P25DecodeEvent.builder(DecodeEventType.DENIAL, 1_000L)
+                .details("DENY: legacy explanation was not structured").build();
+            var mapped = new ReceiverActivityMapper().map(channel, legacy);
+            assertNull(mapped.denialReasonCode());
+            assertNull(mapped.denialReasonVendorSpecific());
+        }
+    }
+
+    @Test
     void activityUsesEncryptedSignalingWithoutWaitingForKeyDetails()
     {
         Channel channel = new Channel("P25", Channel.ChannelType.STANDARD);

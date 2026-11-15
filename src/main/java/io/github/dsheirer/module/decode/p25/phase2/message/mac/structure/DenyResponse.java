@@ -97,11 +97,22 @@ public class DenyResponse extends MacStructure
         return MacOpcode.fromValue(getInt(SERVICE_TYPE));
     }
 
+    /** Exact reason byte, including values represented by a shared lookup category. */
+    public int getDenyReasonCode()
+    {
+        return getInt(REASON);
+    }
+
+    public boolean isVendorSpecificReason()
+    {
+        return false;
+    }
+
     public DenyReason getDenyReason()
     {
         if(mDenyReason == null)
         {
-            mDenyReason = DenyReason.fromCode(getInt(REASON));
+            mDenyReason = DenyReason.fromCode(getDenyReasonCode());
         }
 
         return mDenyReason;

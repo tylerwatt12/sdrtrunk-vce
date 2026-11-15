@@ -1494,6 +1494,45 @@ class ReceiverActivityWriterTest
         assertTrue(request.result().isCompletedExceptionally());
     }
 
+    @Test
+    void retainsExactDenialCodeAndVendorFlagThroughBackgroundWriter() throws Exception
+    {
+        Path database=createDatabase(mTemporaryFolder.resolve("denial-reasons.sqlite"));
+        insertConfiguredChannel(database);
+        long timestamp=System.currentTimeMillis();
+        ReceiverActivityWriter writer=new ReceiverActivityWriter(database,30,true);
+        writer.start();
+        try
+        {
+            for(int index=0;index<4;index++)
+            {
+                var event=new ReceiverActivityRecords.ActivityEvent(timestamp+index,CONFIGURATION_ID,
+                    ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE,"APCO25",ReceiverActivityRecords.Action.DENIAL,
+                    "DENIAL","1811524",null,null,List.of(),854_187_500L,"00-0509",1,
+                    CallEncryptionState.UNKNOWN,null,null,0xBEE00,0x3A9,0x293,2,1,null,false,null,null,
+                    TrunkedIdentityDomain.STANDARD,ReceiverActivityRecords.P25Identity.ORDINARY,
+                    ReceiverActivityRecords.P25Identity.ORDINARY,List.of(),null);
+                if(index<3) event=event.withDenialReason(new int[]{0x30,0x00,0x9A}[index],index==1);
+                assertTrue(writer.enqueue(event));
+            }
+            awaitWritten(writer,4);
+            assertEquals(4,writer.getWrittenRecords());
+        }
+        finally { writer.close(); }
+        try(Connection c=ActivityTestDatabase.openPair(database);Statement query=c.createStatement();
+            ResultSet rows=query.executeQuery("SELECT denial_reason_code,denial_reason_vendor_specific FROM receiver_activity_event_resolved ORDER BY observed_at_ms"))
+        {
+            for(int index=0;index<3;index++)
+            {
+                assertTrue(rows.next());
+                assertEquals(new int[]{0x30,0x00,0x9A}[index],rows.getInt(1));
+                assertEquals(index==1?1:0,rows.getInt(2));
+            }
+            assertTrue(rows.next()); assertNull(rows.getObject(1)); assertNull(rows.getObject(2));
+            assertFalse(rows.next());
+        }
+    }
+
     private static ReceiverActivityRecords.ActivityEvent activity(ReceiverActivityRecords.Action action,
                                                                    long timestamp)
     {

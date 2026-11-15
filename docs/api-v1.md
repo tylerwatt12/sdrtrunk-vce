@@ -262,6 +262,12 @@ requires explicit clear evidence; missing encryption confirmation is unknown. En
 encrypted status without identifying the algorithm or key; those optional details are reported independently.
 Recorded event subtypes retain their original message meaning. Other resources keep their existing encryption fields.
 
+P25 denial rows include optional `denial_reason_code` (the received integer, 0–255),
+`denial_reason_vendor_specific` (a boolean selecting the Motorola-specific reason lookup when true), and
+`denial_reason_display` (a readable description resolved from those facts). The numeric reason is preserved even
+for reserved or user/system-defined values. Earlier rows and events without decoded denial information have null
+reason fields. The existing `DENIAL` action and event subtype retain their filtering meanings.
+
 Owner-scoped Activity reads also accept `has_tones=true`, independently of `action` and `event_type`.
 The tone filter applies before cursor paging. A call containing tones keeps its original classification, such as
 `CALL` / `CALL_GROUP`, and includes an optional `paging_tone_summary` with ordered frequencies or DTMF symbols,

@@ -87,18 +87,29 @@ public class MotorolaDenyResponse extends VendorOSPMessage
         return Opcode.fromValue(getMessage().getInt(SERVICE_TYPE), Direction.INBOUND, Vendor.STANDARD);
     }
 
+    /** Exact reason byte, including values represented by a shared lookup category. */
+    public int getDenyReasonCode()
+    {
+        return getMessage().getInt(REASON);
+    }
+
+    public boolean isVendorSpecificReason()
+    {
+        return getMessage().get(RC);
+    }
+
     public DenyReason getDenyReason()
     {
         if(mDenyReason == null)
         {
             //When RC is true it indicates that the reason code is a custom vendor reason.
-            if(getMessage().get(RC))
+            if(isVendorSpecificReason())
             {
-                mDenyReason = DenyReason.fromCustomCode(getMessage().getInt(REASON), Vendor.MOTOROLA);
+                mDenyReason = DenyReason.fromCustomCode(getDenyReasonCode(), Vendor.MOTOROLA);
             }
             else
             {
-                mDenyReason = DenyReason.fromCode(getMessage().getInt(REASON));
+                mDenyReason = DenyReason.fromCode(getDenyReasonCode());
             }
         }
 

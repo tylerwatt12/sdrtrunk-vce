@@ -45,6 +45,9 @@ final class ActivityMigrationPreservation
                         StringBuilder value = new StringBuilder();
                         for(int column=1; column<=rows.getMetaData().getColumnCount(); column++)
                         {
+                            if(currentProjection && table.equals("receiver_activity_event") &&
+                                Set.of("denial_reason_code", "denial_reason_vendor_specific").contains(
+                                    rows.getMetaData().getColumnName(column))) continue;
                             Object field = rows.getObject(column);
                             if(currentProjection && table.equals("receiver_activity_event") &&
                                 rows.getMetaData().getColumnName(column).equals("encrypted"))

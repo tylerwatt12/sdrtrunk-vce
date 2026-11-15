@@ -433,7 +433,8 @@ public class ReceiverActivitySchema
 
     private static String createCurrentResolvedViewSql()
     {
-        return encryptionStateSql(createFormat60ResolvedViewSql());
+        return encryptionStateSql(createFormat60ResolvedViewSql()).replace("a.duration_ms,",
+            "a.duration_ms, a.denial_reason_code, a.denial_reason_vendor_specific,");
     }
 
     /** Frozen format-60 through format-68 resolved event projection. */
@@ -1096,9 +1097,48 @@ public class ReceiverActivitySchema
             """;
     }
 
+    private static final String DENIAL_REASON_DEFINITION = "denial_reason_code INTEGER CHECK(denial_reason_code IS NULL OR " +
+        "(typeof(denial_reason_code) = 'integer' AND denial_reason_code BETWEEN 0 AND 255 AND action_code = 9))";
+    private static final String DENIAL_VENDOR_DEFINITION = "denial_reason_vendor_specific INTEGER CHECK(" +
+        "(denial_reason_code IS NULL AND denial_reason_vendor_specific IS NULL) OR " +
+        "(denial_reason_code IS NOT NULL AND denial_reason_vendor_specific IS NOT NULL AND " +
+        "typeof(denial_reason_vendor_specific) = 'integer' AND denial_reason_vendor_specific IN (0, 1)))";
+
     private static String currentReceiverActivityEventSql()
     {
-        return format69ReceiverActivityEventSql();
+        return format69ReceiverActivityEventSql().replace("    UNIQUE(id, radio_system_id)",
+            "    " + DENIAL_REASON_DEFINITION + ",\n    " + DENIAL_VENDOR_DEFINITION +
+                ",\n    UNIQUE(id, radio_system_id)");
+    }
+
+    /** Application Migrator only: add optional denial evidence without rewriting event or index pages. */
+    public static void addDenialReasons(Connection connection, String schema) throws SQLException
+    {
+        if(!Set.of("main", "activity").contains(schema)) throw new SQLException("Invalid denial Activity store");
+        io.github.dsheirer.database.upgrade.ApplicationMigrationTransaction.requireActive(connection);
+        String previous = format69ReceiverActivityEventSql();
+        // Earlier guarded CHECK updates retained IF NOT EXISTS in sqlite_schema. SQLite's native ADD COLUMN
+        // offset calculation requires the stored CREATE header without that creation-only clause. Normalize it
+        // through the existing validated, layout-preserving helper before appending optional physical fields.
+        ActivityMessageSchemaMigration.replaceEventDefinition(connection, schema, previous,
+            previous.replace("CREATE TABLE IF NOT EXISTS", "CREATE TABLE"));
+        String view;
+        try(var statement = connection.createStatement(); var row = statement.executeQuery(
+            "SELECT sql FROM " + schema + ".sqlite_schema WHERE type='view' AND name='receiver_activity_event_resolved'"))
+        {
+            if(!row.next()) throw new SQLException("Activity event projection is missing");
+            view = row.getString(1);
+        }
+        if(!view.contains("a.duration_ms,")) throw new SQLException("Activity duration projection is missing");
+        try(var statement = connection.createStatement())
+        {
+            statement.executeUpdate("ALTER TABLE " + schema + ".receiver_activity_event ADD COLUMN " + DENIAL_REASON_DEFINITION);
+            statement.executeUpdate("ALTER TABLE " + schema + ".receiver_activity_event ADD COLUMN " + DENIAL_VENDOR_DEFINITION);
+            statement.executeUpdate("DROP VIEW " + schema + ".receiver_activity_event_resolved");
+            // Retain the already-separated historical owner projection instead of reintroducing configuration joins.
+            statement.executeUpdate(qualifySchemaObject(view.replace("a.duration_ms,",
+                "a.duration_ms, a.denial_reason_code, a.denial_reason_vendor_specific,"), schema, "VIEW"));
+        }
     }
 
     /** Frozen format-69 event definition retained by its adjacent migration. */
@@ -4010,7 +4050,8 @@ public class ReceiverActivitySchema
             "source_identity_summary_id", "source_identity_kind_code", "target_identity_summary_id", "frequency_hz",
             "lcn_band", "lcn_number", "timeslot", "encryption_state", "encryption_algorithm_id", "encryption_key_id",
             "observed_nac", "observed_rfss", "observed_site", "source_observed_working_id",
-            "target_observed_working_id", "source_call_uuid", "duration_ms"),
+            "target_observed_working_id", "source_call_uuid", "duration_ms",
+            "denial_reason_code", "denial_reason_vendor_specific"),
         table("activity_event_identity_member", "event_id", "radio_system_id", "identity_summary_id",
             "identity_kind_code", "observed_local_id", "channel_id"),
         table("p25_learned_site", "learned_site_id", "radio_system_id", "rfss", "site", "first_seen_ms",
@@ -4414,8 +4455,8 @@ public class ReceiverActivitySchema
                 source_identity_summary_id, source_identity_kind_code, target_identity_summary_id,
                 frequency_hz, lcn_band, lcn_number, timeslot, encryption_state, encryption_algorithm_id, encryption_key_id,
                 observed_nac, observed_rfss, observed_site, source_observed_working_id,
-                target_observed_working_id, source_call_uuid, duration_ms
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                target_observed_working_id, source_call_uuid, duration_ms, denial_reason_code, denial_reason_vendor_specific
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             RETURNING id
             """))
         {
@@ -4445,6 +4486,9 @@ public class ReceiverActivitySchema
             statement.setString(24, activity.action() == ReceiverActivityRecords.Action.CALL ?
                 io.github.dsheirer.audio.call.SourceCallReference.fromToken(activity.activityCallToken()) : null);
             setLong(statement, 25, activity.durationMilliseconds());
+            setInteger(statement, 26, activity.denialReasonCode());
+            setInteger(statement, 27, activity.denialReasonVendorSpecific() == null ? null :
+                activity.denialReasonVendorSpecific() ? 1 : 0);
             try(ResultSet resultSet = statement.executeQuery())
             {
                 if(resultSet.next())

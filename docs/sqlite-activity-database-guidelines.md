@@ -933,3 +933,27 @@ It preserves call tables, their indexes and planner statistics. Temporary journa
 pages, with no additional database copy; capacity admission currently retains the existing conservative full-file
 bound for this new step. Tests cover exact prior/current signatures, preservation, rollback/retry, source separation,
 stale/cached/blank evidence and the indexed owner/frequency lookup.
+
+
+### P25 denial reasons (application format 74)
+
+Detailed `receiver_activity_event` rows carry nullable `denial_reason_code` (the transmitted 0–255 integer) and
+`denial_reason_vendor_specific` (0 standard, 1 vendor-specific). The pair belongs to the same denial event; neither
+an action label nor a summary can preserve it. The display resolves a readable reason from these two facts. Both
+remain NULL on older entries and other event kinds. There is no extra event, text copy, table or reason index.
+
+At R retained detailed events per hour the maximum 365-day setting retains at most 8,760R pairs of fields.
+New non-denial records add approximately two record-header bytes; a populated pair adds the raw reason payload
+(usually one or two bytes) while SQLite's 0/1 flag encoding needs no payload. Record-header expansion and page fill
+can add overhead. Existing rows are not rewritten merely to materialize NULLs. No speculative reason filtering index
+is added: current owner/time indexes serve the same bounded Activity pages and pruning deletes the fields with their
+parent. The writer receives detached scalar facts on the existing background queue; no database lookup or write is
+added to receiver callbacks.
+
+The adjacent migration first normalizes a creation-only table-header clause through the existing guarded,
+layout-preserving helper, then adds native nullable columns with CHECK constraints and extends the existing resolved
+view. Header normalization changes no logical field or event record. SQLite
+may scan retained events to validate those constraints but does not rebuild their table or indexes. The small schema
+rollback pages and existing configuration allowance own the temporary workspace; no full history copy or additional
+recovery backup is required. Tests cover exact source/target fingerprints, preserved event/index root pages,
+transactional rollback and unchanged-source retry, old NULL values, paired-value constraints and SQLite integrity.

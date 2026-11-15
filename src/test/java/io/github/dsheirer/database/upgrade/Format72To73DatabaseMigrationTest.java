@@ -43,11 +43,11 @@ class Format72To73DatabaseMigrationTest
             { assertTrue(rows.next()); assertNull(rows.getObject(1)); }
             try(var rows=s.executeQuery("SELECT observation_count FROM activity.p25_site_channel_tag_summary WHERE channel_key='bsi-test' AND tag='BSI'"))
             { assertTrue(rows.next()); assertEquals(3,rows.getInt(1)); }
-            assertEquals(ConfigurationHistoryDatabase.HISTORY_FINGERPRINT,SqliteSchemaValidator.fingerprint(c,"activity"));
+            assertEquals(ConfigurationHistoryDatabase.FORMAT_73_HISTORY_FINGERPRINT,SqliteSchemaValidator.fingerprint(c,"activity"));
             try(var rows=s.executeQuery("PRAGMA activity.quick_check")) { assertTrue(rows.next()); assertEquals("ok",rows.getString(1)); }
             try(var rows=s.executeQuery("PRAGMA activity.foreign_key_check")) { assertFalse(rows.next()); }
         }
-        ConfigurationHistoryDatabase.validatePair(database);
+        ConfigurationHistoryDatabase.validatePairIdentity(database);
     }
 
     @Test void fullMigratorPreservesUnaffectedActivityAndRetriesTheUnchangedSource() throws Exception

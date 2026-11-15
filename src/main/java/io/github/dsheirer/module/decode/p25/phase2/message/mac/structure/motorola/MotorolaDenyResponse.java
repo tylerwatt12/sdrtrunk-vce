@@ -26,6 +26,7 @@ import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifi
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.MacOpcode;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.MacStructureVendor;
 import io.github.dsheirer.module.decode.p25.reference.DenyReason;
+import io.github.dsheirer.module.decode.p25.reference.Vendor;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -34,7 +35,8 @@ import java.util.List;
  */
 public class MotorolaDenyResponse extends MacStructureVendor
 {
-    private static final int ADDITIONAL_INFORMATION_INDICATOR = 24;
+    // TIA-102.BBAD-A (2019), 3.97/Figure 192; 4.17 incorporates TIA-102.AABH 4.4.7.
+    private static final int RC = 24;
     private static final IntField SERVICE_TYPE = IntField.range(26, 31);
     private static final IntField REASON = IntField.length8(OCTET_5_BIT_32);
     private static final IntField ADDITIONAL_INFO = IntField.length24(OCTET_6_BIT_40);
@@ -77,7 +79,8 @@ public class MotorolaDenyResponse extends MacStructureVendor
 
     public boolean hasAdditionalInformation()
     {
-        return getMessage().get(ADDITIONAL_INFORMATION_INDICATOR + getOffset());
+        // TIA-102.AABH (2014), 4.4.7: absent additional information is zero-filled, independent of RC.
+        return getInt(ADDITIONAL_INFO) != 0;
     }
 
     public String getAdditionalInfo()
@@ -98,11 +101,24 @@ public class MotorolaDenyResponse extends MacStructureVendor
         return MacOpcode.fromValue(getInt(SERVICE_TYPE));
     }
 
+    /** Exact reason byte, including values represented by a shared lookup category. */
+    public int getDenyReasonCode()
+    {
+        return getInt(REASON);
+    }
+
+    public boolean isVendorSpecificReason()
+    {
+        return getMessage().get(RC + getOffset());
+    }
+
     public DenyReason getDenyReason()
     {
         if(mDenyReason == null)
         {
-            mDenyReason = DenyReason.fromCode(getInt(REASON));
+            mDenyReason = isVendorSpecificReason() ?
+                DenyReason.fromCustomCode(getDenyReasonCode(), Vendor.MOTOROLA) :
+                DenyReason.fromCode(getDenyReasonCode());
         }
 
         return mDenyReason;

@@ -525,7 +525,7 @@ final class ReceiverActivityRecords
                          Integer sourceObservedWorkingId, Integer targetObservedWorkingId,
                          P25WuidObservation p25WuidObservation,
                          io.github.dsheirer.alias.AnalogCallAttribution analogCallAttribution, String activityCallToken,
-                         Long durationMilliseconds)
+                         Long durationMilliseconds, Integer denialReasonCode, Boolean denialReasonVendorSpecific)
         implements ReceiverActivityRecord
     {
         ActivityEvent(long observedAtEpochMilliseconds, String configurationId, ReceiverKind receiverKind,
@@ -626,6 +626,31 @@ final class ReceiverActivityRecords
                 p25PatchMemberIdentities, radioSystemKey, sourceObservedWorkingId, targetObservedWorkingId, null);
         }
 
+        ActivityEvent(long observedAtEpochMilliseconds, String configurationId, ReceiverKind receiverKind,
+                         String protocol, Action action, String eventType, String sourceRadioId, String targetId,
+                         String targetKind, List<Integer> patchMemberTalkgroupIds, Long frequencyHertz, String lcn,
+                         Integer timeslot, CallEncryptionState encryptionState, Integer encryptionAlgorithmId, Integer encryptionKeyId,
+                         Integer wacn, Integer systemId, Integer nac, Integer rfss, Integer site,
+                         String talkerAlias, boolean countedCall, String dedupeKey,
+                         RadioPresenceUpdate radioPresenceUpdate, TrunkedIdentityDomain identityDomain,
+                         P25Identity p25TargetIdentity,
+                         P25Identity p25SourceIdentity,
+                         List<P25PatchMemberIdentity> p25PatchMemberIdentities,
+                         String radioSystemKey,
+                         Integer sourceObservedWorkingId, Integer targetObservedWorkingId,
+                         P25WuidObservation p25WuidObservation,
+                         io.github.dsheirer.alias.AnalogCallAttribution analogCallAttribution, String activityCallToken,
+                         Long durationMilliseconds)
+        {
+            this(observedAtEpochMilliseconds, configurationId, receiverKind, protocol, action, eventType,
+                sourceRadioId, targetId, targetKind, patchMemberTalkgroupIds, frequencyHertz, lcn, timeslot,
+                encryptionState, encryptionAlgorithmId, encryptionKeyId, wacn, systemId, nac, rfss, site,
+                talkerAlias, countedCall, dedupeKey, radioPresenceUpdate, identityDomain, p25TargetIdentity,
+                p25SourceIdentity, p25PatchMemberIdentities, radioSystemKey, sourceObservedWorkingId,
+                targetObservedWorkingId, p25WuidObservation, analogCallAttribution, activityCallToken,
+                durationMilliseconds, null, null);
+        }
+
         ActivityEvent
         {
             if(configurationId == null || configurationId.isBlank())
@@ -652,6 +677,9 @@ final class ReceiverActivityRecords
             sourceObservedWorkingId = explicitWorkingId(sourceObservedWorkingId);
             targetObservedWorkingId = explicitWorkingId(targetObservedWorkingId);
             durationMilliseconds = action == Action.CALL ? knownDuration(durationMilliseconds) : null;
+            if((denialReasonCode == null) != (denialReasonVendorSpecific == null) ||
+                denialReasonCode != null && (denialReasonCode < 0 || denialReasonCode > 255 || action != Action.DENIAL))
+                throw new IllegalArgumentException("Denial reason requires a byte code and vendor flag on a denial");
         }
 
         /** Keeps observation metadata while projecting only identities accepted for this same call. */
@@ -663,7 +691,19 @@ final class ReceiverActivityRecords
                 lcn, timeslot, encryptionState, encryptionAlgorithmId, encryptionKeyId, wacn, systemId, nac, rfss, site,
                 talkerAlias, countedCall, dedupeKey, radioPresenceUpdate, identityDomain, targetIdentity,
                 sourceIdentity, p25PatchMemberIdentities, radioSystemKey, sourceWorkingId, targetWorkingId,
-                p25WuidObservation, analogCallAttribution, activityCallToken, durationMilliseconds);
+                p25WuidObservation, analogCallAttribution, activityCallToken, durationMilliseconds,
+                denialReasonCode, denialReasonVendorSpecific);
+        }
+
+        ActivityEvent withDenialReason(Integer reasonCode, Boolean vendorSpecific)
+        {
+            return new ActivityEvent(observedAtEpochMilliseconds, configurationId, receiverKind, protocol, action,
+                eventType, sourceRadioId, targetId, targetKind, patchMemberTalkgroupIds, frequencyHertz, lcn,
+                timeslot, encryptionState, encryptionAlgorithmId, encryptionKeyId, wacn, systemId, nac, rfss, site,
+                talkerAlias, countedCall, dedupeKey, radioPresenceUpdate, identityDomain, p25TargetIdentity,
+                p25SourceIdentity, p25PatchMemberIdentities, radioSystemKey, sourceObservedWorkingId,
+                targetObservedWorkingId, p25WuidObservation, analogCallAttribution, activityCallToken,
+                durationMilliseconds, reasonCode, vendorSpecific);
         }
 
         ActivityEvent withDurationMilliseconds(Long duration)
@@ -673,7 +713,8 @@ final class ReceiverActivityRecords
                 timeslot, encryptionState, encryptionAlgorithmId, encryptionKeyId, wacn, systemId, nac, rfss, site,
                 talkerAlias, countedCall, dedupeKey, radioPresenceUpdate, identityDomain, p25TargetIdentity,
                 p25SourceIdentity, p25PatchMemberIdentities, radioSystemKey, sourceObservedWorkingId,
-                targetObservedWorkingId, p25WuidObservation, analogCallAttribution, activityCallToken, duration);
+                targetObservedWorkingId, p25WuidObservation, analogCallAttribution, activityCallToken, duration,
+                denialReasonCode, denialReasonVendorSpecific);
         }
     }
 

@@ -53,6 +53,7 @@ import io.github.dsheirer.module.decode.event.PlottableDecodeEvent;
 import io.github.dsheirer.module.decode.p25.IServiceOptionsProvider;
 import io.github.dsheirer.module.decode.p25.P25AffiliationEvent;
 import io.github.dsheirer.module.decode.p25.P25DecodeEvent;
+import io.github.dsheirer.module.decode.p25.P25DenialEvent;
 import io.github.dsheirer.module.decode.p25.P25FrequencyBandValidator;
 import io.github.dsheirer.module.decode.p25.P25SignalingEvent;
 import io.github.dsheirer.module.decode.p25.P25SignalingSemantics;
@@ -1429,12 +1430,14 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
     {
         if(mac.getOpcode() == MacOpcode.PHASE1_67_DENY_RESPONSE && mac instanceof DenyResponse dr)
         {
-            broadcast(message, mac, DecodeEventType.DENIAL, DENY_LABEL + dr.getDeniedServiceType() + REASON_LABEL +
+            broadcastDenial(message, mac, dr.getDenyReasonCode(), dr.isVendorSpecificReason(),
+                DENY_LABEL + dr.getDeniedServiceType() + REASON_LABEL +
                     dr.getDenyReason() + ADDITIONAL_INFO_LABEL + dr.getAdditionalInfo());
         }
         else if(mac.getOpcode() == MacOpcode.MOTOROLA_A7_DENY_RESPONSE && mac instanceof MotorolaDenyResponse dr)
         {
-            broadcast(message, mac, DecodeEventType.DENIAL, DENY_LABEL + dr.getDeniedServiceType() + REASON_LABEL +
+            broadcastDenial(message, mac, dr.getDenyReasonCode(), dr.isVendorSpecificReason(),
+                DENY_LABEL + dr.getDeniedServiceType() + REASON_LABEL +
                     dr.getDenyReason() + (dr.hasAdditionalInformation() ? ADDITIONAL_INFO_LABEL + dr.getAdditionalInfo() : ""));
         }
     }
@@ -1998,6 +2001,18 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
                 .identifiers(mic)
                 .timeslot(getTimeslot())
                 .build());
+    }
+
+    private void broadcastDenial(MacMessage message, MacStructure structure, int reasonCode,
+                                 boolean vendorSpecificReason, String details)
+    {
+        MutableIdentifierCollection identifiers = getUpdatedMutableIdentifierCollection(structure, message.getTimestamp());
+        P25DenialEvent event = new P25DenialEvent(message.getTimestamp(), reasonCode, vendorSpecificReason);
+        event.setChannelDescriptor(getCurrentChannel());
+        event.setDetails(details);
+        event.setIdentifierCollection(identifiers);
+        event.setTimeslot(getTimeslot());
+        broadcast(event);
     }
 
     private void broadcastBusy(MacMessage message, MacStructure structure, String details)

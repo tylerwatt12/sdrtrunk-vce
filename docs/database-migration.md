@@ -274,7 +274,7 @@ ambiguous markerless state instead of guessing which build produced it.
 Migration steps form one ordered chain:
 
 ```text
-format 2 (Alpha 12 family) -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 -> format 11 -> format 12 -> format 13 -> format 14 -> format 15 -> format 16 -> format 17 -> format 18 -> format 19 -> format 20 -> format 21 -> format 22 -> format 23 -> format 24 -> format 25 -> format 26 -> format 27 -> format 28 -> format 29 -> format 30 -> format 31 -> format 32 -> format 33 -> format 34 -> format 35 -> format 36 -> format 37 -> format 38 -> format 39 -> format 40 -> format 41 -> format 42 -> format 43 -> format 44 -> format 45 -> format 46 -> format 47 -> format 48 -> format 49 -> format 50 -> format 51 -> format 52 -> format 53 -> format 54 -> format 55 -> format 56 -> format 57 -> format 58 -> format 59 -> format 60 -> format 61 -> format 62 -> format 63 -> format 64 -> format 65 -> format 66 -> format 67 -> format 68 -> format 69 -> format 70 -> format 71 -> format 72 -> format 73 (current)
+format 2 (Alpha 12 family) -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 -> format 11 -> format 12 -> format 13 -> format 14 -> format 15 -> format 16 -> format 17 -> format 18 -> format 19 -> format 20 -> format 21 -> format 22 -> format 23 -> format 24 -> format 25 -> format 26 -> format 27 -> format 28 -> format 29 -> format 30 -> format 31 -> format 32 -> format 33 -> format 34 -> format 35 -> format 36 -> format 37 -> format 38 -> format 39 -> format 40 -> format 41 -> format 42 -> format 43 -> format 44 -> format 45 -> format 46 -> format 47 -> format 48 -> format 49 -> format 50 -> format 51 -> format 52 -> format 53 -> format 54 -> format 55 -> format 56 -> format 57 -> format 58 -> format 59 -> format 60 -> format 61 -> format 62 -> format 63 -> format 64 -> format 65 -> format 66 -> format 67 -> format 68 -> format 69 -> format 70 -> format 71 -> format 72 -> format 73 -> format 74 (current)
 ```
 
 Each step owns exactly one `N -> N+1` transformation. The runner repeatedly applies the next registered step until it
@@ -422,6 +422,15 @@ the compact channel tables while removing their old callsign columns, creates th
 the matching format markers. Its cost scales with channel inventory, not retained calls. There is no additional
 recovery copy or Activity-event scan. The existing conservative owned-migration workspace allowance applies to this
 new step. Format 72 remains a frozen populated source, and runtime startup validates without conversion.
+
+The format 73-to-74 step adds optional raw P25 denial reasons and their vendor-specific selection flag to the
+existing detailed Activity row. Historical events keep both fields unknown; no reason is reconstructed from labels,
+identities or timestamps. Every existing row, counter, setting, relationship, recording and event/index b-tree survives.
+The Application Migrator uses native nullable-column additions and replaces only the resolved event view. SQLite
+validates the column constraints against retained events, so reading time scales with history, but there is no event
+rewrite, index rebuild, extra recovery copy or retained-history count. Transaction workspace covers bounded schema
+pages and existing configuration work, with free-space headroom budgeted separately. Format 73 remains an exact
+populated source and runtime startup validates without altering existing databases.
 
 ## Shared Upgrade And Import Boundary
 

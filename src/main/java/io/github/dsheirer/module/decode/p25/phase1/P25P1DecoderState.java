@@ -66,6 +66,7 @@ import io.github.dsheirer.module.decode.ip.udp.UDPPacket;
 import io.github.dsheirer.module.decode.p25.IServiceOptionsProvider;
 import io.github.dsheirer.module.decode.p25.P25AffiliationEvent;
 import io.github.dsheirer.module.decode.p25.P25DecodeEvent;
+import io.github.dsheirer.module.decode.p25.P25DenialEvent;
 import io.github.dsheirer.module.decode.p25.P25FrequencyBandValidator;
 import io.github.dsheirer.module.decode.p25.P25SignalingEvent;
 import io.github.dsheirer.module.decode.p25.P25SignalingSemantics;
@@ -711,6 +712,18 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                 .details(details)
                 .identifiers(mic)
                 .build());
+    }
+
+    private void broadcastDenial(TSBKMessage message, int reasonCode, boolean vendorSpecificReason, String details)
+    {
+        MutableIdentifierCollection identifiers = getMutableIdentifierCollection(message.getIdentifiers(),
+            message.getTimestamp());
+        mTrafficChannelManager.enrichMutableIdentifiers(identifiers, message.getTimestamp());
+        P25DenialEvent event = new P25DenialEvent(message.getTimestamp(), reasonCode, vendorSpecificReason);
+        event.setChannelDescriptor(getCurrentChannel());
+        event.setDetails(details);
+        event.setIdentifierCollection(identifiers);
+        broadcast(event);
     }
 
     private void broadcastBusyEvent(TSBKMessage message, String details)
@@ -2056,13 +2069,14 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
     {
         if(tsbk instanceof DenyResponse dr)
         {
-            broadcastEvent(tsbk, DecodeEventType.DENIAL,
+            broadcastDenial(tsbk, dr.getDenyReasonCode(), dr.isVendorSpecificReason(),
                 "DENY: " + dr.getDeniedServiceType().getDescription() +
                     REASON_LABEL + dr.getDenyReason() + " - INFO: " + dr.getAdditionalInfo());
         }
         else if(tsbk instanceof MotorolaDenyResponse mdr)
         {
-            broadcastEvent(tsbk, DecodeEventType.DENIAL, "DENY: " + mdr.getDeniedServiceType().getDescription()
+            broadcastDenial(tsbk, mdr.getDenyReasonCode(), mdr.isVendorSpecificReason(),
+                "DENY: " + mdr.getDeniedServiceType().getDescription()
                     + REASON_LABEL + mdr.getDenyReason() + " - INFO: " + mdr.getAdditionalInfo());
         }
     }

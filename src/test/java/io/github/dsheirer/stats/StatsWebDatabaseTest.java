@@ -128,6 +128,37 @@ class StatsWebDatabaseTest
     }
 
     @Test
+    void activityResolvesSavedDenialReasonInItsReceivedCodeSpace() throws Exception
+    {
+        long now = System.currentTimeMillis();
+        int action = ReceiverActivityFilterCatalog.actionCode("DENIAL");
+        int event = ReceiverActivityFilterCatalog.eventTypeCode("DENIAL");
+        try(Connection connection = openFixture(); Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO receiver_activity_event(channel_id,radio_system_id,observed_at_ms,action_code,
+                    event_type_code,denial_reason_code,denial_reason_vendor_specific)
+                VALUES (71,71,%1$d,%2$d,%3$d,0,0),(71,71,%1$d+1,%2$d,%3$d,0,1),
+                       (71,71,%1$d+2,%2$d,%3$d,154,1),(71,71,%1$d+3,%2$d,%3$d,NULL,NULL)
+                """.formatted(now, action, event));
+        }
+        List<Map<String,Object>> rows = rowsFrom(mDatabase.activity(request("/?configuration_id=" + P25_CHANNEL_A +
+            "&action=DENIAL&event_type=DENIAL&limit=10")), "rows");
+        assertEquals(4, rows.size());
+        assertNull(rows.get(0).get("denial_reason_code"));
+        assertNull(rows.get(0).get("denial_reason_vendor_specific"));
+        assertNull(rows.get(0).get("denial_reason_display"));
+        assertEquals(154L, number(rows.get(1).get("denial_reason_code")));
+        assertEquals(true, rows.get(1).get("denial_reason_vendor_specific"));
+        assertEquals("User/system-defined reason (0x9A)", rows.get(1).get("denial_reason_display"));
+        assertEquals("Secure request on clear supergroup", rows.get(2).get("denial_reason_display"));
+        assertEquals("Reserved reason (0x00)", rows.get(3).get("denial_reason_display"));
+        assertEquals(false, rows.get(3).get("denial_reason_vendor_specific"));
+        assertTrue(rowsFrom(mDatabase.activity(request("/?configuration_id=" + P25_CHANNEL_B +
+            "&action=DENIAL&limit=10")), "rows").isEmpty());
+    }
+
+    @Test
     void messageDefinitionsComeFromOneTableAndKeepActionAndEventTypesSeparate() throws Exception
     {
         try(Connection connection = openFixture();
