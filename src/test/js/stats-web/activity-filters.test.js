@@ -29,9 +29,9 @@ const catalogSource = fs.readFileSync(path.join(path.dirname(applicationPath), '
 const createCatalog = vm.runInNewContext(catalogSource.replace(/^export /gm, '') + '\ncreateMessageTypeCatalog;');
 context.activityMessageTypes = createCatalog();
 context.activityMessageTypes.replace([
-  ...['GRANT', 'CALL', 'TONE', 'ACTIVE', 'NEW_ACTION'].map((name) => ({ definition_kind: 'ACTION', name, label: name })),
+  ...['GRANT', 'CALL', 'TONE', 'ACTIVE', 'DENIAL', 'NEW_ACTION'].map((name) => ({ definition_kind: 'ACTION', name, label: name })),
   ...['CALL_GROUP', 'CALL', 'TONE', 'RADIO_UNINHIBIT', 'RADIO_INHIBIT', 'RADIO_UNINHIBIT_ACK',
-    'RADIO_INHIBIT_ACK', 'NEW_EVENT'].map((name) => ({ definition_kind: 'EVENT', name, label: name }))
+    'RADIO_INHIBIT_ACK', 'DENIAL', 'NEW_EVENT'].map((name) => ({ definition_kind: 'EVENT', name, label: name }))
 ]);
 vm.createContext(context);
 vm.runInContext(`${application.slice(constantsStart, constantsEnd)}\n${application.slice(modelStart, modelEnd)}`,
@@ -444,3 +444,29 @@ const catalogFilters = context.activityRouteFilters(parameters({ activity_action
   activity_event_type: 'NEW_EVENT' }), systemContext);
 assert.equal(catalogFilters.action, 'NEW_ACTION', 'A new database action is usable without a frontend allowlist.');
 assert.equal(catalogFilters.eventType, 'NEW_EVENT', 'A new database event is usable without a frontend allowlist.');
+
+const eventValueStart = application.indexOf('function activityEventValue(');
+const eventValueEnd = application.indexOf('function activityToneValue(', eventValueStart);
+assert.ok(eventValueStart >= 0 && eventValueEnd > eventValueStart);
+const eventContext = vm.createContext({
+  activityOptionLabel: (type) => type === 'DENIAL' ? 'Denied' : 'Group call',
+  node: (tag, className, text = '') => ({ tag, className, text, children: [],
+    append(child) { this.children.push(child); } })
+});
+vm.runInContext(application.slice(eventValueStart, eventValueEnd), eventContext);
+for (const reason of ['Target group not valid', 'Secure request on clear supergroup',
+  'User/system-defined reason (0x9A)']) {
+  const row = { action: 'DENIAL', event_type: 'DENIAL', denial_reason_display: reason };
+  const rendered = eventContext.activityEventValue(row);
+  assert.equal(rendered.className, 'identity-summary');
+  assert.equal(rendered.children[0].text, 'Denied');
+  assert.equal(rendered.children[1].text, reason);
+  assert.deepEqual(plain(context.activityCellFilterPatch(systemContext, row, 'event')), { eventType: 'DENIAL' },
+    'Reason text must not replace the event token used by Activity filters.');
+}
+assert.equal(eventContext.activityEventValue({ action: 'DENIAL', event_type: 'DENIAL' }), 'Denied',
+  'Historical rows without a saved reason retain their generic event label.');
+assert.equal(eventContext.activityEventValue({ action: 'DENIAL', event_type: 'DENIAL',
+  denial_reason_display: null }), 'Denied');
+assert.equal(eventContext.activityEventValue({ action: 'CALL', event_type: 'CALL_GROUP',
+  denial_reason_display: 'Must not appear' }), 'Group call', 'Only denial rows show denial details.');

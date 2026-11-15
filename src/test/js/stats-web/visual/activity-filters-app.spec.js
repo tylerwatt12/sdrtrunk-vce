@@ -73,6 +73,7 @@ async function openActivity(page, options = {}) {
       await respond([
         ['ACTION', 4, 'CALL', 'Call'], ['EVENT', 7, 'CALL_GROUP', 'Group call'],
         ['EVENT', 8, 'CALL_GROUP_ENCRYPTED', 'Encrypted group call'],
+        ['ACTION', 8, 'DENIAL', 'Denied'], ['EVENT', 20, 'DENIAL', 'Denied'],
         ['ACTION', 24, 'TONE', 'Tone'], ['EVENT', 62, 'TONE', 'Tone']
       ].map(([definition_kind, code, name, label]) => ({ definition_kind, code, name, label,
         p25: true, dmr: true, nxdn: true, sort_order: code })));
@@ -185,6 +186,36 @@ function toneActivityRow(id, summary, overrides = {}) {
 }
 
 for (const [theme, width] of [['light', 1440], ['dark', 390]]) {
+  test(`Activity denial reasons retain event filters on ${theme} ${width}`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 1000 });
+    const requests = await openActivity(page, { theme, rows: [
+      toneActivityRow(17, undefined, { action: 'DENIAL', event_type: 'DENIAL', denial_reason_code: 0x30,
+        denial_reason_vendor_specific: false, denial_reason_display: 'Target group not valid' }),
+      toneActivityRow(18, undefined, { action: 'DENIAL', event_type: 'DENIAL', denial_reason_code: 0,
+        denial_reason_vendor_specific: true, denial_reason_display: 'Secure request on clear supergroup' }),
+      toneActivityRow(19, undefined, { action: 'DENIAL', event_type: 'DENIAL', denial_reason_code: 0x9A,
+        denial_reason_vendor_specific: false, denial_reason_display: 'User/system-defined reason (0x9A)' }),
+      toneActivityRow(20, undefined, { action: 'DENIAL', event_type: 'DENIAL' })
+    ] });
+    const row = page.locator('tr[data-id="17"]');
+    const event = row.locator('[data-column="event"]');
+    await expect(row.locator('[data-column="action"]')).toHaveText('Denied');
+    await expect(event.locator('.identity-summary-primary')).toHaveText('Denied');
+    await expect(event.locator('.identity-summary-context')).toHaveText('Target group not valid');
+    await expect(page.locator('tr[data-id="18"] [data-column="event"]')).toContainText('Secure request on clear supergroup');
+    await expect(page.locator('tr[data-id="19"] [data-column="event"]')).toContainText('User/system-defined reason (0x9A)');
+    await expect(page.locator('tr[data-id="20"] [data-column="event"]')).toHaveText('Denied');
+    await expect(row).toContainText('Engine 12');
+    await expect(row).toContainText('CPD D3 DISP');
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await event.evaluate(cell => cell.scrollIntoView({ inline: 'center', block: 'nearest' }));
+    await toneScreenshot(page, `activity-denial-${theme}-${width}`, false);
+    const filterLink = event.locator('.activity-cell-filter-link');
+    await filterLink.focus();
+    await page.keyboard.press('Enter');
+    await expect.poll(() => requests.activity.at(-1)?.event_type).toBe('DENIAL');
+  });
+
   test(`Activity duration is shared, nullable, and sortable on ${theme} ${width}`, async ({ page }) => {
     await page.setViewportSize({ width, height: 1000 });
     const schema = ['time', 'action', 'event', 'tones', 'source', 'source-alias', 'source-ota-alias',
