@@ -73,10 +73,12 @@ import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.source.config.SourceConfigTuner;
 import io.github.dsheirer.source.tuner.channel.TunerChannelSource.ReceiverAssignment;
 import java.util.ArrayList;
+import java.util.ConcurrentModificationException;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -766,6 +768,125 @@ class ChannelActivityModelTest
         assertEquals(139_968_750L, call.getFrequency());
         assertEquals(1, call.getTimeslot());
         assertEquals(State.CALL, call.getState());
+    }
+
+    @Test
+    void expiresQuietP25TrafficAfterSnapshotProjectionFails() throws Exception
+    {
+        AtomicBoolean failProjection = new AtomicBoolean(true);
+        AtomicInteger projectionFailures = new AtomicInteger();
+        PatchGroup patch = new PatchGroup(APCO25Talkgroup.create(4_400))
+        {
+            @Override
+            public String toString()
+            {
+                if(failProjection.compareAndSet(true, false))
+                {
+                    projectionFailures.incrementAndGet();
+                    throw new ConcurrentModificationException("simulated patch projection failure");
+                }
+                return super.toString();
+            }
+        };
+        patch.addPatchedTalkgroup(APCO25Talkgroup.create(4_401));
+
+        try(ChannelActivityModel model = trafficAgeOutModel(100))
+        {
+            Channel parent = trunkedChannel("Primary", "County", "North", new DecodeConfigP25Phase1(),
+                851_012_500L);
+            APCO25Channel traffic = APCO25Channel.create(0, 459);
+            traffic.setFrequencyBand(new P25FrequencyBand(0, 851_006_250L, -45_000_000L, 6_250L, 12_500, 1));
+            run(model, () -> model.p25TrafficGrant(parent, null, traffic,
+                new IdentifierCollection(List.of(APCO25PatchGroup.create(patch))), DecodeEventType.CALL_GROUP));
+
+            assertEquals(1, projectionFailures.get(), "the failure must occur while projecting the grant");
+            assertTrue(awaitCondition(() -> trafficRows(model).stream().anyMatch(row ->
+                State.IDLE.name().equals(row.status()) && "P:4400 [4401]".equals(row.targetId())),
+                2, TimeUnit.SECONDS), "the failed grant must expire and publish without another observation");
+            assertTrue(model.isWorkerAlive());
+        }
+    }
+
+    @Test
+    void concurrentP25PatchMembershipChangePublishesAndExpiresWithoutBlockingTheWriter() throws Exception
+    {
+        CountDownLatch projectionStarted = new CountDownLatch(1);
+        CountDownLatch releaseProjection = new CountDownLatch(1);
+        AtomicBoolean blockProjection = new AtomicBoolean(true);
+        TalkgroupIdentifier originalMember = new APCO25Talkgroup(4_401)
+        {
+            @Override
+            public String toString()
+            {
+                if(blockProjection.compareAndSet(true, false))
+                {
+                    projectionStarted.countDown();
+                    try
+                    {
+                        if(!releaseProjection.await(5, TimeUnit.SECONDS))
+                        {
+                            throw new AssertionError("patch projection was not released");
+                        }
+                    }
+                    catch(InterruptedException interrupted)
+                    {
+                        Thread.currentThread().interrupt();
+                        throw new AssertionError(interrupted);
+                    }
+                }
+                return super.toString();
+            }
+        };
+        PatchGroup patch = new PatchGroup(APCO25Talkgroup.create(4_400));
+        patch.addPatchedTalkgroup(originalMember);
+        CountDownLatch mutationFinished = new CountDownLatch(1);
+        Thread membershipWriter = new Thread(() -> {
+            try
+            {
+                patch.addPatchedTalkgroup(APCO25Talkgroup.create(4_402));
+            }
+            finally
+            {
+                mutationFinished.countDown();
+            }
+        }, "test patch membership writer");
+        membershipWriter.setDaemon(true);
+        AtomicReference<ChannelActivitySnapshot.Row> firstCallSnapshot = new AtomicReference<>();
+        ChannelActivityModel model = trafficAgeOutModel(300);
+        try
+        {
+            model.addActivityListener(event -> event.snapshot().rows().stream()
+                .filter(row -> ChannelActivityRow.Role.TRAFFIC.name().equals(row.role()) &&
+                    State.CALL.name().equals(row.status()) && row.targetId() != null)
+                .findFirst().ifPresent(row -> firstCallSnapshot.compareAndSet(null, row)));
+            Channel parent = trunkedChannel("Primary", "County", "North", new DecodeConfigP25Phase1(),
+                851_012_500L);
+            APCO25Channel traffic = APCO25Channel.create(0, 459);
+            traffic.setFrequencyBand(new P25FrequencyBand(0, 851_006_250L, -45_000_000L, 6_250L, 12_500, 1));
+            model.p25TrafficGrant(parent, null, traffic,
+                new IdentifierCollection(List.of(APCO25PatchGroup.create(patch))), DecodeEventType.CALL_GROUP);
+            assertTrue(projectionStarted.await(2, TimeUnit.SECONDS));
+            membershipWriter.start();
+            assertTrue(mutationFinished.await(2, TimeUnit.SECONDS),
+                "membership updates must not wait for the activity formatter");
+            releaseProjection.countDown();
+
+            assertTrue(awaitCondition(() -> firstCallSnapshot.get() != null, 2, TimeUnit.SECONDS),
+                "the grant snapshot must publish despite the overlapping membership change");
+            assertEquals("P:4400 [4401]", firstCallSnapshot.get().targetId());
+            assertTrue(awaitCondition(() -> trafficRows(model).stream().anyMatch(row ->
+                State.IDLE.name().equals(row.status()) && "P:4400 [4401, 4402]".equals(row.targetId())),
+                2, TimeUnit.SECONDS), "quiet traffic must expire without another grant");
+            assertEquals("P:4400 [4401]", firstCallSnapshot.get().targetId(),
+                "later membership and idle publication must not change the earlier snapshot");
+            assertTrue(model.isWorkerAlive());
+        }
+        finally
+        {
+            releaseProjection.countDown();
+            membershipWriter.join(1_000);
+            model.close();
+        }
     }
 
     @Test
