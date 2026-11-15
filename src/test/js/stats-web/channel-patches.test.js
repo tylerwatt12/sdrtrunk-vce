@@ -14,6 +14,17 @@ function functionSource(name, nextName) {
   return application.slice(start, end);
 }
 
+const patchTypeLabel = Function(`
+  ${functionSource('patchTypeLabel', 'patchMembersByLocalGroup')}
+  return patchTypeLabel;
+`)();
+
+assert.equal(patchTypeLabel(1), 'Patch');
+assert.equal(patchTypeLabel(2), 'Simulselect');
+assert.equal(patchTypeLabel(0), 'Unknown');
+assert.equal(patchTypeLabel(null), 'Unknown');
+assert.equal(patchTypeLabel(99), 'Unknown');
+
 const patchMembersByLocalGroup = Function(`
   ${functionSource('patchMembersByLocalGroup', 'renderChannelNeighbors')}
   return patchMembersByLocalGroup;
@@ -32,6 +43,7 @@ assert.deepEqual(members.get(700).map((row) => row.local_talkgroup_id), [303]);
 assert.equal(members.has(undefined), false, 'Malformed rows must not collapse into one undefined patch group');
 
 const patchRenderer = functionSource('renderTrunkedChannel', 'specialIdentifierLabel');
+assert.match(patchRenderer, /id: 'regroup-type', label: 'Type', render: \(row\) => patchTypeLabel\(row\.regroup_type\)/);
 assert.match(patchRenderer, /groupIdentityValue\(row, \{ id: row\.local_patch_group_id, alias: row\.patch_alias_name \}\)/);
 assert.match(patchRenderer, /groupIdentityValue\(member, \{ id: member\.local_talkgroup_id \}\)/);
 assert.match(patchRenderer, /radioIdentityValue\(member, \{ id: member\.local_radio_id \}\)/);

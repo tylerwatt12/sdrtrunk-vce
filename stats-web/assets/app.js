@@ -6,7 +6,7 @@ import { createMessageTypeCatalog } from './core/message-types.js?v=1';
 import { systemCallTitle, callCountDateRows, CALL_COUNT_HELP } from './core/call-count-labels.js?v=1';
 import { Controller as UserPreferenceController } from './core/user-preferences.js?v=4';
 import * as tableLayouts from './core/table-layout.js?v=7';
-import * as tableDefaults from './core/table-defaults.js?v=36';
+import * as tableDefaults from './core/table-defaults.js?v=37';
 import { createTableOverflow } from './core/table-overflow.js?v=2';
 import { Controller as PageTitleController } from './core/page-title.js?v=3';
 import { href as entityRefHref } from './core/entity-ref.js?v=1';
@@ -23542,6 +23542,10 @@ function trunkedChannelNeighborColumns(channel) {
   ];
 }
 
+function patchTypeLabel(value) {
+  return ({ 1: 'Patch', 2: 'Simulselect' })[Number(value)] || 'Unknown';
+}
+
 function patchMembersByLocalGroup(values) {
   const members = new Map();
   (Array.isArray(values) ? values : []).forEach((row) => {
@@ -23763,6 +23767,8 @@ async function renderTrunkedChannel(channel, configurationId, renderContext) {
           className: 'alias-cell', sortValue: (row) => groupIdentitySortValue(row, {
             id: row.local_patch_group_id, alias: row.patch_alias_name
           }) },
+        { id: 'regroup-type', label: 'Type', render: (row) => patchTypeLabel(row.regroup_type),
+          sortValue: (row) => patchTypeLabel(row.regroup_type) },
         { id: 'member-talkgroup-ids', label: 'Local Talkgroups', fullLabel: 'Local Member Talkgroups',
           className: 'alias-cell', render: (row) =>
           memberValues(talkgroups.get(row.local_patch_group_id), (member) =>

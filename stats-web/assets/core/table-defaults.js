@@ -32,7 +32,7 @@ const NEIGHBOR_DEFAULTS = {
   grow: ['neighbor-name', 'system']
 };
 const PATCH_DEFAULTS = {
-  widths: { 'patch-id': 240, 'member-talkgroup-ids': 280, 'member-radio-ids': 280 },
+  widths: { 'patch-id': 240, 'regroup-type': 112, 'member-talkgroup-ids': 280, 'member-radio-ids': 280 },
   grow: ['patch-id', 'member-talkgroup-ids', 'member-radio-ids']
 };
 const RETAINED_DEFAULTS = {
