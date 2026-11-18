@@ -21,18 +21,24 @@ package io.github.dsheirer.identifier.patch;
 
 import io.github.dsheirer.identifier.radio.RadioIdentifier;
 import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
  * Temporary grouping or regrouping of talkgroups or individual radios.
+ *
+ * The patched talkgroup and radio lists are written by the decoder thread as
+ * patch members are added or removed, and read concurrently by the activity model
+ * (for example {@link #toString()} when rendering a snapshot row) and by identity
+ * formatting. Copy-on-write keeps those readers safe without locking; mutation is
+ * rare compared to reads.
  */
 public class PatchGroup
 {
     private TalkgroupIdentifier mPatchGroupIdentifier;
-    private List<TalkgroupIdentifier> mPatchedTalkgroupIdentifiers = new ArrayList<>();
-    private List<RadioIdentifier> mPatchedRadioIdentifiers = new ArrayList<>();
+    private List<TalkgroupIdentifier> mPatchedTalkgroupIdentifiers = new CopyOnWriteArrayList<>();
+    private List<RadioIdentifier> mPatchedRadioIdentifiers = new CopyOnWriteArrayList<>();
     private int mVersion;
 
     /**
