@@ -1,0 +1,56 @@
+#!/bin/sh
+# Privileged helper for SDRTrunk VCE resource limits.
+#
+# The receiver runs as an unprivileged user and cannot change its own cgroup, so the web console
+# calls this through sudo to apply CPU quota. Install as /usr/local/bin/vce-resources, owned by
+# root with mode 0755, and grant the receiver user NOPASSWD access to this exact path.
+#
+#   vce-resources cpu-quota <percent>   0 removes the limit
+#   vce-resources memory-max <megabytes> 0 removes the limit
+
+set -eu
+
+unit="${VCE_UNIT:-sdrtrunk-vce}"
+
+usage() {
+    echo "usage: vce-resources cpu-quota <percent> | memory-max <megabytes>" >&2
+    echo "       0 removes the limit" >&2
+    exit 2
+}
+
+[ $# -eq 2 ] || usage
+
+command="$1"
+value="$2"
+
+case "$value" in
+    ''|*[!0-9]*) usage ;;
+esac
+
+case "$command" in
+    cpu-quota)
+        if [ "$value" -eq 0 ]; then
+            systemctl set-property "$unit" CPUQuota=
+        else
+            if [ "$value" -lt 10 ] || [ "$value" -gt 1600 ]; then
+                echo "cpu-quota must be 0 or between 10 and 1600" >&2
+                exit 2
+            fi
+            systemctl set-property "$unit" "CPUQuota=${value}%"
+        fi
+        ;;
+    memory-max)
+        if [ "$value" -eq 0 ]; then
+            systemctl set-property "$unit" MemoryMax=infinity
+        else
+            if [ "$value" -lt 512 ] || [ "$value" -gt 65536 ]; then
+                echo "memory-max must be 0 or between 512 and 65536" >&2
+                exit 2
+            fi
+            systemctl set-property "$unit" "MemoryMax=${value}M"
+        fi
+        ;;
+    *)
+        usage
+        ;;
+esac

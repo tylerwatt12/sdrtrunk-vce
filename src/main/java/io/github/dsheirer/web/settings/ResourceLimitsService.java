@@ -189,8 +189,17 @@ public final class ResourceLimitsService
 
         try
         {
-            Process process = new ProcessBuilder(helper.toString(), "cpu-quota", Integer.toString(percent))
-                .redirectErrorStream(true).start();
+            // A process cannot set its own cgroup, so the helper runs elevated when we are not root.
+            List<String> command = new ArrayList<>();
+            if(!"root".equals(System.getProperty("user.name")))
+            {
+                command.add("sudo");
+                command.add("-n");
+            }
+            command.add(helper.toString());
+            command.add("cpu-quota");
+            command.add(Integer.toString(percent));
+            Process process = new ProcessBuilder(command).redirectErrorStream(true).start();
             String output = new String(process.getInputStream().readAllBytes());
             int status = process.waitFor();
             return status == 0 ? "cpuQuotaPercent applied" : "cpuQuotaPercent helper failed: " + output.trim();
