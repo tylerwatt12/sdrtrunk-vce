@@ -503,6 +503,12 @@ Central administration uses:
 - `PUT, DELETE /api/v1/admin/users/{username}`
 - `GET, PUT /api/v1/admin/access`
 - `GET, PUT /api/v1/admin/receiver-settings`
+- `GET, PUT /api/v1/admin/resources` — receiver resource limits: `maxHeapMb` (applied at the next
+  start), `nice` (applied immediately; raising priority needs privilege), and `cpuQuotaPercent`
+  (applied through the optional `/usr/local/bin/vce-resources` helper). The response reports live
+  heap, process CPU load, processor count, the effective nice value, and whether a restart is still
+  required. Limits persist in `data/conf/resources.properties`, which the packaged launcher reads
+  to set the heap.
 - `GET, PUT /api/v1/admin/p25-bandplan-overrides`
 
 The fixed primary account is the only administrator account. Managed accounts always have `user` access. Creating a

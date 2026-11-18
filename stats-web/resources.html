@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Resources - SDRTrunk VCE</title>
+<link rel="stylesheet" href="/assets/app.css">
+<style>
+  .resource-grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr)); }
+  .resource-card { border: 1px solid var(--border, #2b2f36); border-radius: 8px; padding: 1rem; }
+  .resource-card h2 { font-size: 1rem; margin: 0 0 .5rem; }
+  .resource-value { font-size: 1.5rem; font-variant-numeric: tabular-nums; }
+  .resource-note { opacity: .75; font-size: .85rem; margin-top: .35rem; }
+  label { display: block; margin: .75rem 0 .25rem; font-size: .9rem; }
+  input[type=number] { width: 100%; padding: .45rem; border-radius: 6px; border: 1px solid #3a3f47; background: #14171b; color: inherit; }
+  .actions { margin-top: 1rem; display: flex; gap: .5rem; align-items: center; }
+  #status { font-size: .9rem; }
+  #status.error { color: #ff7b72; }
+  #status.ok { color: #7ee787; }
+</style>
+</head>
+<body>
+<main style="max-width: 56rem; margin: 2rem auto; padding: 0 1rem;">
+  <h1>Resources</h1>
+  <p class="resource-note">
+    Heap is applied the next time the receiver starts. Priority takes effect immediately and can only be
+    lowered without privilege. CPU quota needs the <code>vce-resources</code> helper.
+  </p>
+
+  <div class="resource-grid">
+    <div class="resource-card">
+      <h2>Memory</h2>
+      <div class="resource-value"><span id="heap-used">-</span> / <span id="heap-max">-</span> MB</div>
+      <div class="resource-note" id="heap-note">committed <span id="heap-committed">-</span> MB</div>
+    </div>
+    <div class="resource-card">
+      <h2>CPU</h2>
+      <div class="resource-value"><span id="cpu-load">-</span>%</div>
+      <div class="resource-note">of one core, across <span id="cpu-count">-</span> processors</div>
+    </div>
+    <div class="resource-card">
+      <h2>Priority</h2>
+      <div class="resource-value" id="nice-value">-</div>
+      <div class="resource-note">lower number means higher priority</div>
+    </div>
+  </div>
+
+  <form id="limits" style="margin-top: 2rem;">
+    <label for="maxHeapMb">Maximum heap (MB)</label>
+    <input id="maxHeapMb" name="maxHeapMb" type="number" min="256" max="65536" step="256">
+
+    <label for="nice">Process priority (nice, -20 to 19)</label>
+    <input id="nice" name="nice" type="number" min="-20" max="19" step="1">
+
+    <label for="cpuQuotaPercent">CPU quota (% of one core, 0 = unlimited)</label>
+    <input id="cpuQuotaPercent" name="cpuQuotaPercent" type="number" min="0" max="1600" step="10">
+
+    <div class="actions">
+      <button type="submit">Save</button>
+      <span id="status" role="status"></span>
+    </div>
+  </form>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+
+function setStatus(message, kind) {
+  const status = $('status');
+  status.textContent = message;
+  status.className = kind || '';
+}
+
+function render(data) {
+  const live = data.live || {};
+  const limits = data.limits || {};
+  $('heap-used').textContent = live.heapUsedMb ?? '-';
+  $('heap-max').textContent = live.heapMaxMb ?? '-';
+  $('heap-committed').textContent = live.heapCommittedMb ?? '-';
+  $('cpu-load').textContent = live.processCpuLoadPercent ?? '-';
+  $('cpu-count').textContent = live.availableProcessors ?? '-';
+  $('nice-value').textContent = live.nice ?? '-';
+
+  $('maxHeapMb').value = limits.maxHeapMb ?? '';
+  $('nice').value = limits.nice ?? '';
+  $('cpuQuotaPercent').value = limits.cpuQuotaPercent ?? 0;
+
+  if (data.restartRequired) {
+    setStatus('Heap change is pending: restart the receiver to apply ' + limits.maxHeapMb + ' MB.', 'ok');
+    $('heap-note').textContent = 'restart required to apply ' + limits.maxHeapMb + ' MB';
+  }
+}
+
+async function load() {
+  try {
+    const response = await fetch('/api/v1/admin/resources', { credentials: 'same-origin' });
+    if (response.status === 401 || response.status === 403) {
+      setStatus('Sign in as an administrator to change resource limits.', 'error');
+      return;
+    }
+    if (!response.ok) throw new Error('HTTP ' + response.status);
+    render(await response.json());
+  } catch (error) {
+    setStatus('Could not read resources: ' + error.message, 'error');
+  }
+}
+
+$('limits').addEventListener('submit', async event => {
+  event.preventDefault();
+  const body = {};
+  for (const field of ['maxHeapMb', 'nice', 'cpuQuotaPercent']) {
+    const raw = $(field).value.trim();
+    if (raw !== '') body[field] = Number(raw);
+  }
+  try {
+    const response = await fetch('/api/v1/admin/resources', {
+      method: 'PUT',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    if (!response.ok) {
+      const detail = await response.json().catch(() => ({}));
+      throw new Error(detail.message || ('HTTP ' + response.status));
+    }
+    const data = await response.json();
+    render(data);
+    setStatus((data.notes && data.notes.length ? data.notes.join('; ') : 'Saved.') +
+      (data.restartRequired ? ' Restart required for the heap change.' : ''), 'ok');
+  } catch (error) {
+    setStatus('Save failed: ' + error.message, 'error');
+  }
+});
+
+load();
+setInterval(load, 15000);
+</script>
+</body>
+</html>

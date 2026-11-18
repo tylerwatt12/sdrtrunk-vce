@@ -63,6 +63,8 @@ import io.github.dsheirer.web.http.CallFilteringSettingsHttpController;
 import io.github.dsheirer.web.http.TunerAllocationHttpController;
 import io.github.dsheirer.web.http.MapSnapshotHttpController;
 import io.github.dsheirer.web.http.OperationalPreferencesHttpController;
+import io.github.dsheirer.web.http.ResourceLimitsHttpController;
+import io.github.dsheirer.web.settings.ResourceLimitsService;
 import io.github.dsheirer.web.http.ApiHttpResponse;
 import io.github.dsheirer.web.http.ApiRequestDecoder;
 import io.github.dsheirer.web.http.EmbeddedHttpServerPolicy;
@@ -673,6 +675,11 @@ public class StatsWebServerService implements AutoCloseable
             new OperationalPreferencesHttpController(new OperationalPreferencesService(mUserPreferences));
         server.createContext(OperationalPreferencesHttpController.PATH, mWebRequestSecurity.protectApi(
             WebCapability.ADMIN_SETTINGS, operationalPreferencesController::handle));
+
+        ResourceLimitsHttpController resourceLimitsController =
+            new ResourceLimitsHttpController(new ResourceLimitsService());
+        server.createContext(ResourceLimitsHttpController.PATH, mWebRequestSecurity.protectApi(
+            WebCapability.ADMIN_SETTINGS, resourceLimitsController::handle));
 
         PagingToneHttpController pagingToneController = new PagingToneHttpController(mServices.mPagingToneSettingsService);
         server.createContext(PagingToneHttpController.PATH, mWebRequestSecurity.protectApi(
