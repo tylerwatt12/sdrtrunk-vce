@@ -990,6 +990,17 @@ runtimeTargets.findAll { !it.windows }.each { target ->
     target.materializeLegalTask = materializeTask
 }
 
+//The packaging tasks close over per-target task state and build-script helpers, which the
+//configuration cache cannot serialize (tracked in issue #99). Declare them explicitly so a build
+//with the cache enabled completes; these tasks re-execute each run instead of blocking every other task.
+tasks.matching { task ->
+    task.name.startsWith('downloadLiberica') ||
+        task.name.startsWith('materializeRuntimeLegalLinks') ||
+        task.name.startsWith('runtimeZip')
+}.configureEach {
+    notCompatibleWithConfigurationCache('Packaging tasks capture per-target task state; see issue #99')
+}
+
 tasks.named('startScripts') {
     classpath = files(tasks.named('jar'))
 }
