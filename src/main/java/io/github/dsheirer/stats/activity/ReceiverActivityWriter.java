@@ -39,6 +39,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicLongArray;
 import java.util.function.LongSupplier;
+import org.sqlite.SQLiteErrorCode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -113,6 +114,7 @@ class ReceiverActivityWriter implements AutoCloseable
     private volatile long mLastRetentionCleanup;
     private volatile ReceiverActivityStatus.State mState = ReceiverActivityStatus.State.STOPPED;
     private volatile String mLastError;
+    private volatile boolean mRecoverableFailure;
     ReceiverActivityWriter(Path databasePath, int retentionDays, boolean detailedEventHistoryEnabled)
     {
         this(databasePath, retentionDays, detailedEventHistoryEnabled, DEFAULT_QUEUE_CAPACITY);
@@ -151,6 +153,7 @@ class ReceiverActivityWriter implements AutoCloseable
         {
             mShutdownDrainDeadlineNanos = Long.MIN_VALUE;
             mLastError = null;
+            mRecoverableFailure = false;
             mState = ReceiverActivityStatus.State.STARTING;
             mExecutorService = Executors.newSingleThreadExecutor(new NamingThreadFactory("statistics database writer"));
             mExecutorService.execute(this::run);
@@ -367,6 +370,12 @@ class ReceiverActivityWriter implements AutoCloseable
     {
         return new WriterStatus(mState, mDetailedEventHistoryEnabled, mLastSuccessfulWriteMs.get(),
             mWrittenRecords.get(), mDroppedRecords.get() + observationDrops(), mLastError, dropDiagnostics());
+    }
+
+    /** Only storage failures can be retried; schema, corruption and unsafe maintenance failures stay stopped. */
+    boolean canRecover()
+    {
+        return mState == ReceiverActivityStatus.State.FAILED && mRecoverableFailure;
     }
 
     @Override
@@ -596,7 +605,10 @@ class ReceiverActivityWriter implements AutoCloseable
         catch(SQLException e)
         {
             terminalFailure = e;
-            fail(e);
+            if(mState != ReceiverActivityStatus.State.FAILED)
+            {
+                fail(e);
+            }
             mLog.warn("Statistics SQLite writer stopped after database error", e);
         }
         finally
@@ -1478,6 +1490,10 @@ class ReceiverActivityWriter implements AutoCloseable
         String error = exception.getClass().getSimpleName() +
             (message == null || message.isBlank() ? "" : ": " + message);
         mLastError = error.substring(0, Math.min(500, error.length()));
+        int code = exception instanceof SQLException sql ? sql.getErrorCode() & 0xFF : 0;
+        mRecoverableFailure = exception instanceof IOException ||
+            code == SQLiteErrorCode.SQLITE_IOERR.code || code == SQLiteErrorCode.SQLITE_FULL.code ||
+            code == SQLiteErrorCode.SQLITE_CANTOPEN.code;
         mState = ReceiverActivityStatus.State.FAILED;
     }
 

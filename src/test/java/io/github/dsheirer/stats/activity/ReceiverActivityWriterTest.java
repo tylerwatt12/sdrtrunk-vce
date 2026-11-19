@@ -138,6 +138,7 @@ class ReceiverActivityWriterTest
             assertTrue(closedBeforeCompletion.get(), "The unsafe connection must close before reset admission is released");
             assertEquals(ReceiverActivityStatus.State.FAILED, writer.getStatus().state());
             assertEquals(0, request.progress().databaseBusyRetries(), "unsafe connections must never be retried");
+            assertFalse(writer.canRecover(), "An unsafe reset must require explicit recovery");
             assertFalse(writer.enqueue(activity(ReceiverActivityRecords.Action.GRANT, System.currentTimeMillis())));
             assertFalse(committedAfterFailedRollback.get(), "A failed rollback must never be followed by an implicit COMMIT");
             if(!failureMode.equals("rollback"))

@@ -343,6 +343,203 @@ class ReceiverActivityServiceLifecycleTest
     }
 
     @Test
+    void automaticallyRecoversAfterAPathFailureAndKeepsCommittedStatistics() throws Exception
+    {
+        Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder);
+        SdrTrunkTestDatabase.create(database);
+        Channel channel = nbfmChannel(ACTIVITY_CONFIGURATION_ID);
+        persistChannels(database, channel);
+        try(Connection connection = ActivityTestDatabase.openPair(database))
+        {
+            ReceiverActivitySchema.recordActivity(connection,
+                new ReceiverActivityMapper().map(channel, conventionalEvent(System.currentTimeMillis() - 2_000)), true);
+            ReceiverActivitySchema.updateStatus(connection, "records_written", "1");
+            ReceiverActivitySchema.updateStatus(connection, "records_dropped", "3");
+            ReceiverActivitySchema.updateStatus(connection, "constraint_rejection_drops", "3");
+        }
+        AtomicInteger attempts = new AtomicInteger();
+        AtomicReference<ReceiverActivityWriter> firstWriter = new AtomicReference<>();
+        ReceiverActivityService.WriterFactory factory = (path, days, detailed) -> {
+            if(attempts.getAndIncrement() == 0)
+            {
+                ReceiverActivityWriter unavailable = new ReceiverActivityWriter(
+                    mTemporaryFolder.resolve("unavailable.sqlite"), days, detailed);
+                firstWriter.set(unavailable);
+                return unavailable;
+            }
+            return FAST_WRITER_FACTORY.create(path, days, detailed);
+        };
+        var preferences = new TestUserPreferences(new TestApplicationPreference(true, 30, true),
+            new TestDirectoryPreference(mTemporaryFolder));
+        var service = new ReceiverActivityService(preferences, 2, TimeUnit.SECONDS, null, null, factory, 50);
+        try
+        {
+            awaitRecoveryCondition(() -> attempts.get() == 2 && service.getStatus().summaryActive(),
+                "Statistics did not recover without a preference change");
+            assertTrue(firstWriter.get().canRecover(), "The initial writer must have a recoverable path failure");
+            assertTrue(firstWriter.get().isWorkerTerminated(), "The failed writer must close before replacement");
+            assertEquals(1, service.getStatus().recordsWritten());
+            assertEquals(3, service.getStatus().recordsDropped());
+            assertEquals(3, service.getStatus().dropDiagnostics().constraintRejection());
+
+            service.getDecodeEventListener().accept(channel, conventionalEvent(System.currentTimeMillis() + 2_000));
+            assertTrue(service.awaitObservationDrain(5, TimeUnit.SECONDS));
+            awaitCount(database, "receiver_activity_event", 2);
+            awaitRecoveryCondition(() -> service.getStatus().recordsWritten() == 2,
+                "The recovered writer did not publish its committed counter");
+            assertEquals(3, service.getStatus().recordsDropped());
+            assertEquals(2, attempts.get());
+        }
+        finally { disposeAndAwait(service); }
+    }
+
+    @Test
+    void automaticallyRecoversAfterSqliteCannotOpenTheActivityFile() throws Exception
+    {
+        Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder);
+        SdrTrunkTestDatabase.create(database);
+        Channel channel = nbfmChannel(ACTIVITY_CONFIGURATION_ID);
+        persistChannels(database, channel);
+        Path activity = SdrTrunkDatabase.historyPath(database);
+        org.junit.jupiter.api.Assumptions.assumeTrue(
+            java.nio.file.Files.getFileStore(activity).supportsFileAttributeView("posix"));
+        var originalPermissions = java.nio.file.Files.getPosixFilePermissions(activity);
+        try
+        {
+            java.nio.file.Files.setPosixFilePermissions(activity, Set.of());
+            org.junit.jupiter.api.Assumptions.assumeFalse(java.nio.file.Files.isReadable(activity),
+                "A privileged test process can still read the denied fixture");
+            AtomicReference<ReceiverActivityWriter> firstWriter = new AtomicReference<>();
+            ReceiverActivityService.WriterFactory factory = (path, days, detailed) -> {
+                ReceiverActivityWriter writer = FAST_WRITER_FACTORY.create(path, days, detailed);
+                firstWriter.compareAndSet(null, writer);
+                return writer;
+            };
+            var preferences = new TestUserPreferences(new TestApplicationPreference(true, 30, true),
+                new TestDirectoryPreference(mTemporaryFolder));
+            var service = new ReceiverActivityService(preferences, 2, TimeUnit.SECONDS, null, null, factory, 80);
+            try
+            {
+                awaitRecoveryCondition(() -> firstWriter.get().getStatus().state() == ReceiverActivityStatus.State.FAILED,
+                    "The unreadable activity file did not fail the SQLite writer");
+                assertTrue(firstWriter.get().getStatus().lastError().contains("SQLITE_CANTOPEN"));
+                assertTrue(firstWriter.get().canRecover());
+                java.nio.file.Files.setPosixFilePermissions(activity, originalPermissions);
+                awaitRecoveryCondition(() -> service.getStatus().summaryActive(),
+                    "SQLite collection did not recover after file access returned");
+                service.getDecodeEventListener().accept(channel, conventionalEvent(System.currentTimeMillis() + 2_000));
+                assertTrue(service.awaitObservationDrain(5, TimeUnit.SECONDS));
+                awaitCount(database, "receiver_activity_event", 1);
+                awaitRecoveryCondition(() -> service.getStatus().recordsWritten() == 1,
+                    "The recovered SQLite writer did not commit the new observation");
+                assertTrue(firstWriter.get().isWorkerTerminated());
+            }
+            finally { disposeAndAwait(service); }
+        }
+        finally { java.nio.file.Files.setPosixFilePermissions(activity, originalPermissions); }
+    }
+
+    @Test
+    void persistentPathFailuresRetryAtIntervalsAndDisposalStopsFurtherAttempts() throws Exception
+    {
+        Path missingRoot = mTemporaryFolder.resolve("unavailable-profile");
+        var attempts = new java.util.concurrent.CopyOnWriteArrayList<Long>();
+        ReceiverActivityService.WriterFactory factory = (path, days, detailed) -> {
+            attempts.add(System.nanoTime());
+            return FAST_WRITER_FACTORY.create(path, days, detailed);
+        };
+        var preferences = new TestUserPreferences(new TestApplicationPreference(true, 30, true),
+            new TestDirectoryPreference(missingRoot));
+        var service = new ReceiverActivityService(preferences, 2, TimeUnit.SECONDS, null, null, factory, 80);
+        try
+        {
+            awaitRecoveryCondition(() -> attempts.size() >= 3, "The unavailable profile was not retried");
+            for(int index = 1; index < attempts.size(); index++)
+                assertTrue(attempts.get(index) - attempts.get(index - 1) >= TimeUnit.MILLISECONDS.toNanos(60),
+                    "A persistent failure must not create a tight retry loop");
+            assertFalse(java.nio.file.Files.exists(missingRoot), "Recovery must never create a replacement profile");
+            disposeAndAwait(service);
+            int stoppedAttempts = attempts.size();
+            Thread.sleep(200);
+            assertEquals(stoppedAttempts, attempts.size(), "A disposed service must never restart its writer");
+            assertEquals(0, service.getStartedWriterCountForTest());
+        }
+        finally { disposeAndAwait(service); }
+    }
+
+    @Test
+    void maintenanceWriterRecoversWhileOptionalStatisticsCollectionIsDisabled() throws Exception
+    {
+        Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder);
+        SdrTrunkTestDatabase.create(database);
+        AtomicInteger attempts = new AtomicInteger();
+        AtomicReference<ReceiverActivityWriter> latest = new AtomicReference<>();
+        ReceiverActivityService.WriterFactory factory = (path, days, detailed) -> {
+            Path candidate = attempts.getAndIncrement() == 0 ?
+                mTemporaryFolder.resolve("unavailable.sqlite") : path;
+            ReceiverActivityWriter writer = FAST_WRITER_FACTORY.create(candidate, days, detailed);
+            latest.set(writer);
+            return writer;
+        };
+        var preferences = new TestUserPreferences(new TestApplicationPreference(false, 30),
+            new TestDirectoryPreference(mTemporaryFolder));
+        var service = new ReceiverActivityService(preferences, 2, TimeUnit.SECONDS, null, null, factory, 30);
+        try
+        {
+            awaitRecoveryCondition(() -> attempts.get() == 2 && !service.isWriterTransitionActiveForTest() &&
+                latest.get().getStatus().state() == ReceiverActivityStatus.State.RUNNING,
+                "Disabled collection must not prevent maintenance writer recovery");
+            StatsDatabaseMaintenanceRequest request =
+                StatsDatabaseMaintenanceRequest.forOperation(ReceiverActivityMaintenance.Operation.MAINTAIN);
+            service.receiveMaintenanceRequest(request);
+            assertTrue(request.result().get(5, TimeUnit.SECONDS) != null);
+            assertEquals(ReceiverActivityStatus.State.DISABLED, service.getStatus().state());
+            assertFalse(service.getStatus().summaryActive());
+        }
+        finally { disposeAndAwait(service); }
+    }
+
+    @Test
+    void schemaFailuresRemainFailedWithoutAutomaticReplacement() throws Exception
+    {
+        Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder);
+        SdrTrunkTestDatabase.create(database);
+        try(Connection connection = ActivityTestDatabase.openPair(database); Statement statement = connection.createStatement())
+        {
+            statement.execute("DROP TABLE statistics_status");
+        }
+        AtomicInteger attempts = new AtomicInteger();
+        AtomicReference<ReceiverActivityWriter> writer = new AtomicReference<>();
+        ReceiverActivityService.WriterFactory factory = (path, days, detailed) -> {
+            attempts.incrementAndGet();
+            ReceiverActivityWriter created = FAST_WRITER_FACTORY.create(path, days, detailed);
+            writer.set(created);
+            return created;
+        };
+        var preferences = new TestUserPreferences(new TestApplicationPreference(true, 30, true),
+            new TestDirectoryPreference(mTemporaryFolder));
+        var service = new ReceiverActivityService(preferences, 2, TimeUnit.SECONDS, null, null, factory, 20);
+        try
+        {
+            awaitRecoveryCondition(() -> service.getStatus().state() == ReceiverActivityStatus.State.FAILED,
+                "The invalid statistics schema must fail explicitly");
+            assertFalse(writer.get().canRecover());
+            Thread.sleep(150);
+            assertEquals(1, attempts.get(), "Schema failures require review instead of automatic retries");
+            assertEquals(ReceiverActivityStatus.State.FAILED, service.getStatus().state());
+        }
+        finally { disposeAndAwait(service); }
+    }
+
+    private static void awaitRecoveryCondition(java.util.function.BooleanSupplier condition, String message)
+        throws InterruptedException
+    {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while(!condition.getAsBoolean() && System.nanoTime() < deadline) Thread.sleep(5);
+        assertTrue(condition.getAsBoolean(), message);
+    }
+
+    @Test
     void blockedStatisticsProjectionNeverBlocksTheDecoderCallback() throws Exception
     {
         Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder);

@@ -78,6 +78,7 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
     private static final long DEFAULT_DISPOSE_TIMEOUT_MILLISECONDS = 2_000;
     private static final long DRAIN_BARRIER_RETRY_NANOS = TimeUnit.MILLISECONDS.toNanos(1);
     private static final long DELETION_ENQUEUE_TIMEOUT_NANOS = TimeUnit.SECONDS.toNanos(2);
+    private static final long WRITER_RETRY_MILLISECONDS = 30_000;
 
     private final UserPreferences mUserPreferences;
     private final ReceiverActivityMapper mMapper = new ReceiverActivityMapper();
@@ -116,6 +117,7 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
     /* Includes active, retired, and not-yet-installed candidates until their executor is confirmed terminated. */
     private final Set<ReceiverActivityWriter> mStartedWriters = ConcurrentHashMap.newKeySet();
     private final long mDisposeTimeoutMilliseconds;
+    private final long mWriterRetryNanoseconds;
     private final Runnable mAfterIngressSnapshotForTest;
     private final Runnable mBeforeWriterActivationForTest;
     private final WriterFactory mWriterFactory;
@@ -156,9 +158,18 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
                           Runnable afterIngressSnapshotForTest, Runnable beforeWriterActivationForTest,
                           WriterFactory writerFactory)
     {
+        this(userPreferences, disposeTimeout, unit, afterIngressSnapshotForTest, beforeWriterActivationForTest,
+            writerFactory, WRITER_RETRY_MILLISECONDS);
+    }
+
+    ReceiverActivityService(UserPreferences userPreferences, long disposeTimeout, TimeUnit unit,
+                          Runnable afterIngressSnapshotForTest, Runnable beforeWriterActivationForTest,
+                          WriterFactory writerFactory, long writerRetryMilliseconds)
+    {
         mUserPreferences = userPreferences;
         java.util.Objects.requireNonNull(unit, "unit cannot be null");
         mDisposeTimeoutMilliseconds = Math.max(0, unit.toMillis(disposeTimeout));
+        mWriterRetryNanoseconds = TimeUnit.MILLISECONDS.toNanos(Math.max(1, writerRetryMilliseconds));
         mAfterIngressSnapshotForTest = afterIngressSnapshotForTest;
         mBeforeWriterActivationForTest = beforeWriterActivationForTest;
         mWriterFactory = java.util.Objects.requireNonNull(writerFactory, "writerFactory cannot be null");
@@ -227,10 +238,24 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
 
     private void runObservationWorker()
     {
+        long nextWriterRetry = System.nanoTime() + mWriterRetryNanoseconds;
+
         try
         {
             while(!mDisposed.get())
             {
+                long now = System.nanoTime();
+                if(now - nextWriterRetry >= 0)
+                {
+                    nextWriterRetry = now + mWriterRetryNanoseconds;
+                    ReceiverActivityWriter writer = mWriter;
+                    if(writer != null && writer.canRecover())
+                    {
+                        //Reuse the normal close-and-replace path; never replay an uncertain failed batch.
+                        updateWriterState();
+                    }
+                }
+
                 WriterTransition writerTransition = mWriterTransition.getAndSet(null);
 
                 if(writerTransition != null)
@@ -255,7 +280,9 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
                     }
                     else
                     {
-                        mObservationWakeup.acquire();
+                        //The maintenance writer must also recover when optional collection is disabled.
+                        mObservationWakeup.tryAcquire(Math.max(0, nextWriterRetry - System.nanoTime()),
+                            TimeUnit.NANOSECONDS);
                     }
 
                     mObservationWakeup.drainPermits();
