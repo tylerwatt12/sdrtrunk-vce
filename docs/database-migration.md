@@ -845,11 +845,17 @@ no family restriction. Format 47 retains its frozen creator and populated fixtur
 removes only the retired fields, and fresh and migrated format-48 schemas match exactly.
 
 The format 48-to-49 step separates optional alert popup actions from notification-tap behavior. It appends an
-explicit action kind and nullable canonical entity-reference JSON to the existing bounded alert-message table.
+explicit action kind and nullable canonical entity-reference JSON to the existing retained alert-message table.
 Existing notification taps, text, names, IDs, delivery snapshots, guest ownership, topic choices and rule schedules
 are preserved. Existing Listen popup buttons become `live` actions; other old alerts have no action. Historical
 channel, radio, talkgroup and system destinations cannot be recovered reliably and are never guessed from names,
 current receiver assignments or unrelated activity history.
+
+The two fields begin with their declared values: `action_kind` is NOT NULL with default `none`, while entity context
+is NULL. Populated owned upgrades append those native type/default definitions and install the exact checks through
+the existing guarded, layout-preserving schema update, avoiding two full validation scans. The genuine Listen-to-live
+history update remains; owned reports use its actual update count instead of first counting the same retained rows.
+Rule validation, rule/settings updates and strict selected-source inspection retain their existing behavior.
 
 Absent rule action-button flags are filled from their former Listen setting. Existing valid boolean flags remain
 unchanged, including an explicit disabled choice on a rule whose notification tap still opens Listen. The built-in
@@ -989,6 +995,13 @@ gain zero-initialized counters. Every old row, ID, setting, counter, relationshi
 is preserved. Historical generic commands and responses remain unknown rather than receiving guessed subtypes.
 Fresh creation and the adjacent Application Migrator reach the same exact format-60 signature. The populated
 format-59 fixture remains frozen and supported; normal startup validates without rewriting definitions or history.
+
+Conventional summaries and the trunked-signaling and conventional activity buckets append the new zero-defaulted
+counters without copying retained rows or rebuilding their existing indexes. Native additions preserve NOT NULL,
+integer type and default zero; the same-layout guard installs the exact checks. The conventional summary's event-type
+domain widens through that guard as well. Radio identity and radio/group summaries retain their two physical rewrites
+because format60 places the new counters before existing tail fields. Those real copies and their index work still
+scale with their retained rows; migration workspace policy is unchanged.
 
 The format 60-to-61 step adds `web_user_tour_dismissal`, with one highest dismissed version for each account and
 guide ID. Accounts, password verifiers, personal preference revisions, receiver settings, retained observations,

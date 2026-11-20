@@ -13,6 +13,13 @@ public final class TopicAlertSchema
 {
     private TopicAlertSchema() {}
 
+    private static final String ACTION_KIND_DEFINITION = "action_kind TEXT NOT NULL DEFAULT 'none' " +
+        "CHECK(action_kind IN ('none','live','channel','radio','talkgroup','patch_group','radio_system'))";
+    private static final String ACTION_CONTEXT_DEFINITION = """
+        action_entity_ref_json TEXT CHECK(action_entity_ref_json IS NULL OR CASE WHEN json_valid(action_entity_ref_json)
+            THEN json_type(action_entity_ref_json)='object' AND length(action_entity_ref_json)<=2048 ELSE 0 END)
+        """.strip();
+
     public static void create(Connection connection) throws SQLException
     {
         try(Statement statement = connection.createStatement())
@@ -81,7 +88,7 @@ public final class TopicAlertSchema
                     PRIMARY KEY(enrollment_id,topic_id)
                 ) WITHOUT ROWID
                 """);
-            statement.execute(messageSql(true));
+            statement.execute(messageSql(true, true));
             statement.execute("CREATE INDEX idx_topic_alert_message_topic_time ON topic_alert_message(topic_id,created_at_ms DESC,id)");
             statement.execute("CREATE INDEX idx_topic_alert_message_time ON topic_alert_message(created_at_ms DESC,id)");
             createSourceCallIndex(statement);
@@ -115,8 +122,8 @@ public final class TopicAlertSchema
     /** The adjacent migration preserves old messages with no inferred call identity. */
     public static void addSourceCallReference(Connection connection) throws SQLException
     {
-        ActivityMessageSchemaMigration.appendNullableColumns(connection, "topic_alert_message",
-            messageSql(false), messageSql(true), List.of(SourceCallSchema.COLUMN_DEFINITION),
+        ActivityMessageSchemaMigration.appendCompatibleColumns(connection, "topic_alert_message",
+            messageSql(true, false), messageSql(true, true), List.of(SourceCallSchema.COLUMN_DEFINITION),
             List.of("source_call_uuid TEXT"));
         try(Statement statement = connection.createStatement())
         {
@@ -125,9 +132,20 @@ public final class TopicAlertSchema
         }
     }
 
-    /** The format-57 message definition and its exact format-58 nullable reference addition. */
-    private static String messageSql(boolean sourceCallReference)
+    /** The format-48-to-49 additions retain known historical defaults without scanning every message. */
+    public static void addActionContext(Connection connection) throws SQLException
     {
+        ActivityMessageSchemaMigration.appendCompatibleColumns(connection, "topic_alert_message",
+            messageSql(false, false), messageSql(true, false),
+            List.of(ACTION_KIND_DEFINITION, ACTION_CONTEXT_DEFINITION),
+            List.of("action_kind TEXT NOT NULL DEFAULT 'none'", "action_entity_ref_json TEXT"));
+    }
+
+    /** Frozen format-48 base, format-49 action context and format-58 source reference definitions. */
+    private static String messageSql(boolean actionContext, boolean sourceCallReference)
+    {
+        String additions = actionContext ? ",\n    " + ACTION_KIND_DEFINITION + ",\n    " + ACTION_CONTEXT_DEFINITION : "";
+        if(sourceCallReference) additions += ",\n    " + SourceCallSchema.COLUMN_DEFINITION;
         return """
             CREATE TABLE topic_alert_message (
                 id TEXT PRIMARY KEY NOT NULL CHECK(length(id) BETWEEN 1 AND 80),
@@ -140,12 +158,9 @@ public final class TopicAlertSchema
                 click_action TEXT NOT NULL CHECK(click_action IN ('details','listen')),
                 event_type TEXT NOT NULL CHECK(length(event_type)<=80),
                 created_at_ms INTEGER NOT NULL CHECK(created_at_ms>0),
-                expires_at_ms INTEGER NOT NULL CHECK(expires_at_ms>created_at_ms),
-                action_kind TEXT NOT NULL DEFAULT 'none' CHECK(action_kind IN ('none','live','channel','radio','talkgroup','patch_group','radio_system')),
-                action_entity_ref_json TEXT CHECK(action_entity_ref_json IS NULL OR CASE WHEN json_valid(action_entity_ref_json)
-                    THEN json_type(action_entity_ref_json)='object' AND length(action_entity_ref_json)<=2048 ELSE 0 END)%s
+                expires_at_ms INTEGER NOT NULL CHECK(expires_at_ms>created_at_ms)%s
             )
-            """.formatted(sourceCallReference ? ",\n    " + SourceCallSchema.COLUMN_DEFINITION : "");
+            """.formatted(additions);
     }
 
     private static void createSourceCallIndex(Statement statement) throws SQLException

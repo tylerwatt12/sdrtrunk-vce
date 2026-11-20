@@ -20,25 +20,26 @@ public final class ActivityMessageSchemaMigration
         "p25_site_patch_group_summary", "conventional_call_identity_bucket", "conventional_activity_summary",
         "receiver_activity_tone_sequence", "p25_site_call_identity_bucket", "radio_system_identity_summary",
         "trunked_radio_affiliation", "trunked_radio_channel_presence", "trunked_radio_channel_presence_clear",
-        "topic_alert_message");
+        "topic_alert_message", "trunked_signaling_activity_bucket", "conventional_activity_bucket");
 
     /**
-     * Fresh creation and Application Migrator only: append known nullable fields using frozen exact definitions. Old records
-     * read NULL and satisfy the new checks. Empty creation retains native checked ADD; populated migration appends
+     * Fresh creation and Application Migrator only: append fields using frozen exact definitions. Callers prove
+     * old records read NULL or a declared constant default satisfying the checks. Empty creation retains native
+     * checked ADD; populated migration appends
      * the same physical fields natively, then installs their checks through the unchanged same-layout guard.
      */
-    public static void appendNullableColumns(Connection connection, String table, String previous, String current,
+    public static void appendCompatibleColumns(Connection connection, String table, String previous, String current,
         List<String> checkedColumns, List<String> plainColumns) throws SQLException
     {
         if(!CONSTRAINT_TABLES.contains(table)) throw new SQLException("Unknown Activity constraint migration table");
         if(checkedColumns.isEmpty() || checkedColumns.size() != plainColumns.size())
-            throw new SQLException("Nullable migration column definitions are incomplete");
+            throw new SQLException("Compatible migration column definitions are incomplete");
         current = current.replace("CREATE TABLE IF NOT EXISTS", "CREATE TABLE").strip();
         String unchecked = current;
         for(int index = 0; index < checkedColumns.size(); index++)
         {
             if(!unchecked.contains(checkedColumns.get(index)))
-                throw new SQLException("Nullable migration target column definition is missing");
+                throw new SQLException("Compatible migration target column definition is missing");
             unchecked = unchecked.replace(checkedColumns.get(index), plainColumns.get(index));
         }
         SqliteSchemaValidator.validateDefinitions(connection,
@@ -51,7 +52,7 @@ public final class ActivityMessageSchemaMigration
                 "PRAGMA main.table_list(" + table + ")"))
             {
                 if(!rows.next() || rows.getInt("strict") != 0)
-                    throw new SQLException("Populated nullable additions require a non-STRICT table");
+                    throw new SQLException("Populated compatible additions require a non-STRICT table");
             }
             // Native ADD's insertion offset expects SQLite's stored CREATE header, without IF NOT EXISTS.
             replaceTableDefinition(connection, "main", table, previous,

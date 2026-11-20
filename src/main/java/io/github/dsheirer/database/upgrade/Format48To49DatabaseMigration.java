@@ -1,12 +1,13 @@
 /* Copyright (C) 2026 Dennis Sheirer. SPDX-License-Identifier: GPL-3.0-or-later */
 package io.github.dsheirer.database.upgrade;
 
+import io.github.dsheirer.alerts.TopicAlertSchema;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.List;
 
-/** Explicit, bounded popup destinations; notification tap behavior remains its own unchanged fact. */
+/** Explicit popup destinations; notification tap behavior remains its own unchanged fact. */
 final class Format48To49DatabaseMigration implements DatabaseMigrationStep
 {
     @Override public String id() { return "format-48-to-49"; }
@@ -37,14 +38,31 @@ final class Format48To49DatabaseMigration implements DatabaseMigrationStep
     }
     @Override public void migrateSource(Connection connection) throws SQLException
     {
+        applyMigration(connection);
+    }
+
+    @Override public List<DatabaseMigrationEffect> migrateSourceAndReport(Connection connection,
+        boolean selectedSourceStep) throws SQLException
+    {
+        if(selectedSourceStep) return DatabaseMigrationStep.super.migrateSourceAndReport(connection);
+        return applyMigration(connection);
+    }
+
+    private List<DatabaseMigrationEffect> applyMigration(Connection connection) throws SQLException
+    {
+        ApplicationMigrationTransaction.requireActive(connection);
         requireCompatibleSettings(connection);
+        TopicAlertSchema.addActionContext(connection);
         try(Statement sql = connection.createStatement())
         {
-            sql.execute("ALTER TABLE topic_alert_message ADD COLUMN action_kind TEXT NOT NULL DEFAULT 'none' CHECK(action_kind IN ('none','live','channel','radio','talkgroup','patch_group','radio_system'))");
-            sql.execute("ALTER TABLE topic_alert_message ADD COLUMN action_entity_ref_json TEXT CHECK(action_entity_ref_json IS NULL OR CASE WHEN json_valid(action_entity_ref_json) THEN json_type(action_entity_ref_json)='object' AND length(action_entity_ref_json)<=2048 ELSE 0 END)");
-            sql.executeUpdate("UPDATE topic_alert_message SET action_kind='live' WHERE click_action='listen'");
-            sql.executeUpdate("UPDATE topic_alert_rule SET rule_json=json_set(rule_json,'$.action_button_enabled',json(CASE WHEN json_extract(rule_json,'$.click_action')='listen' THEN 'true' ELSE 'false' END)) WHERE json_type(rule_json,'$.action_button_enabled') IS NULL");
-            sql.executeUpdate("UPDATE application_settings SET settings_json=json_set(settings_json,'$.builtin_action_button_enabled',json('false')) WHERE key='alert.configuration' AND json_type(settings_json,'$.builtin_action_button_enabled') IS NULL");
+            // These are genuine historical/configuration changes. Reuse their actual update counts for owned
+            // reports instead of first scanning retained messages solely to count the same Listen predicate.
+            long messages = sql.executeLargeUpdate("UPDATE topic_alert_message SET action_kind='live' WHERE click_action='listen'");
+            long rules = sql.executeLargeUpdate("UPDATE topic_alert_rule SET rule_json=json_set(rule_json,'$.action_button_enabled',json(CASE WHEN json_extract(rule_json,'$.click_action')='listen' THEN 'true' ELSE 'false' END)) WHERE json_type(rule_json,'$.action_button_enabled') IS NULL");
+            long builtin = sql.executeLargeUpdate("UPDATE application_settings SET settings_json=json_set(settings_json,'$.builtin_action_button_enabled',json('false')) WHERE key='alert.configuration' AND json_type(settings_json,'$.builtin_action_button_enabled') IS NULL");
+            List<DatabaseMigrationEffect> policy = declaredEffects();
+            return List.of(policy.get(0), counted(policy.get(1), rules), counted(policy.get(2), messages),
+                counted(policy.get(3), builtin));
         }
     }
     private static void requireCompatibleSettings(Connection connection) throws SQLException

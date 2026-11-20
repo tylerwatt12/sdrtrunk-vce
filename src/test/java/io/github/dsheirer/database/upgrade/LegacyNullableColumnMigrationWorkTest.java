@@ -89,7 +89,7 @@ class LegacyNullableColumnMigrationWorkTest
             execute(connection, "PRAGMA foreign_keys=ON"); connection.setAutoCommit(false);
             assertThrows(SQLException.class, () -> ReceiverActivitySchema.addCallDuration(connection));
             connection.rollback();
-            assertThrows(SQLException.class, () -> ActivityMessageSchemaMigration.appendNullableColumns(connection,
+            assertThrows(SQLException.class, () -> ActivityMessageSchemaMigration.appendCompatibleColumns(connection,
                 "unrelated", "", "", List.of("x INTEGER"), List.of("x INTEGER")));
         }
         assertArrayEquals(before, Files.readAllBytes(database));
@@ -105,7 +105,7 @@ class LegacyNullableColumnMigrationWorkTest
             execute(proof, target); // The proposed append parses; refusal must be the retained STRICT cost guard.
             begin(connection);
             SQLException failure = assertThrows(SQLException.class, () ->
-                ActivityMessageSchemaMigration.appendNullableColumns(connection, "receiver_activity_tone_sequence",
+                ActivityMessageSchemaMigration.appendCompatibleColumns(connection, "receiver_activity_tone_sequence",
                     prior, target, List.of(checked), List.of("probe INTEGER")));
             assertTrue(failure.getMessage().contains("STRICT"));
             assertEquals(prior, definition(connection, "receiver_activity_tone_sequence"));

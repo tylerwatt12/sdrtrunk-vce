@@ -349,22 +349,48 @@ public class ReceiverActivitySchema
         {
             if(definition.name().equals("radio_system_identity_summary") ||
                 definition.name().equals("trunked_radio_group_summary"))
+                // Frozen format 60 inserts counters before old tail fields in these two layouts.
+                // They require a physical rewrite; the other three tables have append-only targets below.
                 ActivityMessageSchemaMigration.rebuild(connection, definition.name(), definition.sql());
         }
         ActivityMessageSchemaMigration.relaxEventConstraints(connection, format59ReceiverActivityEventSql(),
             format60ReceiverActivityEventSql());
         List<String> appendedCounters = NEW_ACTION_COUNT_COLUMNS.stream().map(column -> column +
             " INTEGER NOT NULL DEFAULT 0 CHECK(typeof(" + column + ") = 'integer' AND " + column + " >= 0)").toList();
-        ActivityMessageSchemaMigration.rebuild(connection, "conventional_activity_summary",
+        appendFormat60ActionCounters(connection, "conventional_activity_summary",
+            createConventionalActivitySummarySql(EVENT_TYPES),
             createConventionalActivitySummarySql(ReceiverActivityCodes.eventTypeCodes()), appendedCounters);
-        ActivityMessageSchemaMigration.rebuild(connection, "trunked_signaling_activity_bucket",
-            createTrunkedSignalingActivityBucketSql(), appendedCounters);
-        ActivityMessageSchemaMigration.rebuild(connection, "conventional_activity_bucket",
-            createConventionalActivityBucketSql(), appendedCounters);
+        appendFormat60ActionCounters(connection, "trunked_signaling_activity_bucket",
+            createTrunkedSignalingActivityBucketSql(), createTrunkedSignalingActivityBucketSql(), appendedCounters);
+        appendFormat60ActionCounters(connection, "conventional_activity_bucket",
+            createConventionalActivityBucketSql(), createConventionalActivityBucketSql(), appendedCounters);
         try(Statement statement = connection.createStatement())
         {
             statement.executeUpdate(createFormat60ResolvedViewSql());
         }
+    }
+
+    /** Frozen format-60 counters follow every old physical field and read the valid literal zero default. */
+    private static void appendFormat60ActionCounters(Connection connection, String table, String previous,
+                                                    String base, List<String> checkedColumns) throws SQLException
+    {
+        if(!previous.equals(base))
+        {
+            if(!ActivityMessageSchemaMigration.requirePopulatedBoundary(connection, table))
+            {
+                // Fresh empty creation keeps its existing native target construction without a migrator lock.
+                ActivityMessageSchemaMigration.rebuild(connection, table, base, checkedColumns);
+                return;
+            }
+            // Only conventional summary's last-event domain widens; its old physical fields stay identical.
+            ActivityMessageSchemaMigration.replaceTableDefinition(connection, "main", table, previous, base);
+        }
+        String current = base.replace("    PRIMARY KEY(", "    " + String.join(",\n    ", checkedColumns) +
+            ",\n    PRIMARY KEY(");
+        List<String> plainColumns = NEW_ACTION_COUNT_COLUMNS.stream()
+            .map(column -> column + " INTEGER NOT NULL DEFAULT 0").toList();
+        ActivityMessageSchemaMigration.appendCompatibleColumns(connection, table, base, current,
+            checkedColumns, plainColumns);
     }
 
     /** Fresh creation replaces only the still-empty historical event definition with its clean current contract. */
@@ -477,7 +503,7 @@ public class ReceiverActivitySchema
     /** Fresh creation and the adjacent format-58-to-59 migration retain no guessed historical timing. */
     public static void addCallDuration(Connection connection) throws SQLException
     {
-        ActivityMessageSchemaMigration.appendNullableColumns(connection, "receiver_activity_event",
+        ActivityMessageSchemaMigration.appendCompatibleColumns(connection, "receiver_activity_event",
             format58ReceiverActivityEventSql(), format59ReceiverActivityEventSql(),
             List.of(CALL_DURATION_DEFINITION), List.of("duration_ms INTEGER"));
         try(Statement statement = connection.createStatement())
@@ -528,7 +554,7 @@ public class ReceiverActivitySchema
     /** Fresh creation and the format-57-to-58 migrator add only an optional exact source reference. */
     public static void addSourceCallReference(Connection connection) throws SQLException
     {
-        ActivityMessageSchemaMigration.appendNullableColumns(connection, "receiver_activity_event",
+        ActivityMessageSchemaMigration.appendCompatibleColumns(connection, "receiver_activity_event",
             receiverActivityEventSql(), format58ReceiverActivityEventSql(),
             List.of(SourceCallSchema.COLUMN_DEFINITION), List.of("source_call_uuid TEXT"));
         try(Statement statement = connection.createStatement())
@@ -728,13 +754,13 @@ public class ReceiverActivitySchema
     /** Adds nullable protocol provenance columns. Existing local-ID observations are deliberately not inferred. */
     public static void addFormat32ExplicitWorkingAddressProvenance(Connection connection) throws SQLException
     {
-        ActivityMessageSchemaMigration.appendNullableColumns(connection, "receiver_activity_event",
+        ActivityMessageSchemaMigration.appendCompatibleColumns(connection, "receiver_activity_event",
             receiverActivityEventSql(MAXIMUM_OBSERVED_SITE, EVENT_TYPES, false),
             receiverActivityEventSql(MAXIMUM_OBSERVED_SITE, EVENT_TYPES, true),
             List.of(workingAddressColumn("source_observed_working_id", true),
                 workingAddressColumn("target_observed_working_id", true)),
             List.of("source_observed_working_id INTEGER", "target_observed_working_id INTEGER"));
-        ActivityMessageSchemaMigration.appendNullableColumns(connection, "p25_site_call_identity_bucket",
+        ActivityMessageSchemaMigration.appendCompatibleColumns(connection, "p25_site_call_identity_bucket",
             createP25SiteCallIdentityBucketSql(false), createP25SiteCallIdentityBucketSql(true),
             List.of(workingAddressColumn("observed_working_id", true)), List.of("observed_working_id INTEGER"));
         RadioSystemSchema.addFormat32ExplicitWorkingAddressProvenance(connection);

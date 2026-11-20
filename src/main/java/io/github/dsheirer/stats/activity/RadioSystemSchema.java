@@ -386,7 +386,7 @@ final class RadioSystemSchema
 
     static void addFormat32P25SubscriberIdentityReference(Connection connection) throws SQLException
     {
-        ActivityMessageSchemaMigration.appendNullableColumns(connection, "radio_system_identity_summary",
+        ActivityMessageSchemaMigration.appendCompatibleColumns(connection, "radio_system_identity_summary",
             format31IdentitySummarySql().replace(ACTION_COUNT_DEFINITIONS, FORMAT_59_ACTION_COUNT_DEFINITIONS),
             identitySummarySql().replace(ACTION_COUNT_DEFINITIONS, FORMAT_59_ACTION_COUNT_DEFINITIONS),
             List.of(SUBSCRIBER_REFERENCE_DEFINITION),
@@ -812,13 +812,13 @@ final class RadioSystemSchema
 
     static void addFormat32ExplicitWorkingAddressProvenance(Connection connection) throws SQLException
     {
-        ActivityMessageSchemaMigration.appendNullableColumns(connection, "trunked_radio_affiliation",
+        ActivityMessageSchemaMigration.appendCompatibleColumns(connection, "trunked_radio_affiliation",
             radioAffiliationSql(false), radioAffiliationSql(true),
             List.of(workingAddressColumn("radio_observed_working_id")), List.of("radio_observed_working_id INTEGER"));
-        ActivityMessageSchemaMigration.appendNullableColumns(connection, "trunked_radio_channel_presence",
+        ActivityMessageSchemaMigration.appendCompatibleColumns(connection, "trunked_radio_channel_presence",
             radioChannelPresenceSql(false), radioChannelPresenceSql(true),
             List.of(workingAddressColumn("observed_working_id")), List.of("observed_working_id INTEGER"));
-        ActivityMessageSchemaMigration.appendNullableColumns(connection, "trunked_radio_channel_presence_clear",
+        ActivityMessageSchemaMigration.appendCompatibleColumns(connection, "trunked_radio_channel_presence_clear",
             radioChannelPresenceClearSql(false), radioChannelPresenceClearSql(true),
             List.of(workingAddressColumn("observed_working_id")), List.of("observed_working_id INTEGER"));
     }
