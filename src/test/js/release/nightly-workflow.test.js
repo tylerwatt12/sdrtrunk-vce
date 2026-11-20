@@ -133,7 +133,7 @@ const catalogFile = path.join(catalog, 'dsdplus.networks');
 const catalogBytes = Buffer.from('synthetic catalog');
 fs.mkdirSync(catalog);
 const metadata = { format: 1, purpose: 'prepare', source_commit: sha, source_ref: 'refs/heads/main',
-  run_id: '100', runtime: '25.0.1', channel: 'nightly',
+  run_id: '100', runtime: '25.0.5.1+5', channel: 'nightly',
   radio_system_catalog_sha256: createHash('sha256').update(catalogBytes).digest('hex') };
 function resetCandidate() {
   for (const name of fs.readdirSync(candidate)) fs.rmSync(path.join(candidate, name), { recursive: true });
@@ -482,7 +482,8 @@ async function main() {
     assert.notEqual(result.status, 0, 'Changed, missing, extra, duplicated, incomplete or unsafe files must fail.');
   }
   for (const [field, value] of [['source_commit', 'b'.repeat(40)], ['run_id', '99'],
-    ['source_ref', 'refs/heads/other'], ['purpose', 'publish'], ['channel', 'alpha'], ['runtime', '17'], ['format', 2],
+    ['source_ref', 'refs/heads/other'], ['purpose', 'publish'], ['channel', 'alpha'], ['runtime', '17'],
+    ['runtime', '25.0.1'], ['runtime', '25.0.5+11'], ['format', 2],
     ['radio_system_catalog_sha256', '0'.repeat(64)], ['radio_system_catalog_sha256', 'malformed'],
     ['radio_system_catalog_sha256', undefined], ['unexpected_field', 'unexpected']]) {
     resetCandidate();

@@ -141,7 +141,7 @@ jobs:
           pathlib.Path('build/image/candidate.json').write_text(json.dumps({
               'format': 1, 'purpose': 'prepare', 'source_commit': os.environ['GITHUB_SHA'],
               'source_ref': os.environ['GITHUB_REF'], 'run_id': os.environ['UPDATE_BUILD'],
-              'runtime': '25.0.1', 'channel': 'nightly',
+              'runtime': '25.0.5.1+5', 'channel': 'nightly',
               'radio_system_catalog_sha256': hashlib.sha256(catalog.read_bytes()).hexdigest()
           }, indent=2) + '\n', encoding='utf-8')
           image = pathlib.Path('build/image')
@@ -331,7 +331,7 @@ jobs:
               catalog_sha256 = hashlib.file_digest(source, 'sha256').hexdigest()
           if metadata != {'format': 1, 'purpose': 'prepare', 'source_commit': os.environ['GITHUB_SHA'],
                           'source_ref': os.environ['CANDIDATE_SOURCE_REF'], 'run_id': build,
-                          'runtime': '25.0.1', 'channel': 'nightly',
+                          'runtime': '25.0.5.1+5', 'channel': 'nightly',
                           'radio_system_catalog_sha256': catalog_sha256}:
               raise SystemExit('Candidate identity does not match this publication')
           checksums = {}

@@ -27,10 +27,39 @@ import uuid
 import zipfile
 
 
+# BellSoft's November 2026 CSPU fixes Java4Shell (CVE-2026-114938).
+# Keep this floor independent of candidate metadata so stale packages cannot attest themselves as patched.
+JAVA4SHELL_FIXED_RUNTIME = (25, 0, 5, 1, 5)
+
+
+def require_patched_runtime(runtime):
+    match = (re.fullmatch(r"(25(?:\.[0-9]+){0,3})\+([1-9][0-9]*)", runtime)
+             if isinstance(runtime, str) else None)
+    if match:
+        version = [int(part) for part in match[1].split(".")]
+        version += [0] * (4 - len(version))
+        if (*version, int(match[2])) >= JAVA4SHELL_FIXED_RUNTIME:
+            return runtime
+    raise RuntimeError("Candidate must specify a Java 25 runtime patched against Java4Shell")
+
+
 def run(command, *, cwd, env, log):
     with log.open("wb") as output:
         subprocess.run(command, cwd=cwd, env=env, stdout=output, stderr=subprocess.STDOUT,
                        timeout=120, check=True)
+
+
+def check_java_runtime(java, expected_runtime, *, cwd, env, log):
+    require_patched_runtime(expected_runtime)
+    try:
+        run([str(java), "-XshowSettings:properties", "-version"], cwd=cwd, env=env, log=log)
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
+        raise RuntimeError(f"Packaged Java runtime failed; see {log.name}") from error
+    properties = dict(re.findall(r"^\s*(java\.(?:vendor|runtime\.version))\s*=\s*(.*?)\s*$",
+                                 log.read_text(encoding="utf-8"), re.MULTILINE))
+    if (properties.get("java.vendor") != "BellSoft" or
+            properties.get("java.runtime.version") != expected_runtime + "-LTS"):
+        raise RuntimeError(f"Packaged Java does not match the patched BellSoft runtime; see {log.name}")
 
 
 def check_usb_runtime(java, options, classpath, *, cwd, env, log):
@@ -189,6 +218,7 @@ def check_candidate(archive, expected_build, expected_commit):
     if (candidate.get("purpose") != "prepare" or candidate.get("run_id") != expected_build or
             candidate.get("source_commit") != expected_commit):
         raise RuntimeError("Candidate source or build does not match the requested preparation")
+    runtime = require_patched_runtime(candidate.get("runtime"))
     checksums = {}
     for line in archive.with_name("SHA256SUMS").read_text(encoding="utf-8").splitlines():
         digest, filename = line.split(maxsplit=1)
@@ -199,6 +229,7 @@ def check_candidate(archive, expected_build, expected_commit):
             digest = hashlib.file_digest(source, "sha256").hexdigest()
         if digest != checksums.get(path.name):
             raise RuntimeError(f"Candidate checksum failed: {path.name}")
+    return runtime
 
 
 def stop(process):
@@ -259,7 +290,7 @@ def main():
     work.mkdir(parents=True, exist_ok=True)
     evidence = work / "evidence"
     evidence.mkdir()
-    check_candidate(archive, args.expected_build, args.expected_commit)
+    expected_runtime = check_candidate(archive, args.expected_build, args.expected_commit)
     installation = extract(archive, work / "extracted package")
     check_manifest(installation, args.expected_build)
     java = installation / "bin" / ("java.exe" if os.name == "nt" else "java")
@@ -279,6 +310,8 @@ def main():
     env.pop("JAVA_TOOL_OPTIONS", None)
     env.pop("JDK_JAVA_OPTIONS", None)
     env.pop("JAVA_OPTS", None)
+    env.pop("_JAVA_OPTIONS", None)
+    check_java_runtime(java, expected_runtime, cwd=installation, env=env, log=evidence / "runtime.log")
     javac = shutil.which("javac")
     if javac is None:
         raise RuntimeError("JDK 25 javac is required for the profile helper")

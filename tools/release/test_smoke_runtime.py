@@ -1,7 +1,9 @@
 """Isolated, hardware-free contracts for release smoke web, USB, target and SQLite checks."""
 from contextlib import closing
+import hashlib
 import importlib.util
 import inspect
+import json
 import os
 from pathlib import Path
 import shutil
@@ -16,6 +18,91 @@ import urllib.error
 SPEC = importlib.util.spec_from_file_location("smoke_runtime", Path(__file__).with_name("smoke-runtime.py"))
 SMOKE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(SMOKE)
+
+
+class SmokeJavaRuntimeTest(unittest.TestCase):
+    def setUp(self):
+        self.work = tempfile.TemporaryDirectory()
+        self.addCleanup(self.work.cleanup)
+        self.root = Path(self.work.name)
+        self.java = self.root / "package with spaces" / "bin" / "java"
+        self.log = self.root / "runtime.log"
+        self.env = {"PATH": "isolated test path"}
+
+    def check(self, output, expected="25.0.5.1+5"):
+        with mock.patch.object(SMOKE, "run", side_effect=lambda *args, **kwargs:
+                               kwargs["log"].write_text(output, encoding="utf-8")) as run:
+            SMOKE.check_java_runtime(self.java, expected, cwd=self.root, env=self.env, log=self.log)
+        run.assert_called_once_with([str(self.java), "-XshowSettings:properties", "-version"],
+                                    cwd=self.root, env=self.env, log=self.log)
+
+    def test_actual_package_binary_reports_the_complete_patched_bellsoft_build(self):
+        for runtime in ("25.0.5.1+5", "25.0.6+1"):
+            with self.subTest(runtime=runtime):
+                self.check(f"Property settings:\n    java.vendor = BellSoft\n"
+                           f"    java.runtime.version = {runtime}-LTS\n", expected=runtime)
+
+    def test_old_build_wrong_vendor_and_incomplete_runtime_output_fail(self):
+        for output in (
+                "java.vendor = BellSoft\njava.runtime.version = 25.0.1+11-LTS\n",
+                "java.vendor = BellSoft\njava.runtime.version = 25.0.5.1+4-LTS\n",
+                "java.vendor = Other vendor\njava.runtime.version = 25.0.5.1+5-LTS\n",
+                "java.vendor = BellSoft\njava.runtime.version = 25.0.5.1\n",
+                "openjdk version 25.0.5.1\n",
+                ""):
+            with self.subTest(output=output), self.assertRaisesRegex(
+                    RuntimeError, "does not match the patched BellSoft runtime"):
+                self.check(output)
+
+    def test_candidate_cannot_lower_the_security_floor_or_change_java_major(self):
+        for runtime in (None, 25, {}, "25.0.1+11", "25.0.5+11", "25.0.5.1+4", "25.0.5.1",
+                        "25.0.5.1+5-LTS", "27.0.1.1+5"):
+            with self.subTest(runtime=runtime), mock.patch.object(SMOKE, "run") as run:
+                with self.assertRaisesRegex(RuntimeError, "patched against Java4Shell"):
+                    SMOKE.check_java_runtime(self.java, runtime, cwd=self.root, env=self.env, log=self.log)
+                run.assert_not_called()
+
+    def candidate(self, runtime="25.0.5.1+5"):
+        paths = [self.root / name for name in ("package.zip", "candidate.json", "build_info.txt",
+                                              "update.properties")]
+        for path in paths:
+            path.write_text("synthetic candidate file", encoding="utf-8")
+        (self.root / "candidate.json").write_text(json.dumps({"purpose": "prepare", "run_id": "123",
+            "source_commit": "a" * 40, "runtime": runtime}), encoding="utf-8")
+        (self.root / "SHA256SUMS").write_text("".join(
+            f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}\n" for path in paths), encoding="utf-8")
+        return paths[0]
+
+    def test_correct_checksums_cannot_bless_stale_candidate_metadata(self):
+        archive = self.candidate("25.0.1+11")
+        with self.assertRaisesRegex(RuntimeError, "patched against Java4Shell"):
+            SMOKE.check_candidate(archive, "123", "a" * 40)
+
+    def test_patched_candidate_still_requires_every_original_checksum(self):
+        archive = self.candidate()
+        self.assertEqual("25.0.5.1+5", SMOKE.check_candidate(archive, "123", "a" * 40))
+        archive.write_text("changed package", encoding="utf-8")
+        with self.assertRaisesRegex(RuntimeError, "checksum failed: package.zip"):
+            SMOKE.check_candidate(archive, "123", "a" * 40)
+        archive = self.candidate()
+        candidate = self.root / "candidate.json"
+        candidate.write_text(candidate.read_text(encoding="utf-8").replace("25.0.5.1+5", "25.0.6+1"),
+                             encoding="utf-8")
+        with self.assertRaisesRegex(RuntimeError, "checksum failed: candidate.json"):
+            SMOKE.check_candidate(archive, "123", "a" * 40)
+
+    def test_verified_candidate_metadata_does_not_override_the_actual_java_binary(self):
+        runtime = SMOKE.check_candidate(self.candidate(), "123", "a" * 40)
+        with self.assertRaisesRegex(RuntimeError, "does not match the patched BellSoft runtime"):
+            self.check("java.vendor = BellSoft\njava.runtime.version = 25.0.1+11-LTS\n", expected=runtime)
+
+    def test_java_startup_failure_cannot_pass_the_native_runtime_check(self):
+        for error in (OSError("cannot execute"), subprocess.CalledProcessError(1, "java"),
+                      subprocess.TimeoutExpired("java", 120)):
+            with self.subTest(error=error), mock.patch.object(SMOKE, "run", side_effect=error):
+                with self.assertRaisesRegex(RuntimeError, "Packaged Java runtime failed") as failure:
+                    SMOKE.check_java_runtime(self.java, "25.0.5.1+5", cwd=self.root, env=self.env, log=self.log)
+                self.assertIs(error, failure.exception.__cause__)
 
 
 class SmokeWebRuntimeTest(unittest.TestCase):
