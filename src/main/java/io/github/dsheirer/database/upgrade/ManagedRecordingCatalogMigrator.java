@@ -302,20 +302,7 @@ public final class ManagedRecordingCatalogMigrator
                         statement.execute(ManagedRecordingSchema.ddlForFormat(4).get("recording_tone_sequence"));
                         statement.execute(ManagedRecordingSchema.ddlForFormat(4).get("recording_tone"));
                     }
-                    case 4 ->
-                    {
-                        // Rebuild the constrained parent with foreign keys still enabled. Retain child values in a
-                        // transaction-local table before dropping the old parent, whose cascade would delete them.
-                        statement.execute("CREATE TEMP TABLE recording_tone_before_format5 AS SELECT * FROM recording_tone");
-                        statement.execute("DROP TABLE recording_tone");
-                        statement.execute("ALTER TABLE recording_tone_sequence RENAME TO recording_tone_sequence_format4");
-                        statement.execute(ManagedRecordingSchema.ddlForFormat(5).get("recording_tone_sequence"));
-                        statement.executeUpdate("INSERT INTO recording_tone_sequence SELECT * FROM recording_tone_sequence_format4");
-                        statement.execute("DROP TABLE recording_tone_sequence_format4");
-                        statement.execute(ManagedRecordingSchema.ddlForFormat(5).get("recording_tone"));
-                        statement.executeUpdate("INSERT INTO recording_tone SELECT * FROM recording_tone_before_format5");
-                        statement.execute("DROP TABLE temp.recording_tone_before_format5");
-                    }
+                    case 4 -> widenToneMethodConstraint(connection, 4);
                     case 5 ->
                     {
                         // Only new lookup indexes are added; all recording values and relationships remain intact.
@@ -342,35 +329,7 @@ public final class ManagedRecordingCatalogMigrator
                             statement.execute(definitions.get("recording_transcript_fts_" + trigger));
                         statement.execute("INSERT INTO recording_transcript_fts(recording_transcript_fts) VALUES('rebuild')");
                     }
-                    case 8 ->
-                    {
-                        var statistics = new java.util.ArrayList<String>();
-                        for(String table: List.of("sqlite_stat1", "sqlite_stat4"))
-                        {
-                            try(var exists = statement.executeQuery("SELECT 1 FROM sqlite_schema WHERE name='" + table + "'"))
-                            { if(exists.next()) statistics.add(table); }
-                            if(statistics.contains(table)) statement.execute("CREATE TEMP TABLE recording_tone_" + table +
-                                "_before_format9 AS SELECT * FROM " + table +
-                                " WHERE tbl IN('recording_tone_sequence','recording_tone')");
-                        }
-                        statement.execute("CREATE TEMP TABLE recording_tone_before_format9 AS SELECT * FROM recording_tone");
-                        statement.execute("DROP TABLE recording_tone");
-                        statement.execute("ALTER TABLE recording_tone_sequence RENAME TO recording_tone_sequence_format8");
-                        statement.execute(ManagedRecordingSchema.ddlForFormat(9).get("recording_tone_sequence"));
-                        statement.executeUpdate("INSERT INTO recording_tone_sequence SELECT * FROM recording_tone_sequence_format8");
-                        statement.execute("DROP TABLE recording_tone_sequence_format8");
-                        statement.execute(ManagedRecordingSchema.ddlForFormat(9).get("recording_tone"));
-                        statement.executeUpdate("INSERT INTO recording_tone SELECT * FROM recording_tone_before_format9");
-                        statement.execute("DROP TABLE temp.recording_tone_before_format9");
-                        for(String table: statistics)
-                        {
-                            statement.executeUpdate("DELETE FROM " + table +
-                                " WHERE tbl IN('recording_tone_sequence','recording_tone','recording_tone_sequence_format8')");
-                            statement.executeUpdate("INSERT INTO " + table + " SELECT * FROM temp.recording_tone_" + table + "_before_format9");
-                            statement.execute("DROP TABLE temp.recording_tone_" + table + "_before_format9");
-                        }
-                        if(!statistics.isEmpty()) statement.execute("ANALYZE sqlite_schema");
-                    }
+                    case 8 -> widenToneMethodConstraint(connection, 8);
                     case 9 ->
                     {
                         // Prospective analog nominal frequency identities expand; preserve all stored facts verbatim.
@@ -415,25 +374,72 @@ public final class ManagedRecordingCatalogMigrator
                 if(!row.next() || !current.equals(row.getString(1)))
                     throw new SQLException("Managed recordings quality additions do not match the exact native target");
             }
-            columns = recordingCallColumns(validation);
+            columns = tableColumns(validation, "recording_call");
         }
+        replaceTableDefinition(connection, "recording_call", previous, current, columns);
+    }
+
+    /** Only these two frozen steps widen tone CHECKs; no stored value or physical field changes. */
+    static void widenToneMethodConstraint(Connection connection, int sourceFormat) throws SQLException
+    {
+        if(sourceFormat != 4 && sourceFormat != 8)
+            throw new SQLException("No metadata-only tone constraint update from catalog format " + sourceFormat);
+        ManagedRecordingSchema.validate(connection, sourceFormat);
+        String table = "recording_tone_sequence";
+        var source = ManagedRecordingSchema.ddlForFormat(sourceFormat);
+        var target = ManagedRecordingSchema.ddlForFormat(sourceFormat + 1);
+        String previous = source.get(table);
+        String current = target.get(table);
+        String widened = sourceFormat == 4 ? previous
+            .replace("method_code IN(1,2)", "method_code IN(1,2,3)")
+            .replace("CHECK(source_code=method_code)",
+                "CHECK((source_code=1 AND method_code IN(1,3)) OR (source_code=2 AND method_code=2))") : previous
+            .replace("method_code IN(1,2,3)", "method_code IN(1,2,3,4)")
+            .replace("method_code IN(1,3)", "method_code IN(1,3,4)");
+        var expected = new java.util.LinkedHashMap<>(source);
+        expected.put(table, widened);
+        if(!expected.equals(target))
+            throw new SQLException("Managed recordings tone update changes more than the admitted CHECK widening");
+        List<String> columns;
+        // SQLite parses both frozen definitions on empty tables. Exact CHECK widening admits every old row;
+        // identical physical fields, defaults and STRICT declaration keep all parent and child b-trees intact.
+        try(Connection validation = DriverManager.getConnection("jdbc:sqlite::memory:");
+            var statement = validation.createStatement())
+        {
+            statement.execute(previous);
+            columns = tableColumns(validation, table);
+            statement.execute("DROP TABLE " + table);
+            statement.execute(current);
+            if(!columns.equals(tableColumns(validation, table)))
+                throw new SQLException("Managed recordings tone update changes the physical column layout");
+        }
+        replaceTableDefinition(connection, table, previous, current, columns);
+    }
+
+    /** Caller owns BEGIN IMMEDIATE and exact-format validation; only proven compatible definitions are admitted. */
+    private static void replaceTableDefinition(Connection connection, String table, String previous, String current,
+                                               List<String> columns) throws SQLException
+    {
+        if(!List.of("recording_call", "recording_tone_sequence").contains(table))
+            throw new SQLException("Unsupported managed recordings metadata-only table update");
         int version = pragmaInt(connection, "schema_version");
         if(version < 0 || version == Integer.MAX_VALUE || pragmaInt(connection, "writable_schema") != 0)
-            throw new SQLException("Managed recordings quality update cannot advance the SQLite schema version");
-        // The caller owns the catalog's one BEGIN IMMEDIATE transaction. Old records have no appended fields,
-        // so SQLite reads NULL for all six columns and every exact target CHECK remains satisfied.
+            throw new SQLException("Managed recordings update cannot advance the SQLite schema version");
+        // Missing appended quality fields read as NULL; tone changes only widen known CHECK domains.
+        // No retained row needs inspection or rewriting in either admitted operation.
         try(var statement = connection.createStatement())
         {
             try
             {
                 statement.execute("PRAGMA writable_schema=ON");
                 try(var update = connection.prepareStatement("UPDATE sqlite_schema SET sql=? " +
-                    "WHERE type='table' AND name='recording_call' AND sql=?"))
+                    "WHERE type='table' AND name=? AND sql=?"))
                 {
                     update.setString(1, current);
-                    update.setString(2, previous);
+                    update.setString(2, table);
+                    update.setString(3, previous);
                     if(update.executeUpdate() != 1)
-                        throw new SQLException("Managed recordings source definition changed during quality update");
+                        throw new SQLException("Managed recordings source definition changed during metadata update");
                 }
                 statement.execute("PRAGMA schema_version=" + (version + 1));
             }
@@ -443,15 +449,15 @@ public final class ManagedRecordingCatalogMigrator
                 finally { statement.execute("PRAGMA writable_schema=RESET"); }
             }
         }
-        if(!columns.equals(recordingCallColumns(connection)))
-            throw new SQLException("Managed recordings quality update changed the native column layout");
+        if(!columns.equals(tableColumns(connection, table)))
+            throw new SQLException("Managed recordings update changed the native column layout");
     }
 
-    private static List<String> recordingCallColumns(Connection connection) throws SQLException
+    private static List<String> tableColumns(Connection connection, String table) throws SQLException
     {
         var columns = new java.util.ArrayList<String>();
         try(var statement = connection.createStatement(); var rows = statement.executeQuery(
-            "PRAGMA table_xinfo(recording_call)"))
+            "PRAGMA table_xinfo(" + table + ")"))
         {
             while(rows.next()) columns.add(rows.getInt("cid") + "|" + rows.getString("name") + "|" +
                 rows.getString("type") + "|" + rows.getInt("notnull") + "|" + rows.getString("dflt_value") +
