@@ -2,9 +2,11 @@
 package io.github.dsheirer.alerts;
 
 import io.github.dsheirer.database.SourceCallSchema;
+import io.github.dsheirer.stats.activity.ActivityMessageSchemaMigration;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.List;
 
 /** Fresh creation and the adjacent Application Migrator are the only callers allowed to create these tables. */
 public final class TopicAlertSchema
@@ -79,25 +81,7 @@ public final class TopicAlertSchema
                     PRIMARY KEY(enrollment_id,topic_id)
                 ) WITHOUT ROWID
                 """);
-            statement.execute("""
-                CREATE TABLE topic_alert_message (
-                    id TEXT PRIMARY KEY NOT NULL CHECK(length(id) BETWEEN 1 AND 80),
-                    rule_id TEXT NOT NULL CHECK(length(rule_id)<=80),
-                    topic_id TEXT NOT NULL REFERENCES topic_alert_topic(id) ON DELETE CASCADE,
-                    topic_name TEXT NOT NULL CHECK(length(topic_name)<=80),
-                    alert_name TEXT NOT NULL CHECK(length(alert_name) BETWEEN 1 AND 100),
-                    title TEXT NOT NULL CHECK(length(title) BETWEEN 1 AND 128),
-                    body TEXT NOT NULL CHECK(length(body) BETWEEN 1 AND 2048),
-                    click_action TEXT NOT NULL CHECK(click_action IN ('details','listen')),
-                    event_type TEXT NOT NULL CHECK(length(event_type)<=80),
-                    created_at_ms INTEGER NOT NULL CHECK(created_at_ms>0),
-                    expires_at_ms INTEGER NOT NULL CHECK(expires_at_ms>created_at_ms),
-                    action_kind TEXT NOT NULL DEFAULT 'none' CHECK(action_kind IN ('none','live','channel','radio','talkgroup','patch_group','radio_system')),
-                    action_entity_ref_json TEXT CHECK(action_entity_ref_json IS NULL OR CASE WHEN json_valid(action_entity_ref_json)
-                        THEN json_type(action_entity_ref_json)='object' AND length(action_entity_ref_json)<=2048 ELSE 0 END),
-                    %s
-                )
-                """.formatted(SourceCallSchema.COLUMN_DEFINITION));
+            statement.execute(messageSql(true));
             statement.execute("CREATE INDEX idx_topic_alert_message_topic_time ON topic_alert_message(topic_id,created_at_ms DESC,id)");
             statement.execute("CREATE INDEX idx_topic_alert_message_time ON topic_alert_message(created_at_ms DESC,id)");
             createSourceCallIndex(statement);
@@ -131,11 +115,37 @@ public final class TopicAlertSchema
     /** The adjacent migration preserves old messages with no inferred call identity. */
     public static void addSourceCallReference(Connection connection) throws SQLException
     {
+        ActivityMessageSchemaMigration.appendNullableColumns(connection, "topic_alert_message",
+            messageSql(false), messageSql(true), List.of(SourceCallSchema.COLUMN_DEFINITION),
+            List.of("source_call_uuid TEXT"));
         try(Statement statement = connection.createStatement())
         {
-            statement.executeUpdate("ALTER TABLE topic_alert_message ADD COLUMN " + SourceCallSchema.COLUMN_DEFINITION);
+            // The new sparse lookup still needs native index construction over retained messages.
             createSourceCallIndex(statement);
         }
+    }
+
+    /** The format-57 message definition and its exact format-58 nullable reference addition. */
+    private static String messageSql(boolean sourceCallReference)
+    {
+        return """
+            CREATE TABLE topic_alert_message (
+                id TEXT PRIMARY KEY NOT NULL CHECK(length(id) BETWEEN 1 AND 80),
+                rule_id TEXT NOT NULL CHECK(length(rule_id)<=80),
+                topic_id TEXT NOT NULL REFERENCES topic_alert_topic(id) ON DELETE CASCADE,
+                topic_name TEXT NOT NULL CHECK(length(topic_name)<=80),
+                alert_name TEXT NOT NULL CHECK(length(alert_name) BETWEEN 1 AND 100),
+                title TEXT NOT NULL CHECK(length(title) BETWEEN 1 AND 128),
+                body TEXT NOT NULL CHECK(length(body) BETWEEN 1 AND 2048),
+                click_action TEXT NOT NULL CHECK(click_action IN ('details','listen')),
+                event_type TEXT NOT NULL CHECK(length(event_type)<=80),
+                created_at_ms INTEGER NOT NULL CHECK(created_at_ms>0),
+                expires_at_ms INTEGER NOT NULL CHECK(expires_at_ms>created_at_ms),
+                action_kind TEXT NOT NULL DEFAULT 'none' CHECK(action_kind IN ('none','live','channel','radio','talkgroup','patch_group','radio_system')),
+                action_entity_ref_json TEXT CHECK(action_entity_ref_json IS NULL OR CASE WHEN json_valid(action_entity_ref_json)
+                    THEN json_type(action_entity_ref_json)='object' AND length(action_entity_ref_json)<=2048 ELSE 0 END)%s
+            )
+            """.formatted(sourceCallReference ? ",\n    " + SourceCallSchema.COLUMN_DEFINITION : "");
     }
 
     private static void createSourceCallIndex(Statement statement) throws SQLException

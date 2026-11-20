@@ -11,10 +11,59 @@ import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.List;
 
-/** The format-60 category expansion retains existing rows, indexes, statistics and event allocator. */
-final class ActivityMessageSchemaMigration
+/** Guarded Application Migrator schema changes preserve existing records, indexes, statistics and allocators. */
+public final class ActivityMessageSchemaMigration
 {
     private ActivityMessageSchemaMigration() {}
+
+    private static final List<String> CONSTRAINT_TABLES = List.of("receiver_activity_event", "p25_site_patch_group",
+        "p25_site_patch_group_summary", "conventional_call_identity_bucket", "conventional_activity_summary",
+        "receiver_activity_tone_sequence", "p25_site_call_identity_bucket", "radio_system_identity_summary",
+        "trunked_radio_affiliation", "trunked_radio_channel_presence", "trunked_radio_channel_presence_clear",
+        "topic_alert_message");
+
+    /**
+     * Fresh creation and Application Migrator only: append known nullable fields using frozen exact definitions. Old records
+     * read NULL and satisfy the new checks. Empty creation retains native checked ADD; populated migration appends
+     * the same physical fields natively, then installs their checks through the unchanged same-layout guard.
+     */
+    public static void appendNullableColumns(Connection connection, String table, String previous, String current,
+        List<String> checkedColumns, List<String> plainColumns) throws SQLException
+    {
+        if(!CONSTRAINT_TABLES.contains(table)) throw new SQLException("Unknown Activity constraint migration table");
+        if(checkedColumns.isEmpty() || checkedColumns.size() != plainColumns.size())
+            throw new SQLException("Nullable migration column definitions are incomplete");
+        current = current.replace("CREATE TABLE IF NOT EXISTS", "CREATE TABLE").strip();
+        String unchecked = current;
+        for(int index = 0; index < checkedColumns.size(); index++)
+        {
+            if(!unchecked.contains(checkedColumns.get(index)))
+                throw new SQLException("Nullable migration target column definition is missing");
+            unchecked = unchecked.replace(checkedColumns.get(index), plainColumns.get(index));
+        }
+        SqliteSchemaValidator.validateDefinitions(connection,
+            List.of(new SqliteSchemaValidator.Definition("table", table, previous)));
+        boolean populated = requirePopulatedBoundary(connection, table);
+        if(populated)
+        {
+            // Even a plain nullable ADD can scan every retained row of a STRICT table.
+            try(var statement = connection.createStatement(); var rows = statement.executeQuery(
+                "PRAGMA main.table_list(" + table + ")"))
+            {
+                if(!rows.next() || rows.getInt("strict") != 0)
+                    throw new SQLException("Populated nullable additions require a non-STRICT table");
+            }
+            // Native ADD's insertion offset expects SQLite's stored CREATE header, without IF NOT EXISTS.
+            replaceTableDefinition(connection, "main", table, previous,
+                previous.replace("CREATE TABLE IF NOT EXISTS", "CREATE TABLE"));
+        }
+        try(var statement = connection.createStatement())
+        {
+            for(String definition: populated ? plainColumns : checkedColumns)
+                statement.executeUpdate("ALTER TABLE " + table + " ADD COLUMN " + definition);
+        }
+        if(populated) replaceTableDefinition(connection, "main", table, unchecked, current);
+    }
 
     static boolean requirePopulatedBoundary(Connection connection, String table) throws SQLException
     {
@@ -59,10 +108,9 @@ final class ActivityMessageSchemaMigration
                                        String current) throws SQLException
     {
         if(!List.of("main", "activity").contains(schema)) throw new SQLException("Unknown Activity migration schema");
-        if(!List.of("receiver_activity_event", "p25_site_patch_group", "p25_site_patch_group_summary",
-            "conventional_call_identity_bucket", "conventional_activity_summary",
-            "receiver_activity_tone_sequence").contains(table))
+        if(!CONSTRAINT_TABLES.contains(table))
             throw new SQLException("Unknown Activity constraint migration table");
+        current = current.strip();
         ApplicationMigrationTransaction.requireActive(connection);
         String prefix = schema.equals("main") ? "" : schema + ".";
         SqliteSchemaValidator.validateDefinitions(connection,

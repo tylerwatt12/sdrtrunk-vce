@@ -76,6 +76,12 @@ final class RadioSystemSchema
         .map(column -> column + " INTEGER NOT NULL DEFAULT 0 CHECK(typeof(" + column +
             ") = 'integer' AND " + column + " >= 0)")
         .collect(Collectors.joining(",\n                    "));
+    private static final String SUBSCRIBER_REFERENCE_DEFINITION = """
+        p25_subscriber_identity_id INTEGER REFERENCES p25_subscriber_identity(id) ON DELETE RESTRICT
+            CHECK(p25_subscriber_identity_id IS NULL OR
+                (typeof(p25_subscriber_identity_id) = 'integer' AND p25_subscriber_identity_id > 0
+                    AND identity_kind_code = 2 AND home_wacn >= 0 AND home_system_id >= 0))
+        """.strip();
     private static final String ACTION_INSERT_COLUMNS = String.join(", ", ACTION_COUNT_COLUMNS);
     private static final String ACTION_INSERT_PLACEHOLDERS = ACTION_COUNT_COLUMNS.stream()
         .map(column -> "?")
@@ -378,6 +384,17 @@ final class RadioSystemSchema
             """);
     }
 
+    static void addFormat32P25SubscriberIdentityReference(Connection connection) throws SQLException
+    {
+        ActivityMessageSchemaMigration.appendNullableColumns(connection, "radio_system_identity_summary",
+            format31IdentitySummarySql().replace(ACTION_COUNT_DEFINITIONS, FORMAT_59_ACTION_COUNT_DEFINITIONS),
+            identitySummarySql().replace(ACTION_COUNT_DEFINITIONS, FORMAT_59_ACTION_COUNT_DEFINITIONS),
+            List.of(SUBSCRIBER_REFERENCE_DEFINITION),
+            List.of("p25_subscriber_identity_id INTEGER REFERENCES p25_subscriber_identity(id) ON DELETE RESTRICT"));
+        // Native creation still visits retained identities. This genuine new lookup index is not metadata-only.
+        try(var statement = connection.createStatement()) { createP25SubscriberIdentitySummaryIndex(statement); }
+    }
+
     private static String radioSystemSql()
     {
         return """
@@ -531,10 +548,7 @@ final class RadioSystemSchema
                         AND length(trim(last_talker_alias)) BETWEEN 1 AND %d)),
                 last_talker_alias_seen_ms INTEGER CHECK(last_talker_alias_seen_ms IS NULL OR
                     (typeof(last_talker_alias_seen_ms) = 'integer' AND last_talker_alias_seen_ms > 0)),
-                p25_subscriber_identity_id INTEGER REFERENCES p25_subscriber_identity(id) ON DELETE RESTRICT
-                    CHECK(p25_subscriber_identity_id IS NULL OR
-                        (typeof(p25_subscriber_identity_id) = 'integer' AND p25_subscriber_identity_id > 0
-                            AND identity_kind_code = 2 AND home_wacn >= 0 AND home_system_id >= 0)),
+                %s,
                 UNIQUE(radio_system_id, identity_kind_code, home_wacn, home_system_id, identity_id),
                 UNIQUE(id, radio_system_id),
                 UNIQUE(id, radio_system_id, identity_kind_code),
@@ -547,7 +561,7 @@ final class RadioSystemSchema
                     (last_talker_alias IS NOT NULL AND length(trim(last_talker_alias)) > 0
                         AND last_talker_alias_seen_ms IS NOT NULL))
             )
-            """.formatted(ACTION_COUNT_DEFINITIONS, TalkerAliasText.MAX_CODE_POINTS);
+            """.formatted(ACTION_COUNT_DEFINITIONS, TalkerAliasText.MAX_CODE_POINTS, SUBSCRIBER_REFERENCE_DEFINITION);
     }
 
     private static String format31IdentitySummarySql()
@@ -796,14 +810,17 @@ final class RadioSystemSchema
             name + " BETWEEN 1 AND 16777212))";
     }
 
-    static void addFormat32ExplicitWorkingAddressProvenance(Statement statement) throws SQLException
+    static void addFormat32ExplicitWorkingAddressProvenance(Connection connection) throws SQLException
     {
-        statement.executeUpdate("ALTER TABLE trunked_radio_affiliation ADD COLUMN " +
-            workingAddressColumn("radio_observed_working_id"));
-        statement.executeUpdate("ALTER TABLE trunked_radio_channel_presence ADD COLUMN " +
-            workingAddressColumn("observed_working_id"));
-        statement.executeUpdate("ALTER TABLE trunked_radio_channel_presence_clear ADD COLUMN " +
-            workingAddressColumn("observed_working_id"));
+        ActivityMessageSchemaMigration.appendNullableColumns(connection, "trunked_radio_affiliation",
+            radioAffiliationSql(false), radioAffiliationSql(true),
+            List.of(workingAddressColumn("radio_observed_working_id")), List.of("radio_observed_working_id INTEGER"));
+        ActivityMessageSchemaMigration.appendNullableColumns(connection, "trunked_radio_channel_presence",
+            radioChannelPresenceSql(false), radioChannelPresenceSql(true),
+            List.of(workingAddressColumn("observed_working_id")), List.of("observed_working_id INTEGER"));
+        ActivityMessageSchemaMigration.appendNullableColumns(connection, "trunked_radio_channel_presence_clear",
+            radioChannelPresenceClearSql(false), radioChannelPresenceClearSql(true),
+            List.of(workingAddressColumn("observed_working_id")), List.of("observed_working_id INTEGER"));
     }
 
     static List<SqliteSchemaValidator.Table> tables()

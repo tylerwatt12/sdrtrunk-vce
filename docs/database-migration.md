@@ -650,6 +650,12 @@ local identity until new qualified evidence links it to a canonical subscriber. 
 that reference after upgrade. This makes the upgrade deterministic and avoids
 inventing permanent identity relationships from derived history.
 
+On populated owned profiles, the seven nullable evidence fields use native physical additions followed by exact
+CHECK metadata through the existing guarded, layout-preserving update. Existing records read NULL without a
+validation scan for each field; fresh empty creation retains native checked additions. The Alias/configuration
+rebuild remains real configuration work, and native creation of the new subscriber-reference index still visits
+retained identity rows. Existing history table and index pages, statistics and allocators remain intact.
+
 The format 32-to-33 step preserves every row and adds one partial covering index for historical source Working-ID
 alias evidence. The index includes only detailed events with a source identity and a positive observed working
 address. Canonical P25 radio alias enrichment can seek those observations directly without reading historical
@@ -956,6 +962,10 @@ relationship, counter and allocator is preserved. Each dataset keeps its own ret
 table, cross-database foreign key or pending-link queue is introduced. Fresh creation and migration reach the same
 exact format-58 signature; format 57 retains its populated fixture and runtime startup remains validation-only.
 
+Populated owned upgrades append the nullable UUID fields natively and install their exact checks through the
+existing same-layout guard, avoiding repeated CHECK validation over old NULL records. Both sparse indexes are
+still built natively and visit their retained tables; this genuine index-construction cost grows with history.
+
 The format 58-to-59 step adds nullable integer `duration_ms` to existing detailed Activity call rows and exposes it
 through the resolved Activity view. It records the shared accepted call's observed span, independently of recording
 or streaming policy and audio-file length. Unknown and historical lengths remain NULL; the migration does not
@@ -966,6 +976,10 @@ Every old row, ID, reference, relationship, setting, counter and allocator is pr
 existing history retention and exact-call lookup bounds remain unchanged. Fresh creation and the adjacent migration
 reach the same exact format-59 signature. The populated format-58 fixture remains frozen and supported, and normal
 runtime startup validates without migrating.
+
+For populated owned profiles, the duration field is appended natively and its exact NULL-valid CHECK is installed
+through the existing same-layout guard. This schema work does not scan retained events, rebuild their indexes or
+infer old durations. Fresh empty creation retains the native checked addition.
 
 The format 59-to-60 step adds one bounded `activity_message_type` catalogue for shared message labels,
 meanings and implemented P25, DMR and NXDN support. Existing Activity rows keep their action and decoder-event

@@ -477,9 +477,11 @@ public class ReceiverActivitySchema
     /** Fresh creation and the adjacent format-58-to-59 migration retain no guessed historical timing. */
     public static void addCallDuration(Connection connection) throws SQLException
     {
+        ActivityMessageSchemaMigration.appendNullableColumns(connection, "receiver_activity_event",
+            format58ReceiverActivityEventSql(), format59ReceiverActivityEventSql(),
+            List.of(CALL_DURATION_DEFINITION), List.of("duration_ms INTEGER"));
         try(Statement statement = connection.createStatement())
         {
-            statement.executeUpdate("ALTER TABLE receiver_activity_event ADD COLUMN " + CALL_DURATION_DEFINITION);
             statement.executeUpdate("DROP VIEW receiver_activity_event_resolved");
             statement.executeUpdate(createFormat59ResolvedViewSql());
         }
@@ -526,9 +528,12 @@ public class ReceiverActivitySchema
     /** Fresh creation and the format-57-to-58 migrator add only an optional exact source reference. */
     public static void addSourceCallReference(Connection connection) throws SQLException
     {
+        ActivityMessageSchemaMigration.appendNullableColumns(connection, "receiver_activity_event",
+            receiverActivityEventSql(), format58ReceiverActivityEventSql(),
+            List.of(SourceCallSchema.COLUMN_DEFINITION), List.of("source_call_uuid TEXT"));
         try(Statement statement = connection.createStatement())
         {
-            statement.executeUpdate("ALTER TABLE receiver_activity_event ADD COLUMN " + SourceCallSchema.COLUMN_DEFINITION);
+            // Unlike the nullable CHECK installation, building this new lookup still visits retained events.
             statement.executeUpdate("""
                 CREATE INDEX idx_receiver_activity_event_source_call
                 ON receiver_activity_event(source_call_uuid) WHERE source_call_uuid IS NOT NULL
@@ -712,17 +717,9 @@ public class ReceiverActivitySchema
     /** Adds the nullable canonical-subscriber reference without disturbing retained identity descendants. */
     public static void addFormat32P25SubscriberIdentityReference(Connection connection) throws SQLException
     {
+        RadioSystemSchema.addFormat32P25SubscriberIdentityReference(connection);
         try(Statement statement = connection.createStatement())
         {
-            statement.executeUpdate("""
-                ALTER TABLE radio_system_identity_summary ADD COLUMN
-                    p25_subscriber_identity_id INTEGER
-                    REFERENCES p25_subscriber_identity(id) ON DELETE RESTRICT
-                    CHECK(p25_subscriber_identity_id IS NULL OR
-                        (typeof(p25_subscriber_identity_id) = 'integer' AND p25_subscriber_identity_id > 0
-                            AND identity_kind_code = 2 AND home_wacn >= 0 AND home_system_id >= 0))
-                """);
-            RadioSystemSchema.createP25SubscriberIdentitySummaryIndex(statement);
             statement.executeUpdate("DROP VIEW receiver_activity_event_resolved");
             statement.executeUpdate(createResolvedViewSql(true));
         }
@@ -731,16 +728,16 @@ public class ReceiverActivitySchema
     /** Adds nullable protocol provenance columns. Existing local-ID observations are deliberately not inferred. */
     public static void addFormat32ExplicitWorkingAddressProvenance(Connection connection) throws SQLException
     {
-        try(Statement statement = connection.createStatement())
-        {
-            statement.executeUpdate("ALTER TABLE receiver_activity_event ADD COLUMN " +
-                workingAddressColumn("source_observed_working_id", true));
-            statement.executeUpdate("ALTER TABLE receiver_activity_event ADD COLUMN " +
-                workingAddressColumn("target_observed_working_id", true));
-            statement.executeUpdate("ALTER TABLE p25_site_call_identity_bucket ADD COLUMN " +
-                workingAddressColumn("observed_working_id", true));
-            RadioSystemSchema.addFormat32ExplicitWorkingAddressProvenance(statement);
-        }
+        ActivityMessageSchemaMigration.appendNullableColumns(connection, "receiver_activity_event",
+            receiverActivityEventSql(MAXIMUM_OBSERVED_SITE, EVENT_TYPES, false),
+            receiverActivityEventSql(MAXIMUM_OBSERVED_SITE, EVENT_TYPES, true),
+            List.of(workingAddressColumn("source_observed_working_id", true),
+                workingAddressColumn("target_observed_working_id", true)),
+            List.of("source_observed_working_id INTEGER", "target_observed_working_id INTEGER"));
+        ActivityMessageSchemaMigration.appendNullableColumns(connection, "p25_site_call_identity_bucket",
+            createP25SiteCallIdentityBucketSql(false), createP25SiteCallIdentityBucketSql(true),
+            List.of(workingAddressColumn("observed_working_id", true)), List.of("observed_working_id INTEGER"));
+        RadioSystemSchema.addFormat32ExplicitWorkingAddressProvenance(connection);
     }
 
     private static void create(Connection connection, int maximumObservedSite, boolean allowNxdnNullGroup,
@@ -1230,9 +1227,15 @@ public class ReceiverActivitySchema
 
     private static String format59ReceiverActivityEventSql()
     {
+        return format58ReceiverActivityEventSql().replace("    UNIQUE(id, radio_system_id)",
+            "    " + CALL_DURATION_DEFINITION + ",\n    UNIQUE(id, radio_system_id)");
+    }
+
+    /** Frozen format-58 event definition before accepted-call duration was retained. */
+    private static String format58ReceiverActivityEventSql()
+    {
         return receiverActivityEventSql().replace("    UNIQUE(id, radio_system_id)",
-            "    " + SourceCallSchema.COLUMN_DEFINITION + ",\n    " + CALL_DURATION_DEFINITION +
-                ",\n    UNIQUE(id, radio_system_id)");
+            "    " + SourceCallSchema.COLUMN_DEFINITION + ",\n    UNIQUE(id, radio_system_id)");
     }
 
     /** Frozen format-50 through format-57 event definition. */
