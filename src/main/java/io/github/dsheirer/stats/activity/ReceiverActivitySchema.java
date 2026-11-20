@@ -230,17 +230,60 @@ public class ReceiverActivitySchema
         }
     }
 
+    private static final String PATCH_GROUP_TABLE_SQL = """
+            CREATE TABLE IF NOT EXISTS p25_site_patch_group (
+                channel_id INTEGER NOT NULL CHECK(typeof(channel_id) = 'integer' AND channel_id > 0),
+                local_patch_group_id INTEGER NOT NULL
+                    CHECK(typeof(local_patch_group_id) = 'integer' AND local_patch_group_id BETWEEN 1 AND 65534),
+                version INTEGER CHECK(version IS NULL OR
+                    (typeof(version) = 'integer' AND version BETWEEN 0 AND 31)),
+                confirmed_at_ms INTEGER NOT NULL CHECK(typeof(confirmed_at_ms) = 'integer' AND confirmed_at_ms > 0),
+                PRIMARY KEY(channel_id, local_patch_group_id),
+                FOREIGN KEY(channel_id) REFERENCES p25_site_snapshot(channel_id) ON DELETE CASCADE
+            )
+            """;
+
+    private static final String PATCH_GROUP_SUMMARY_TABLE_SQL = """
+            CREATE TABLE IF NOT EXISTS p25_site_patch_group_summary (
+                channel_id INTEGER NOT NULL CHECK(typeof(channel_id) = 'integer' AND channel_id > 0),
+                local_patch_group_id INTEGER NOT NULL
+                    CHECK(typeof(local_patch_group_id) = 'integer' AND local_patch_group_id BETWEEN 1 AND 65534),
+                version INTEGER CHECK(version IS NULL OR
+                    (typeof(version) = 'integer' AND version BETWEEN 0 AND 31)),
+                first_seen_ms INTEGER NOT NULL CHECK(typeof(first_seen_ms) = 'integer' AND first_seen_ms > 0),
+                last_seen_ms INTEGER NOT NULL CHECK(typeof(last_seen_ms) = 'integer' AND last_seen_ms >= first_seen_ms),
+                observation_count INTEGER NOT NULL DEFAULT 1 CHECK(typeof(observation_count) = 'integer' AND observation_count > 0),
+                PRIMARY KEY(channel_id, local_patch_group_id),
+                FOREIGN KEY(channel_id) REFERENCES p25_site_snapshot(channel_id) ON DELETE CASCADE
+            )
+            """;
+
     /** Authoritative regroup field definition for fresh creation and the adjacent Application Migrator. */
     public static void addPatchRegroupType(Connection connection, String schema) throws SQLException
     {
         if(!Set.of("main", "activity").contains(schema)) throw new SQLException("Invalid patch Activity store");
+        String plainColumn = "regroup_type INTEGER NOT NULL DEFAULT 0";
+        String checkedColumn = plainColumn + " CHECK(typeof(regroup_type) = 'integer' AND regroup_type IN (0, 1, 2))";
         try(var statement = connection.createStatement())
         {
             for(String table: List.of("p25_site_patch_group", "p25_site_patch_group_summary"))
             {
-                statement.executeUpdate("ALTER TABLE " + schema + "." + table +
-                    " ADD COLUMN regroup_type INTEGER NOT NULL DEFAULT 0 " +
-                    "CHECK(typeof(regroup_type) = 'integer' AND regroup_type IN (0, 1, 2))");
+                if(!ActivityMessageSchemaMigration.requirePopulatedBoundary(connection, schema + "." + table))
+                {
+                    statement.executeUpdate("ALTER TABLE " + schema + "." + table + " ADD COLUMN " + checkedColumn);
+                    continue;
+                }
+                String previous = (table.equals("p25_site_patch_group") ? PATCH_GROUP_TABLE_SQL :
+                    PATCH_GROUP_SUMMARY_TABLE_SQL).replace("CREATE TABLE IF NOT EXISTS", "CREATE TABLE");
+                // Normalize the stored CREATE header before SQLite calculates its native ADD COLUMN offset.
+                ActivityMessageSchemaMigration.replaceTableDefinition(connection, schema, table, previous, previous);
+                // Every old record reads the valid Unknown default. Native CHECK addition would still run a
+                // whole-table quick_check; append the same physical field, then install its exact constraint.
+                statement.executeUpdate("ALTER TABLE " + schema + "." + table + " ADD COLUMN " + plainColumn);
+                String current = previous.replace("    PRIMARY KEY(channel_id, local_patch_group_id),",
+                    "    " + checkedColumn + ",\n    PRIMARY KEY(channel_id, local_patch_group_id),");
+                ActivityMessageSchemaMigration.replaceTableDefinition(connection, schema, table,
+                    current.replace(checkedColumn, plainColumn), current);
             }
         }
     }
@@ -3574,32 +3617,8 @@ public class ReceiverActivitySchema
                 FOREIGN KEY(channel_id) REFERENCES p25_site_snapshot(channel_id) ON DELETE CASCADE
             )
             """);
-        statement.executeUpdate("""
-            CREATE TABLE IF NOT EXISTS p25_site_patch_group (
-                channel_id INTEGER NOT NULL CHECK(typeof(channel_id) = 'integer' AND channel_id > 0),
-                local_patch_group_id INTEGER NOT NULL
-                    CHECK(typeof(local_patch_group_id) = 'integer' AND local_patch_group_id BETWEEN 1 AND 65534),
-                version INTEGER CHECK(version IS NULL OR
-                    (typeof(version) = 'integer' AND version BETWEEN 0 AND 31)),
-                confirmed_at_ms INTEGER NOT NULL CHECK(typeof(confirmed_at_ms) = 'integer' AND confirmed_at_ms > 0),
-                PRIMARY KEY(channel_id, local_patch_group_id),
-                FOREIGN KEY(channel_id) REFERENCES p25_site_snapshot(channel_id) ON DELETE CASCADE
-            )
-            """);
-        statement.executeUpdate("""
-            CREATE TABLE IF NOT EXISTS p25_site_patch_group_summary (
-                channel_id INTEGER NOT NULL CHECK(typeof(channel_id) = 'integer' AND channel_id > 0),
-                local_patch_group_id INTEGER NOT NULL
-                    CHECK(typeof(local_patch_group_id) = 'integer' AND local_patch_group_id BETWEEN 1 AND 65534),
-                version INTEGER CHECK(version IS NULL OR
-                    (typeof(version) = 'integer' AND version BETWEEN 0 AND 31)),
-                first_seen_ms INTEGER NOT NULL CHECK(typeof(first_seen_ms) = 'integer' AND first_seen_ms > 0),
-                last_seen_ms INTEGER NOT NULL CHECK(typeof(last_seen_ms) = 'integer' AND last_seen_ms >= first_seen_ms),
-                observation_count INTEGER NOT NULL DEFAULT 1 CHECK(typeof(observation_count) = 'integer' AND observation_count > 0),
-                PRIMARY KEY(channel_id, local_patch_group_id),
-                FOREIGN KEY(channel_id) REFERENCES p25_site_snapshot(channel_id) ON DELETE CASCADE
-            )
-            """);
+        statement.executeUpdate(PATCH_GROUP_TABLE_SQL);
+        statement.executeUpdate(PATCH_GROUP_SUMMARY_TABLE_SQL);
         statement.executeUpdate("""
             CREATE TABLE IF NOT EXISTS p25_site_patch_group_talkgroup (
                 channel_id INTEGER NOT NULL CHECK(typeof(channel_id) = 'integer' AND channel_id > 0),

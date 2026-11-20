@@ -9,6 +9,7 @@ import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
+import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 import org.junit.jupiter.api.Test;
@@ -99,6 +100,119 @@ class Format74To75DatabaseMigrationTest
         ApplicationDatabaseMigrator.migrateInPlace(database, null);
         assertArrayEquals(current, Files.readAllBytes(database));
         assertArrayEquals(currentActivity, Files.readAllBytes(ActivityDatabasePath.forConfiguration(database)));
+    }
+
+    @Test
+    void populatedRegroupAdditionHasFixedWorkAndMatchesNativeConstraintsAfterReopen() throws Exception
+    {
+        Path database = Format74TestDatabase.create(directory.resolve("bounded-patches.sqlite"));
+        List<String> tables = List.of("p25_site_patch_group", "p25_site_patch_group_summary");
+        String column = "regroup_type INTEGER NOT NULL DEFAULT 0 " +
+            "CHECK(typeof(regroup_type) = 'integer' AND regroup_type IN (0, 1, 2))";
+        try(var connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            var nativeSchema = DriverManager.getConnection("jdbc:sqlite::memory:");
+            var attach = connection.prepareStatement("ATTACH DATABASE ? AS activity");
+            var statement = connection.createStatement(); var nativeStatement = nativeSchema.createStatement())
+        {
+            attach.setString(1, ActivityDatabasePath.forConfiguration(database).toString()); attach.execute();
+            statement.executeUpdate("INSERT OR IGNORE INTO activity.p25_site_snapshot" +
+                "(channel_id,first_seen_ms,last_seen_ms,protocol) " +
+                "SELECT id,1000,1000,'APCO25' FROM activity.receiver_channel LIMIT 1");
+            long channel = scalar(connection, "SELECT min(channel_id) FROM activity.p25_site_snapshot");
+            connection.setAutoCommit(false);
+            statement.executeUpdate("WITH RECURSIVE n(i) AS (VALUES(1) UNION ALL SELECT i+1 FROM n WHERE i<20000) " +
+                "INSERT OR REPLACE INTO activity.p25_site_patch_group " +
+                "(channel_id,local_patch_group_id,version,confirmed_at_ms) " +
+                "SELECT " + channel + ",i,9,1000 FROM n");
+            statement.executeUpdate("INSERT OR REPLACE INTO activity.p25_site_patch_group_summary " +
+                "(channel_id,local_patch_group_id,version,first_seen_ms,last_seen_ms,observation_count) " +
+                "SELECT channel_id,local_patch_group_id,version,1000,2000,3 FROM activity.p25_site_patch_group");
+            connection.commit(); connection.setAutoCommit(true);
+            Map<String,Long> originalTrees = trees(connection);
+            // Match the owned migrator's temporary legacy-repair CHECK policy: it does not prevent the scan.
+            statement.execute("PRAGMA ignore_check_constraints=ON");
+            for(String table: tables)
+            {
+                assertTrue(scalar(connection, "SELECT count(*) FROM activity." + table) >= 20000);
+                nativeStatement.executeUpdate(tableDefinition(connection, "activity", table));
+                nativeStatement.executeUpdate("ALTER TABLE " + table + " ADD COLUMN " + column);
+                // Negative control: the former checked ADD exceeds the same fixed budget on either table.
+                installWorkBudget(connection);
+                try
+                {
+                    SQLException failure = assertThrows(SQLException.class,
+                        () -> statement.executeUpdate("ALTER TABLE activity." + table + " ADD COLUMN " + column));
+                    assertEquals(9, failure.getErrorCode(), "Native CHECK addition must hit SQLITE_INTERRUPT");
+                }
+                finally { org.sqlite.ProgressHandler.clearHandler(connection); }
+            }
+            connection.setAutoCommit(false);
+            var step = new Format74To75DatabaseMigration();
+            step.validateSource(connection);
+            installWorkBudget(connection);
+            try
+            {
+                assertDoesNotThrow(() -> step.migrateSource(connection),
+                    "Regroup additions must not scan retained patch history");
+            }
+            finally { org.sqlite.ProgressHandler.clearHandler(connection); }
+            DatabaseFormatCatalog.stamp(connection, 75); connection.commit();
+            assertEquals(originalTrees, trees(connection));
+            assertEquals(ConfigurationHistoryDatabase.HISTORY_FINGERPRINT,
+                SqliteSchemaValidator.fingerprint(connection, "activity"));
+            assertEquals(0, scalar(connection, "PRAGMA writable_schema"));
+            for(String table: tables)
+            {
+                SqliteSchemaValidator.validateDefinitions(connection, List.of(new SqliteSchemaValidator.Definition(
+                    "table", table, tableDefinition(nativeSchema, "main", table))), "activity");
+                assertEquals(columnLayout(nativeSchema, "main", table), columnLayout(connection, "activity", table));
+            }
+        }
+        try(var reopened = DriverManager.getConnection("jdbc:sqlite:" + ActivityDatabasePath.forConfiguration(database));
+            var statement = reopened.createStatement())
+        {
+            for(String table: tables)
+            {
+                assertEquals(0, scalar(reopened, "SELECT count(*) FROM " + table + " WHERE regroup_type IS NOT 0"));
+                statement.executeUpdate("UPDATE " + table + " SET regroup_type=2 WHERE local_patch_group_id=1");
+                for(String invalid: List.of("3", "1.5", "NULL"))
+                    assertThrows(SQLException.class, () -> statement.executeUpdate("UPDATE " + table +
+                        " SET regroup_type=" + invalid + " WHERE local_patch_group_id=1"));
+            }
+            try(var rows = statement.executeQuery("PRAGMA quick_check"))
+            { assertTrue(rows.next()); assertEquals("ok", rows.getString(1)); assertFalse(rows.next()); }
+            try(var rows = statement.executeQuery("PRAGMA foreign_key_check")) { assertFalse(rows.next()); }
+        }
+        ConfigurationHistoryDatabase.validatePair(database);
+    }
+
+    private static void installWorkBudget(Connection connection) throws SQLException
+    {
+        var instructions = new java.util.concurrent.atomic.AtomicInteger();
+        org.sqlite.ProgressHandler.setHandler(connection, 1000, new org.sqlite.ProgressHandler()
+        {
+            @Override protected int progress() { return instructions.incrementAndGet() > 100 ? 1 : 0; }
+        });
+    }
+
+    private static String tableDefinition(Connection connection, String schema, String table) throws SQLException
+    {
+        try(var statement = connection.createStatement(); var row = statement.executeQuery(
+            "SELECT sql FROM " + schema + ".sqlite_schema WHERE type='table' AND name='" + table + "'"))
+        { assertTrue(row.next()); return row.getString(1); }
+    }
+
+    private static List<String> columnLayout(Connection connection, String schema, String table) throws SQLException
+    {
+        List<String> result = new java.util.ArrayList<>();
+        try(var statement = connection.createStatement(); var rows = statement.executeQuery(
+            "PRAGMA " + schema + ".table_xinfo(" + table + ")"))
+        {
+            while(rows.next()) result.add(rows.getInt("cid") + "|" + rows.getString("name") + "|" +
+                rows.getString("type") + "|" + rows.getInt("notnull") + "|" + rows.getString("dflt_value") +
+                "|" + rows.getInt("pk") + "|" + rows.getInt("hidden"));
+        }
+        return result;
     }
 
     private static Map<String,Long> trees(Connection connection) throws SQLException

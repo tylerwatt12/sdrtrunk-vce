@@ -51,9 +51,17 @@ final class ActivityMessageSchemaMigration
     static void replaceEventDefinition(Connection connection, String schema, String previous, String current)
         throws SQLException
     {
+        replaceTableDefinition(connection, schema, "receiver_activity_event", previous, current);
+    }
+
+    /** Installs compatible CHECKs only after exact source and physical-layout admission. */
+    static void replaceTableDefinition(Connection connection, String schema, String table, String previous,
+                                       String current) throws SQLException
+    {
         if(!List.of("main", "activity").contains(schema)) throw new SQLException("Unknown Activity migration schema");
+        if(!List.of("receiver_activity_event", "p25_site_patch_group", "p25_site_patch_group_summary").contains(table))
+            throw new SQLException("Unknown Activity constraint migration table");
         ApplicationMigrationTransaction.requireActive(connection);
-        String table = "receiver_activity_event";
         String prefix = schema.equals("main") ? "" : schema + ".";
         SqliteSchemaValidator.validateDefinitions(connection,
             List.of(new SqliteSchemaValidator.Definition("table", table, previous)), schema);
@@ -69,7 +77,7 @@ final class ActivityMessageSchemaMigration
         {
             statement.executeUpdate(current);
             if(!physicalColumns(connection, prefix, table).equals(physicalColumns(validation, "", table)))
-                throw new SQLException("Activity constraint update cannot change the event record layout");
+                throw new SQLException("Activity constraint update cannot change the record layout");
         }
         try(var statement = connection.createStatement())
         {
@@ -91,7 +99,7 @@ final class ActivityMessageSchemaMigration
                 {
                     update.setString(1, current);
                     update.setString(2, table);
-                    if(update.executeUpdate() != 1) throw new SQLException("Activity event definition was not updated");
+                    if(update.executeUpdate() != 1) throw new SQLException("Activity table definition was not updated");
                 }
                 statement.execute("PRAGMA " + prefix + "schema_version=" + (version + 1));
             }
