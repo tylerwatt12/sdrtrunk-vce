@@ -292,7 +292,7 @@ public final class ManagedRecordingCatalogMigrator
                     case 1 -> statement.execute(ManagedRecordingSchema.ddlForFormat(2).get("recording_transcript"));
                     case 2 ->
                     {
-                        statement.execute("ALTER TABLE recording_call ADD COLUMN " + ManagedRecordingSchema.TRANSCRIPTION_STATUS_COLUMN);
+                        appendTranscriptionStatusColumn(connection);
                         statement.executeUpdate("UPDATE recording_call SET transcription_status='complete' " +
                             "WHERE id IN (SELECT call_id FROM recording_transcript)");
                         statement.execute(ManagedRecordingSchema.ddlForFormat(3).get("idx_recording_call_transcription_pending"));
@@ -355,24 +355,48 @@ public final class ManagedRecordingCatalogMigrator
         }
     }
 
+    /** The old physical records read the valid literal pending default; later backfill/index work is unchanged. */
+    static void appendTranscriptionStatusColumn(Connection connection) throws SQLException
+    {
+        appendRecordingCallColumns(connection, 2);
+    }
+
     /** The six nullable additions need no old values; STRICT native ADD would scan every call six times. */
     private static void appendVoiceQualityColumns(Connection connection) throws SQLException
     {
-        ManagedRecordingSchema.validate(connection, 11);
-        String previous = ManagedRecordingSchema.ddlForFormat(11).get("recording_call");
-        String current = ManagedRecordingSchema.ddlForFormat(12).get("recording_call");
+        appendRecordingCallColumns(connection, 11);
+    }
+
+    private static void appendRecordingCallColumns(Connection connection, int sourceFormat) throws SQLException
+    {
+        List<String> additions = switch(sourceFormat)
+        {
+            case 2 ->
+            {
+                // Freeze this safety proof: the new CHECK depends only on its valid non-null TEXT default,
+                // never on any retained field. Native ADD on the empty proof table establishes its layout.
+                if(!ManagedRecordingSchema.TRANSCRIPTION_STATUS_COLUMN.equals("transcription_status TEXT NOT NULL " +
+                    "DEFAULT 'pending' CHECK(transcription_status IN('pending','complete','failed'))"))
+                    throw new SQLException("Managed recordings status addition no longer has the admitted pending default");
+                yield List.of(ManagedRecordingSchema.TRANSCRIPTION_STATUS_COLUMN);
+            }
+            case 11 -> ManagedRecordingSchema.VOICE_QUALITY_COLUMNS;
+            default -> throw new SQLException("No metadata-only recording append from catalog format " + sourceFormat);
+        };
+        ManagedRecordingSchema.validate(connection, sourceFormat);
+        String previous = ManagedRecordingSchema.ddlForFormat(sourceFormat).get("recording_call");
+        String current = ManagedRecordingSchema.ddlForFormat(sourceFormat + 1).get("recording_call");
         List<String> columns;
         // Prove the exact target and physical append using SQLite itself, with no retained rows to visit.
         try(Connection validation = DriverManager.getConnection("jdbc:sqlite::memory:");
             var statement = validation.createStatement())
         {
             statement.execute(previous);
-            for(String column: ManagedRecordingSchema.VOICE_QUALITY_COLUMNS)
-                statement.execute("ALTER TABLE recording_call ADD COLUMN " + column);
+            for(String column: additions) statement.execute("ALTER TABLE recording_call ADD COLUMN " + column);
             try(var row = statement.executeQuery("SELECT sql FROM sqlite_schema WHERE name='recording_call'"))
             {
                 if(!row.next() || !current.equals(row.getString(1)))
-                    throw new SQLException("Managed recordings quality additions do not match the exact native target");
+                    throw new SQLException("Managed recordings column additions do not match the exact native target");
             }
             columns = tableColumns(validation, "recording_call");
         }
@@ -425,7 +449,7 @@ public final class ManagedRecordingCatalogMigrator
         int version = pragmaInt(connection, "schema_version");
         if(version < 0 || version == Integer.MAX_VALUE || pragmaInt(connection, "writable_schema") != 0)
             throw new SQLException("Managed recordings update cannot advance the SQLite schema version");
-        // Missing appended quality fields read as NULL; tone changes only widen known CHECK domains.
+        // Missing status reads its valid pending default, quality reads NULL; tone changes widen known CHECK domains.
         // No retained row needs inspection or rewriting in either admitted operation.
         try(var statement = connection.createStatement())
         {
