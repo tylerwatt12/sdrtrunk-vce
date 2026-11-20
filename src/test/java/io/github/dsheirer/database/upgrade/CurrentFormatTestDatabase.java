@@ -99,6 +99,50 @@ public final class CurrentFormatTestDatabase
         }
     }
 
+    /** Run one admitted paired segment through the actual owned chain, without advancing to current. */
+    static DatabaseMigrationChain.MigrationReport migratePairToVersion(Path configuration, int targetVersion)
+        throws Exception
+    {
+        io.github.dsheirer.database.ConfigurationHistoryDatabase.validatePairIdentity(configuration);
+        DatabaseMigrationChain.MigrationReport report;
+        try(Connection connection = java.sql.DriverManager.getConnection("jdbc:sqlite:" + configuration);
+            var attach = connection.prepareStatement("ATTACH DATABASE ? AS activity");
+            var statement = connection.createStatement())
+        {
+            attach.setString(1, io.github.dsheirer.database.ActivityDatabasePath.forConfiguration(configuration).toString());
+            attach.execute();
+            var source = DatabaseFormatCatalog.inspectForMigration(connection);
+            if(source.version() < 63 || targetVersion < source.version())
+                throw new IllegalArgumentException("A forward paired migration segment is required");
+            String priorHistory = io.github.dsheirer.database.ConfigurationHistorySchema.metadata(connection,
+                "activity", DatabaseFormatCatalog.FORMAT_VERSION_KEY);
+            statement.execute("PRAGMA foreign_keys=OFF");
+            statement.execute("PRAGMA ignore_check_constraints=ON");
+            connection.setAutoCommit(false);
+            try
+            {
+                report = DatabaseMigrationChain.migrate(connection, source, false, ignored -> {}, ignored -> {}, targetVersion);
+                org.junit.jupiter.api.Assertions.assertEquals(targetVersion, DatabaseFormatCatalog.inspectForMigration(connection).version());
+                org.junit.jupiter.api.Assertions.assertEquals(DatabaseFormatCatalog.requireVersion(targetVersion).fingerprint(),
+                    io.github.dsheirer.database.SqliteSchemaValidator.fingerprint(connection));
+                org.junit.jupiter.api.Assertions.assertEquals(
+                    io.github.dsheirer.database.ConfigurationHistoryDatabase.historyFingerprint(targetVersion),
+                    io.github.dsheirer.database.SqliteSchemaValidator.fingerprint(connection, "activity"));
+                org.junit.jupiter.api.Assertions.assertEquals(targetVersion >= 69 ? Integer.toString(targetVersion) : priorHistory,
+                    io.github.dsheirer.database.ConfigurationHistorySchema.metadata(connection, "activity", DatabaseFormatCatalog.FORMAT_VERSION_KEY));
+                statement.execute("PRAGMA ignore_check_constraints=OFF");
+                connection.commit();
+            }
+            catch(SQLException | RuntimeException | Error failure)
+            {
+                connection.rollback();
+                throw failure;
+            }
+        }
+        io.github.dsheirer.database.ConfigurationHistoryDatabase.validatePairIdentity(configuration);
+        return report;
+    }
+
     static List<String> migrationStepIdsBetween(int sourceVersion, int targetVersion)
     {
         return DatabaseMigrationChain.steps().stream().filter(step -> step.sourceVersion() >= sourceVersion &&
@@ -189,6 +233,13 @@ public final class CurrentFormatTestDatabase
                 while(rows.next())
                 {
                     String name = rows.getString("name");
+                    if(isAddedHistoryColumn(table, name))
+                    {
+                        try(var check = connection.createStatement(); var values = check.executeQuery(
+                            "SELECT \"" + name + "\" FROM " + role + "." + quoted))
+                        { while(values.next()) addedHistoryColumn(table, values, 1); }
+                        continue;
+                    }
                     if(!added.contains(name)) columns.add("\"" + name.replace("\"", "\"\"") + "\"");
                 }
             }
@@ -254,6 +305,29 @@ public final class CurrentFormatTestDatabase
                 org.junit.jupiter.api.Assertions.assertEquals("ok", rows.getString(1), role);
             }
         }
+    }
+
+    /** Later declared additions are checked independently, rather than compared as historical columns. */
+    static boolean addedHistoryColumn(String table, ResultSet rows, int column) throws SQLException
+    {
+        String name = rows.getMetaData().getColumnName(column);
+        if(!isAddedHistoryColumn(table, name)) return false;
+        Object value = rows.getObject(column);
+        if(name.equals("regroup_type"))
+        {
+            org.junit.jupiter.api.Assertions.assertTrue(value instanceof Integer || value instanceof Long,
+                "Historical regroup type must be a non-null integer");
+            org.junit.jupiter.api.Assertions.assertEquals(0L, ((Number)value).longValue(),
+                "Historical regroup type remains Unknown");
+        }
+        else org.junit.jupiter.api.Assertions.assertNull(value, "Historical denial evidence remains unknown: " + name);
+        return true;
+    }
+
+    private static boolean isAddedHistoryColumn(String table, String column)
+    {
+        return table.equals("receiver_activity_event") && List.of("denial_reason_code", "denial_reason_vendor_specific").contains(column) ||
+            List.of("p25_site_patch_group", "p25_site_patch_group_summary").contains(table) && column.equals("regroup_type");
     }
 
     /** Later declared additions are checked independently, rather than compared as historical columns. */

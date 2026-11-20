@@ -37,6 +37,8 @@ class ApplicationDatabaseMigratorActivityJournalTest
         try(Connection connection = open(activity))
         {
             before = Format68To69DatabaseMigrationTest.snapshot(connection);
+            assertTrue(before.get("p25_site_channel").isEmpty(), "This fixture has no learned carrier callsigns");
+            assertTrue(before.get("p25_site_channel_summary").isEmpty(), "This fixture has no retained carrier callsigns");
             expectedEncryption = scalar(connection, "SELECT group_concat(id || ':' || (CASE WHEN encrypted=1 " +
                 "OR event_type_code IN (6,8,10,17,20,26) THEN 2 ELSE 0 END),',') FROM " +
                 "(SELECT * FROM receiver_activity_event ORDER BY id)");

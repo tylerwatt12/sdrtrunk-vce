@@ -239,6 +239,11 @@ class Format65To66DatabaseMigrationTest
                 String table = tables.getString(1); List<String> values = new ArrayList<>();
                 try(var read = connection.createStatement(); var rows = read.executeQuery("SELECT * FROM \"" + table + "\""))
                 {
+                    if(table.equals("p25_site_bsi"))
+                    {
+                        assertFalse(rows.next(), "This fixture has no old carrier callsigns to extract");
+                        continue;
+                    }
                     while(rows.next())
                     {
                         if(table.equals("database_metadata") && DatabaseFormatCatalog.FORMAT_VERSION_KEY.equals(rows.getString(1))) continue;
@@ -249,6 +254,7 @@ class Format65To66DatabaseMigrationTest
                         List<String> fields = new ArrayList<>();
                         for(int i=1;i<=rows.getMetaData().getColumnCount();i++)
                         {
+                            if(CurrentFormatTestDatabase.addedHistoryColumn(table, rows, i)) continue;
                             String name=rows.getMetaData().getColumnName(i);
                             if(table.equals("web_user") && List.of("preferences_json","preferences_revision").contains(name)) continue;
                             Object value=rows.getObject(i);
@@ -262,6 +268,8 @@ class Format65To66DatabaseMigrationTest
                             .digest(fields.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8))));
                     }
                 }
+                if(List.of("p25_site_channel", "p25_site_channel_summary").contains(table))
+                    assertTrue(values.isEmpty(), "This fixture has no learned carrier/callsign rows: " + table);
                 values.sort(String::compareTo); result.put(table, values);
             }
         }

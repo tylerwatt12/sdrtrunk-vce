@@ -98,7 +98,7 @@ class CurrentDatabaseDerivedStateRepairTest
 
         try(Connection connection = open(database))
         {
-            assertEquals(47, CurrentDatabaseDerivedStateRepair.REPRODUCIBLE_TABLES.size());
+            assertEquals(48, CurrentDatabaseDerivedStateRepair.REPRODUCIBLE_TABLES.size());
             for(String table: CurrentDatabaseDerivedStateRepair.REPRODUCIBLE_TABLES)
             {
                 assertEquals(1, number(connection,

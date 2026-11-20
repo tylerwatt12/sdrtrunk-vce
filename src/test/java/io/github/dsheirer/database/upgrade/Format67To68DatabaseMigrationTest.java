@@ -73,7 +73,7 @@ class Format67To68DatabaseMigrationTest
             ConfigurationHistoryDatabase.validatePair(database);
             try(var history = DriverManager.getConnection("jdbc:sqlite:" + ActivityDatabasePath.forConfiguration(database)))
             {
-                assertEquals(ConfigurationHistoryDatabase.FORMAT_69_HISTORY_FINGERPRINT, SqliteSchemaValidator.fingerprint(history));
+                assertEquals(ConfigurationHistoryDatabase.HISTORY_FINGERPRINT, SqliteSchemaValidator.fingerprint(history));
                 assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.requireCurrent(history).version());
             }
             byte[] current = Files.readAllBytes(database);

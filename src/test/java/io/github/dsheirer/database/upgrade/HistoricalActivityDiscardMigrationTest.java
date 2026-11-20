@@ -82,7 +82,7 @@ class HistoricalActivityDiscardMigrationTest
         try(var connection = open(SdrTrunkDatabasePath.getDatabasePath(targetRoot)))
         {
             assertEquals(before.rows(), readConfiguration(connection, before.columns(), before.filters()));
-            long preferenceSteps = java.util.stream.IntStream.of(30, 34, 35, 42, 61, 64, 65, 66)
+            long preferenceSteps = java.util.stream.IntStream.of(30, 34, 35, 42, 61, 64, 65, 66, 71)
                 .filter(sourceVersion -> sourceVersion >= version).count();
             try(var statement = connection.createStatement(); var rows = statement.executeQuery(
                 "SELECT id,tier,primary_admin,preferences_json,preferences_revision FROM web_user"))
@@ -93,8 +93,10 @@ class HistoricalActivityDiscardMigrationTest
                     long id = rows.getLong(1);
                     assertEquals(rows.getInt(3) == 1 ? "ADMIN" : "USER", rows.getString(2));
                     var targetPreferences = json.readTree(rows.getString(4));
-                    assertOriginalPreferences(json.readTree(preferences.get(id)), targetPreferences, true);
-                    assertEquals(15, targetPreferences.path("version").asInt());
+                    assertOriginalPreferences(json.readTree(preferences.get(id)), targetPreferences, "");
+                    assertEquals(16, targetPreferences.path("version").asInt());
+                    assertTrue(targetPreferences.at("/presentation/show_control_decode_quality").isMissingNode());
+                    assertTrue(targetPreferences.at("/presentation/show_voice_decode_quality").isMissingNode());
                     assertEquals("queue", targetPreferences.path("playback").path("recording_click_mode").asText());
                     assertEquals(5, targetPreferences.path("playback").path("call_display_hangtime_seconds").asInt());
                     assertTrue(targetPreferences.path("guides").path("automatic_page_guides").asBoolean());
@@ -271,16 +273,22 @@ class HistoricalActivityDiscardMigrationTest
     }
 
     private static void assertOriginalPreferences(com.fasterxml.jackson.databind.JsonNode source,
-                                                   com.fasterxml.jackson.databind.JsonNode target, boolean root)
+                                                   com.fasterxml.jackson.databind.JsonNode target, String path)
     {
+        if(path.equals("/version")) return;
+        if(path.equals("/presentation/show_control_decode_quality") ||
+            path.equals("/presentation/show_voice_decode_quality"))
+        {
+            assertTrue(target.isMissingNode(), "Format 72 must remove the retired personal choice at " + path);
+            return;
+        }
         if(source.isObject())
         {
             source.properties().forEach(entry -> {
-                if(!root || !entry.getKey().equals("version"))
-                    assertOriginalPreferences(entry.getValue(), target.path(entry.getKey()), false);
+                assertOriginalPreferences(entry.getValue(), target.path(entry.getKey()), path + "/" + entry.getKey());
             });
         }
-        else assertEquals(source, target);
+        else assertEquals(source, target, "Existing personal choice changed at " + path);
     }
 
     private static Map<String,List<String>> readConfiguration(Connection connection, Map<String,List<String>> columns,

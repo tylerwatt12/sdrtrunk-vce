@@ -231,7 +231,9 @@ class NightlyFormat20ToCurrentMigrationTest
                 JsonNode target = MAPPER.readTree(scalar(connection,
                     "SELECT preferences_json FROM web_user WHERE id=" + user.getKey()));
                 assertOriginalPreferences(user.getValue(), target, "");
-                assertEquals(15, target.path("version").asInt());
+                assertEquals(16, target.path("version").asInt());
+                assertTrue(target.at("/presentation/show_control_decode_quality").isMissingNode());
+                assertTrue(target.at("/presentation/show_voice_decode_quality").isMissingNode());
                 assertEquals("queue", target.path("playback").path("recording_click_mode").asText());
                 assertEquals(5, target.path("playback").path("call_display_hangtime_seconds").asInt());
                 assertTrue(target.path("appearance").path("hue").isNull());
@@ -257,6 +259,12 @@ class NightlyFormat20ToCurrentMigrationTest
     private static void assertOriginalPreferences(JsonNode source, JsonNode target, String path)
     {
         if(path.equals("/version")) return;
+        if(path.equals("/presentation/show_control_decode_quality") ||
+            path.equals("/presentation/show_voice_decode_quality"))
+        {
+            assertTrue(target.isMissingNode(), "Format 72 must remove the retired personal choice at " + path);
+            return;
+        }
         if(source.isObject()) source.fields().forEachRemaining(field ->
             assertOriginalPreferences(field.getValue(), target.path(field.getKey()), path + "/" + field.getKey()));
         else assertEquals(source, target, "Existing personal choice changed at " + path);

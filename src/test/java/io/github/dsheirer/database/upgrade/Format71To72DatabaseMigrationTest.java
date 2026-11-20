@@ -65,6 +65,19 @@ class Format71To72DatabaseMigrationTest
                 assertEquals(revision + 1, rows.getLong(2)); assertEquals(timestamp, rows.getLong(3));
             }
         }
+        ConfigurationHistoryDatabase.validatePairIdentity(database);
+        assertEquals(activity, ActivityMigrationPreservation.capture(database));
+        try(var history = DriverManager.getConnection("jdbc:sqlite:" + ActivityDatabasePath.forConfiguration(database));
+            var statement = history.createStatement())
+        {
+            for(String table: java.util.List.of("p25_site_channel", "p25_site_channel_summary"))
+                try(var rows = statement.executeQuery("SELECT count(*) FROM " + table + " WHERE callsign IS NOT NULL AND trim(callsign)<>''"))
+                { assertTrue(rows.next()); assertEquals(0, rows.getLong(1)); }
+        }
+        CurrentFormatTestDatabase.validateCurrentPair(database);
+        try(var history = DriverManager.getConnection("jdbc:sqlite:" + ActivityDatabasePath.forConfiguration(database));
+            var statement = history.createStatement(); var rows = statement.executeQuery("SELECT count(*) FROM p25_site_bsi"))
+        { assertTrue(rows.next()); assertEquals(0, rows.getLong(1)); }
         ActivityMigrationPreservation.assertCurrent(database, activity);
         ConfigurationHistoryDatabase.validatePair(database);
         SdrTrunkDatabaseStartup.validateGlobalDatabase(database);

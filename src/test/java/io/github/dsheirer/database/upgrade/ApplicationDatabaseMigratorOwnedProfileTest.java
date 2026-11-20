@@ -229,6 +229,8 @@ class ApplicationDatabaseMigratorOwnedProfileTest
             statement.executeUpdate("UPDATE sqlite_sequence SET seq=seq+1000 WHERE name='receiver_activity_event'");
         }
         List<List<Object>> eventFacts = eventFacts(sourceActivity);
+        assertEquals("0", scalar(sourceActivity, "SELECT count(*) FROM p25_site_channel"));
+        assertEquals("0", scalar(sourceActivity, "SELECT count(*) FROM p25_site_channel_summary"));
         String eventSequence = scalar(sourceActivity, "SELECT seq FROM sqlite_sequence WHERE name='receiver_activity_event'");
         Files.copy(profile.sourceDatabase(), profile.stage());
         Files.copy(sourceActivity, stagedActivity);
@@ -245,6 +247,8 @@ class ApplicationDatabaseMigratorOwnedProfileTest
         assertEquals(Integer.toString(DatabaseFormatCatalog.CURRENT_VERSION),
             scalar(stagedActivity, "SELECT value FROM database_metadata WHERE key='database_format_version'"));
         assertEquals(eventFacts, eventFacts(stagedActivity), "Every event field except encryption classification survives");
+        assertEquals("0", scalar(stagedActivity, "SELECT count(*) FROM p25_site_bsi"),
+            "The fixture has no old carrier facts to extract into BSI ownership");
         assertEquals(eventSequence,
             scalar(stagedActivity, "SELECT seq FROM sqlite_sequence WHERE name='receiver_activity_event'"));
         assertArrayEquals(configuration, Files.readAllBytes(profile.sourceDatabase()));
@@ -271,7 +275,11 @@ class ApplicationDatabaseMigratorOwnedProfileTest
                 while(rows.next())
                 {
                     List<Object> values = new ArrayList<>();
-                    for(int column = 1; column <= fields.size(); column++) values.add(rows.getObject(column));
+                    for(int column = 1; column <= fields.size(); column++)
+                    {
+                        if(CurrentFormatTestDatabase.addedHistoryColumn("receiver_activity_event", rows, column)) continue;
+                        values.add(rows.getObject(column));
+                    }
                     facts.add(values);
                 }
             }

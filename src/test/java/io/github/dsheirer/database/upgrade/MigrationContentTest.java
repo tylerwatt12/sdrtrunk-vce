@@ -163,6 +163,13 @@ class MigrationContentTest
         {
             assertHealthyPopulatedHistory(connection);
             List<String> tables = new ArrayList<>(CurrentDatabaseDerivedStateRepair.REPRODUCIBLE_TABLES);
+            // Format 61 has no carrier-owned BSI table or learned callsigns to transfer into it.
+            assertTrue(tables.remove("p25_site_bsi"));
+            assertEquals(0, scalar(connection,
+                "SELECT count(*) FROM sqlite_schema WHERE type='table' AND name='p25_site_bsi'"));
+            for(String table: List.of("p25_site_channel", "p25_site_channel_summary"))
+                assertEquals(0, scalar(connection, "SELECT count(*) FROM " + table +
+                    " WHERE length(trim(callsign))>0"), table);
             tables.addAll(List.of("alias_list_analog_activity_summary", "topic_alert_message", "topic_alert_delivery"));
             history = rows(connection, tables, false);
         }
@@ -173,6 +180,7 @@ class MigrationContentTest
         try(var connection = open(source))
         {
             assertEquals(history, rows(connection, new ArrayList<>(history.keySet()), false));
+            assertEquals(0, count(connection, "p25_site_bsi"));
             DatabaseFormatCatalog.requireCurrent(connection);
         }
     }
@@ -497,6 +505,15 @@ class MigrationContentTest
                     {
                         String column = rows.getMetaData().getColumnName(index);
                         if(addedFormat63Column(table,column)) continue;
+                        if(CurrentFormatTestDatabase.addedHistoryColumn(table, rows, index)) continue;
+                        if(List.of("p25_site_channel", "p25_site_channel_summary").contains(table) &&
+                            column.equals("callsign"))
+                        {
+                            String callsign = rows.getString(index);
+                            assertTrue(callsign == null || callsign.isBlank(),
+                                "This fixture must not silently discard a learned callsign");
+                            continue;
+                        }
                         if(convertedFields && (table.equals("web_user") &&
                             List.of("preferences_json", "preferences_revision").contains(column) ||
                             table.equals("configuration_channel") && column.equals("analog_activity_reset_ms"))) continue;

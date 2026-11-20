@@ -56,17 +56,22 @@ class Format69To70DatabaseMigrationTest
             if(phase.equals("Validating the updated schema and configuration")) throw new IllegalStateException("injected");
         }));
         assertPreserved(configuration, beforeConfiguration, 69); assertPreserved(history, beforeHistory, 69);
-        ApplicationDatabaseMigrator.migrateInPlace(configuration, null);
-        assertPreserved(configuration, expectedConfiguration, DatabaseFormatCatalog.CURRENT_VERSION);
-        assertPreserved(history, beforeHistory, DatabaseFormatCatalog.CURRENT_VERSION);
+        CurrentFormatTestDatabase.migratePairToVersion(configuration, 70);
+        assertPreserved(configuration, beforeConfiguration, 70);
+        assertPreserved(history, beforeHistory, 70);
         try(var connection = open(history))
         {
             assertEquals(btrees, schemaObjects(connection));
+            for(String table: List.of("p25_site_channel", "p25_site_channel_summary"))
+                assertEquals("0", scalar(connection, "SELECT count(*) FROM " + table + " WHERE callsign IS NOT NULL AND trim(callsign)<>''"));
             assertEquals(ConfigurationHistoryDatabase.FORMAT_69_HISTORY_FINGERPRINT, SqliteSchemaValidator.fingerprint(connection));
             assertEquals("ok", scalar(connection, "PRAGMA quick_check"));
             try(var query = connection.createStatement(); var violations = query.executeQuery("PRAGMA foreign_key_check"))
             { assertFalse(violations.next()); }
         }
+        CurrentFormatTestDatabase.validateCurrentPair(configuration);
+        assertPreserved(configuration, expectedConfiguration, DatabaseFormatCatalog.CURRENT_VERSION);
+        assertPreserved(history, beforeHistory, DatabaseFormatCatalog.CURRENT_VERSION);
         ConfigurationHistoryDatabase.validatePair(configuration);
         SdrTrunkDatabaseStartup.validateGlobalDatabaseForStartup(configuration);
         byte[] currentConfiguration = Files.readAllBytes(configuration), currentHistory = Files.readAllBytes(history);
@@ -100,15 +105,24 @@ class Format69To70DatabaseMigrationTest
     {
         Path configuration = Format69TestDatabase.create(directory.resolve("workspace.sqlite"));
         Path history = ActivityDatabasePath.forConfiguration(configuration);
-        long workspace = ApplicationMigrationService.requiredOwnedMigrationWorkspace(configuration, MigrationContent.FULL);
+        var full = ApplicationMigrationService.readStartupPlan(configuration);
+        var semantic = new DatabaseMigrationChain.PreflightReport(full.source(), DatabaseFormatCatalog.requireVersion(70),
+            full.steps().stream().filter(step -> step.targetVersion() <= 70).toList());
+        long workspace = ApplicationMigrationService.requiredOwnedMigrationWorkspace(configuration, MigrationContent.FULL, semantic);
         assertEquals(2 * Files.size(configuration) + 64L * 1024 * 1024, workspace);
+        long fullWorkspace = ApplicationMigrationService.requiredOwnedMigrationWorkspace(configuration, MigrationContent.FULL);
+        assertEquals(2 * (Files.size(configuration) + Files.size(history)), fullWorkspace,
+            "The later BSI conversion keeps the conservative whole-pair allowance");
         try(var connection = open(history); var statement = connection.createStatement())
         {
             statement.executeUpdate("WITH RECURSIVE n(value) AS (SELECT 1 UNION ALL SELECT value+1 FROM n WHERE value<5000) " +
                 "INSERT INTO receiver_activity_event(channel_id,observed_at_ms,action_code,event_type_code,encryption_state) " +
                 "SELECT (SELECT channel_id FROM receiver_activity_event LIMIT 1),1000000+value,2,7,0 FROM n");
         }
-        assertEquals(workspace, ApplicationMigrationService.requiredOwnedMigrationWorkspace(configuration, MigrationContent.FULL));
+        assertEquals(workspace, ApplicationMigrationService.requiredOwnedMigrationWorkspace(configuration, MigrationContent.FULL, semantic));
+        assertEquals(2 * (Files.size(configuration) + Files.size(history)),
+            ApplicationMigrationService.requiredOwnedMigrationWorkspace(configuration, MigrationContent.FULL));
+        assertTrue(ApplicationMigrationService.requiredOwnedMigrationWorkspace(configuration, MigrationContent.FULL) > fullWorkspace);
     }
 
     @Test void legacyMonolithAdvancesItsAttachedConfigurationAndHistoryTogether() throws Exception
@@ -146,6 +160,12 @@ class Format69To70DatabaseMigrationTest
         { while(values.next()) tables.add(values.getString(1)); }
         for(String table: tables)
         {
+            if(table.equals("p25_site_bsi"))
+            {
+                // No source callsign rows exist in this frozen pair; do not ignore an invented BSI fact.
+                assertEquals("0", scalar(connection, "SELECT count(*) FROM p25_site_bsi"));
+                continue;
+            }
             List<String> rows = new ArrayList<>();
             String where = table.equals("database_metadata") ? " WHERE key<>'database_format_version'" : "";
             try(var query = connection.createStatement(); var values = query.executeQuery("SELECT * FROM " + table + where))
@@ -155,6 +175,7 @@ class Format69To70DatabaseMigrationTest
                     StringBuilder row = new StringBuilder();
                     for(int index = 1; index <= values.getMetaData().getColumnCount(); index++)
                     {
+                        if(CurrentFormatTestDatabase.addedHistoryColumn(table, values, index)) continue;
                         Object value = values.getObject(index);
                         if(upgradedPreferences && table.equals("web_user"))
                         {

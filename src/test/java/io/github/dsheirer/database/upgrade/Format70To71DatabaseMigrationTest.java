@@ -33,15 +33,21 @@ class Format70To71DatabaseMigrationTest
         Path history = ActivityDatabasePath.forConfiguration(configuration);
         String source = JSON.writeValueAsString(Map.of(NODE, Map.of(KEY, "true", "audio.mp3.setting", "CBR_16"),
             "unrelated/node", Map.of(KEY, "preserve", "keep", "yes")));
-        Map<String,List<String>> beforeConfiguration, beforeHistory, beforeObjects;
-        try(var connection = open(configuration)) { save(connection, source); beforeConfiguration = snapshot(connection, true, true); }
+        Map<String,List<String>> beforeConfiguration, expectedCurrentConfiguration, beforeHistory, beforeObjects;
+        try(var connection = open(configuration))
+        {
+            save(connection, source);
+            beforeConfiguration = snapshot(connection, true);
+            expectedCurrentConfiguration = snapshot(connection, true, true);
+        }
         try(var connection = open(history)) { beforeHistory = snapshot(connection, false); beforeObjects = objects(connection); }
         byte[] configurationBytes = Files.readAllBytes(configuration), historyBytes = Files.readAllBytes(history);
         assertThrows(Exception.class, () -> SdrTrunkDatabaseStartup.validateGlobalDatabaseForStartup(configuration));
         assertArrayEquals(configurationBytes, Files.readAllBytes(configuration));
         assertArrayEquals(historyBytes, Files.readAllBytes(history));
         var plan = ApplicationMigrationService.readStartupPlan(configuration);
-        assertEquals(List.of("retired-mp3-normalization-v1", "format-71-to-72"), plan.steps().stream().map(DatabaseMigrationChain.StepPreflight::id).toList());
+        assertEquals(CurrentFormatTestDatabase.migrationStepIdsFrom(70),
+            plan.steps().stream().map(DatabaseMigrationChain.StepPreflight::id).toList());
         assertTrue(plan.steps().getFirst().effects().stream().anyMatch(effect -> effect.kind() == DatabaseMigrationEffect.Kind.DROP));
         try(var connection = open(configuration); var attach = connection.prepareStatement("ATTACH DATABASE ? AS activity"))
         {
@@ -57,11 +63,11 @@ class Format70To71DatabaseMigrationTest
         }
         assertArrayEquals(configurationBytes, Files.readAllBytes(configuration));
         assertArrayEquals(historyBytes, Files.readAllBytes(history));
-        ApplicationDatabaseMigrator.migrateInPlace(configuration, null);
+        CurrentFormatTestDatabase.migratePairToVersion(configuration, 71);
         try(var connection = open(configuration))
         {
-            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.requireCurrent(connection).version());
-            assertEquals(DatabaseFormatCatalog.current().fingerprint(), SqliteSchemaValidator.fingerprint(connection));
+            assertEquals(71, DatabaseFormatCatalog.inspect(connection).version());
+            assertEquals(DatabaseFormatCatalog.requireVersion(71).fingerprint(), SqliteSchemaValidator.fingerprint(connection));
             assertEquals(beforeConfiguration, snapshot(connection, true));
             var expected = JSON.readTree(source);
             ((com.fasterxml.jackson.databind.node.ObjectNode)expected.path(NODE)).remove(KEY);
@@ -71,11 +77,16 @@ class Format70To71DatabaseMigrationTest
         }
         try(var connection = open(history))
         {
-            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(71, DatabaseFormatCatalog.inspect(connection).version());
             assertEquals(beforeHistory, snapshot(connection, false)); assertEquals(beforeObjects, objects(connection));
+            for(String table: List.of("p25_site_channel", "p25_site_channel_summary"))
+                assertEquals("0", scalar(connection, "SELECT count(*) FROM " + table + " WHERE callsign IS NOT NULL AND trim(callsign)<>''"));
             integrity(connection);
         }
-        ConfigurationHistoryDatabase.validatePair(configuration);
+        ConfigurationHistoryDatabase.validatePairIdentity(configuration);
+        CurrentFormatTestDatabase.validateCurrentPair(configuration);
+        try(var connection = open(configuration)) { assertEquals(expectedCurrentConfiguration, snapshot(connection, true)); }
+        try(var connection = open(history)) { assertEquals(beforeHistory, snapshot(connection, false)); }
         assertNoOp(configuration);
     }
 
@@ -125,15 +136,24 @@ class Format70To71DatabaseMigrationTest
     {
         Path configuration = Format70TestDatabase.create(directory.resolve("workspace.sqlite"));
         Path history = ActivityDatabasePath.forConfiguration(configuration);
-        long workspace = ApplicationMigrationService.requiredOwnedMigrationWorkspace(configuration, MigrationContent.FULL);
+        var full = ApplicationMigrationService.readStartupPlan(configuration);
+        var retirement = new DatabaseMigrationChain.PreflightReport(full.source(), DatabaseFormatCatalog.requireVersion(71),
+            full.steps().stream().filter(step -> step.targetVersion() <= 71).toList());
+        long workspace = ApplicationMigrationService.requiredOwnedMigrationWorkspace(configuration, MigrationContent.FULL, retirement);
         assertEquals(2 * Files.size(configuration) + 64L * 1024 * 1024, workspace);
+        long fullWorkspace = ApplicationMigrationService.requiredOwnedMigrationWorkspace(configuration, MigrationContent.FULL);
+        assertEquals(2 * (Files.size(configuration) + Files.size(history)), fullWorkspace,
+            "The later BSI conversion keeps the conservative whole-pair allowance");
         try(var connection = open(history); var statement = connection.createStatement())
         {
             statement.executeUpdate("WITH RECURSIVE n(value) AS (SELECT 1 UNION ALL SELECT value+1 FROM n WHERE value<5000) " +
                 "INSERT INTO receiver_activity_event(channel_id,observed_at_ms,action_code,event_type_code,encryption_state) " +
                 "SELECT (SELECT channel_id FROM receiver_activity_event LIMIT 1),1000000+value,2,7,0 FROM n");
         }
-        assertEquals(workspace, ApplicationMigrationService.requiredOwnedMigrationWorkspace(configuration, MigrationContent.FULL));
+        assertEquals(workspace, ApplicationMigrationService.requiredOwnedMigrationWorkspace(configuration, MigrationContent.FULL, retirement));
+        assertEquals(2 * (Files.size(configuration) + Files.size(history)),
+            ApplicationMigrationService.requiredOwnedMigrationWorkspace(configuration, MigrationContent.FULL));
+        assertTrue(ApplicationMigrationService.requiredOwnedMigrationWorkspace(configuration, MigrationContent.FULL) > fullWorkspace);
     }
 
     private static void assertNoOp(Path configuration) throws Exception
@@ -169,6 +189,12 @@ class Format70To71DatabaseMigrationTest
         { while(values.next()) tables.add(values.getString(1)); }
         for(String table: tables)
         {
+            if(table.equals("p25_site_bsi"))
+            {
+                // No callsign rows existed in this frozen pair, so the later BSI owner must remain empty.
+                assertEquals("0", scalar(connection, "SELECT count(*) FROM p25_site_bsi"));
+                continue;
+            }
             List<String> rows = new ArrayList<>();
             String where = table.equals("database_metadata") ? " WHERE key<>'database_format_version'" :
                 omitPortable && table.equals("application_settings") ? " WHERE key<>'" + PORTABLE + "'" : "";
@@ -179,6 +205,7 @@ class Format70To71DatabaseMigrationTest
                     StringBuilder row = new StringBuilder();
                     for(int index = 1; index <= values.getMetaData().getColumnCount(); index++)
                     {
+                        if(CurrentFormatTestDatabase.addedHistoryColumn(table, values, index)) continue;
                         Object value = values.getObject(index);
                         if(upgradedPreferences && table.equals("web_user"))
                         {

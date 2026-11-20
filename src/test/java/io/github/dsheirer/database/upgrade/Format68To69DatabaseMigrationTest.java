@@ -61,11 +61,11 @@ class Format68To69DatabaseMigrationTest
             assertEquals(before, snapshot(connection));
         }
         try(var connection = open(configuration)) { assertEquals(68, DatabaseFormatCatalog.inspect(connection).version()); }
-        ApplicationDatabaseMigrator.migrateInPlace(configuration, null);
-        ConfigurationHistoryDatabase.validatePair(configuration);
+        CurrentFormatTestDatabase.migratePairToVersion(configuration, 69);
+        ConfigurationHistoryDatabase.validatePairIdentity(configuration);
         try(var connection = open(history))
         {
-            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(69, DatabaseFormatCatalog.inspect(connection).version());
             assertEquals(ConfigurationHistoryDatabase.FORMAT_69_HISTORY_FINGERPRINT, SqliteSchemaValidator.fingerprint(connection));
             assertEquals(count, scalar(connection, "SELECT count(*) FROM receiver_activity_event"));
             assertEquals(2, scalar(connection, "SELECT encryption_state FROM receiver_activity_event WHERE id=900000000001"));
@@ -74,12 +74,20 @@ class Format68To69DatabaseMigrationTest
             assertEquals(0, scalar(connection, "SELECT count(*) FROM receiver_activity_event WHERE encryption_state=1"));
             assertEquals(900000000100L, scalar(connection, "SELECT seq FROM sqlite_sequence WHERE name='receiver_activity_event'"));
             assertEquals(before, snapshot(connection), "Every original event field, child, counter and allocator is retained");
+            for(String table: List.of("p25_site_channel", "p25_site_channel_summary"))
+                assertEquals(0, scalar(connection, "SELECT count(*) FROM " + table + " WHERE callsign IS NOT NULL AND trim(callsign)<>''"));
             assertEquals(0, scalar(connection, "SELECT count(*) FROM pragma_foreign_key_check"));
             try(var statement = connection.createStatement(); var row = statement.executeQuery("PRAGMA integrity_check"))
             { assertTrue(row.next()); assertEquals("ok", row.getString(1)); }
             try(var statement = connection.createStatement(); var rows = statement.executeQuery(
                 "PRAGMA table_info(receiver_activity_event)"))
             { while(rows.next()) assertNotEquals("encrypted", rows.getString("name")); }
+        }
+        // Later BSI/schema changes have their own adjacent contracts; finish the actual current owner route too.
+        CurrentFormatTestDatabase.validateCurrentPair(configuration);
+        try(var connection = open(history))
+        {
+            assertEquals(before, snapshot(connection), "The complete current chain preserves the original facts and valid new defaults");
         }
         byte[] configCurrent = Files.readAllBytes(configuration), historyCurrent = Files.readAllBytes(history);
         ApplicationDatabaseMigrator.migrateInPlace(configuration, null);
@@ -125,11 +133,17 @@ class Format68To69DatabaseMigrationTest
         Path fresh = directory.resolve("fresh.sqlite");
         SdrTrunkDatabaseStartup.createGlobalDatabase(fresh);
         Path migrated = Format69TestDatabase.create(directory.resolve("migrated.sqlite"));
+        try(var frozen = open(ActivityDatabasePath.forConfiguration(migrated)))
+        {
+            assertEquals(69, DatabaseFormatCatalog.inspect(frozen).version());
+            assertEquals(ConfigurationHistoryDatabase.FORMAT_69_HISTORY_FINGERPRINT, SqliteSchemaValidator.fingerprint(frozen));
+        }
+        CurrentFormatTestDatabase.validateCurrentPair(migrated);
         try(var first = open(ActivityDatabasePath.forConfiguration(fresh));
             var second = open(ActivityDatabasePath.forConfiguration(migrated)))
         {
             assertEquals(SqliteSchemaValidator.fingerprint(first), SqliteSchemaValidator.fingerprint(second));
-            assertEquals(ConfigurationHistoryDatabase.FORMAT_69_HISTORY_FINGERPRINT, SqliteSchemaValidator.fingerprint(first));
+            assertEquals(ConfigurationHistoryDatabase.HISTORY_FINGERPRINT, SqliteSchemaValidator.fingerprint(first));
         }
         ConfigurationHistoryDatabase.validatePair(fresh);
         ConfigurationHistoryDatabase.validatePairIdentity(migrated);
@@ -146,6 +160,12 @@ class Format68To69DatabaseMigrationTest
         { while(rows.next()) tables.add(rows.getString(1)); }
         for(String table: tables)
         {
+            if(table.equals("p25_site_bsi"))
+            {
+                // This frozen fixture has no source callsign rows; later carrier ownership must stay empty.
+                assertEquals(0, scalar(connection, "SELECT count(*) FROM p25_site_bsi"));
+                continue;
+            }
             List<String> rows = new ArrayList<>();
             try(var statement = connection.createStatement(); ResultSet values = statement.executeQuery("SELECT * FROM " + table))
             {
@@ -157,6 +177,7 @@ class Format68To69DatabaseMigrationTest
                     {
                         if(table.equals("receiver_activity_event") &&
                             List.of("encrypted", "encryption_state").contains(metadata.getColumnName(index))) continue;
+                        if(CurrentFormatTestDatabase.addedHistoryColumn(table, values, index)) continue;
                         Object value = values.getObject(index);
                         String text = value instanceof byte[] bytes ? HexFormat.of().formatHex(bytes) : String.valueOf(value);
                         row.append(text.length()).append(':').append(text).append('|');

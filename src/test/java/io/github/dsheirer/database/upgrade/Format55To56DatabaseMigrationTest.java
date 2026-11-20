@@ -344,6 +344,11 @@ class Format55To56DatabaseMigrationTest
             try(var sql = connection.createStatement(); var rows = sql.executeQuery(
                 "SELECT * FROM " + CurrentFormatTestDatabase.retainedMonolithQuery(connection, table, splitProjection)))
             {
+                if(table.equals("p25_site_bsi"))
+                {
+                    assertFalse(rows.next(), "This fixture has no old carrier callsigns to extract");
+                    continue;
+                }
                 while(rows.next())
                 {
                     if(splitProjection && CurrentFormatTestDatabase.changedEncryptionStatistic(table, rows)) continue;
@@ -354,6 +359,7 @@ class Format55To56DatabaseMigrationTest
                     List<String> row = new ArrayList<>();
                     for(int column = 1; column <= rows.getMetaData().getColumnCount(); column++)
                     {
+                        if(CurrentFormatTestDatabase.addedHistoryColumn(table, rows, column)) continue;
                         if("source_call_uuid".equals(rows.getMetaData().getColumnName(column)) ||
                             table.equals("receiver_activity_event") && "duration_ms".equals(rows.getMetaData().getColumnName(column)))
                         { assertNull(rows.getObject(column)); continue; }
@@ -374,6 +380,8 @@ class Format55To56DatabaseMigrationTest
                     values.add(row.toString());
                 }
             }
+            if(List.of("p25_site_channel", "p25_site_channel_summary").contains(table))
+                assertTrue(values.isEmpty(), "This fixture has no learned carrier/callsign rows: " + table);
             values.sort(String::compareTo);
             result.put(table, values);
         }
