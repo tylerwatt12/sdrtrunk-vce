@@ -385,10 +385,7 @@ public final class ManagedRecordingCatalogMigrator
                     case 11 ->
                     {
                         // Preserve every recording and relationship. No historical quality is inferred or backfilled.
-                        for(String column: ManagedRecordingSchema.VOICE_QUALITY_COLUMNS)
-                        {
-                            statement.execute("ALTER TABLE recording_call ADD COLUMN " + column);
-                        }
+                        appendVoiceQualityColumns(connection);
                     }
                     default -> throw new SQLException("No adjacent managed recordings migration from format " + version);
                 }
@@ -397,6 +394,70 @@ public final class ManagedRecordingCatalogMigrator
                 phase.complete();
             }
         }
+    }
+
+    /** The six nullable additions need no old values; STRICT native ADD would scan every call six times. */
+    private static void appendVoiceQualityColumns(Connection connection) throws SQLException
+    {
+        ManagedRecordingSchema.validate(connection, 11);
+        String previous = ManagedRecordingSchema.ddlForFormat(11).get("recording_call");
+        String current = ManagedRecordingSchema.ddlForFormat(12).get("recording_call");
+        List<String> columns;
+        // Prove the exact target and physical append using SQLite itself, with no retained rows to visit.
+        try(Connection validation = DriverManager.getConnection("jdbc:sqlite::memory:");
+            var statement = validation.createStatement())
+        {
+            statement.execute(previous);
+            for(String column: ManagedRecordingSchema.VOICE_QUALITY_COLUMNS)
+                statement.execute("ALTER TABLE recording_call ADD COLUMN " + column);
+            try(var row = statement.executeQuery("SELECT sql FROM sqlite_schema WHERE name='recording_call'"))
+            {
+                if(!row.next() || !current.equals(row.getString(1)))
+                    throw new SQLException("Managed recordings quality additions do not match the exact native target");
+            }
+            columns = recordingCallColumns(validation);
+        }
+        int version = pragmaInt(connection, "schema_version");
+        if(version < 0 || version == Integer.MAX_VALUE || pragmaInt(connection, "writable_schema") != 0)
+            throw new SQLException("Managed recordings quality update cannot advance the SQLite schema version");
+        // The caller owns the catalog's one BEGIN IMMEDIATE transaction. Old records have no appended fields,
+        // so SQLite reads NULL for all six columns and every exact target CHECK remains satisfied.
+        try(var statement = connection.createStatement())
+        {
+            try
+            {
+                statement.execute("PRAGMA writable_schema=ON");
+                try(var update = connection.prepareStatement("UPDATE sqlite_schema SET sql=? " +
+                    "WHERE type='table' AND name='recording_call' AND sql=?"))
+                {
+                    update.setString(1, current);
+                    update.setString(2, previous);
+                    if(update.executeUpdate() != 1)
+                        throw new SQLException("Managed recordings source definition changed during quality update");
+                }
+                statement.execute("PRAGMA schema_version=" + (version + 1));
+            }
+            finally
+            {
+                try { statement.execute("PRAGMA writable_schema=OFF"); }
+                finally { statement.execute("PRAGMA writable_schema=RESET"); }
+            }
+        }
+        if(!columns.equals(recordingCallColumns(connection)))
+            throw new SQLException("Managed recordings quality update changed the native column layout");
+    }
+
+    private static List<String> recordingCallColumns(Connection connection) throws SQLException
+    {
+        var columns = new java.util.ArrayList<String>();
+        try(var statement = connection.createStatement(); var rows = statement.executeQuery(
+            "PRAGMA table_xinfo(recording_call)"))
+        {
+            while(rows.next()) columns.add(rows.getInt("cid") + "|" + rows.getString("name") + "|" +
+                rows.getString("type") + "|" + rows.getInt("notnull") + "|" + rows.getString("dflt_value") +
+                "|" + rows.getInt("pk") + "|" + rows.getInt("hidden"));
+        }
+        return columns;
     }
 
     private static int requireSupportedVersion(Connection connection) throws SQLException

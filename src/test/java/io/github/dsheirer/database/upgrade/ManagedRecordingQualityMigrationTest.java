@@ -137,8 +137,19 @@ class ManagedRecordingQualityMigrationTest
             statement.executeUpdate("UPDATE catalog_metadata SET call_count=1,total_bytes=64 WHERE id=1");
             ManagedRecordingSchema.validate(connection, ManagedRecordingSchema.CURRENT_FORMAT_VERSION);
         }
-        try(Connection left = open(migrated); Connection right = open(fresh))
-        { assertEquals(schema(left), schema(right)); }
+        try(Connection left = open(migrated); Connection right = open(fresh);
+            Connection nativeColumns = DriverManager.getConnection("jdbc:sqlite::memory:");
+            var statement = nativeColumns.createStatement())
+        {
+            assertEquals(schema(left), schema(right));
+            statement.execute(ManagedRecordingSchema.ddlForFormat(11).get("recording_call"));
+            for(String column: ManagedRecordingSchema.VOICE_QUALITY_COLUMNS)
+                statement.execute("ALTER TABLE recording_call ADD COLUMN " + column);
+            assertEquals(schema(nativeColumns).get("recording_call"), schema(left).get("recording_call"));
+            assertEquals(columnLayout(nativeColumns), columnLayout(left));
+            assertEquals(1, scalar(left, "SELECT strict FROM pragma_table_list WHERE name='recording_call'"));
+            assertEquals(0, scalar(left, "PRAGMA writable_schema"));
+        }
         for(Path catalog: List.of(migrated, fresh))
         {
             try(Connection connection = open(catalog))
@@ -176,6 +187,68 @@ class ManagedRecordingQualityMigrationTest
                 integrity(connection);
             }
         }
+    }
+
+    @Test
+    void qualityAppendHasFixedWorkForRetainedRecordingsAndRejectsTheNativeScan() throws Exception
+    {
+        Path catalog = fixture(directory.resolve("bounded.sqlite"));
+        Map<String,Long> trees;
+        long count, sequence;
+        try(Connection connection = open(catalog); var statement = connection.createStatement())
+        {
+            statement.executeUpdate("WITH RECURSIVE n(i) AS (VALUES(1) UNION ALL SELECT i+1 FROM n WHERE i<20000) " +
+                "INSERT INTO recording_call(start_ms,end_ms,duration_ms,relative_path,size_bytes,protocol,call_type,voice_type) " +
+                "SELECT 1000,2000,1000,'bounded-'||i||'.mp3',64,1,1,1 FROM n");
+            statement.executeUpdate("UPDATE catalog_metadata SET call_count=call_count+20000,total_bytes=total_bytes+1280000 WHERE id=1");
+            trees = trees(connection);
+            count = scalar(connection, "SELECT count(*) FROM recording_call");
+            sequence = scalar(connection, "SELECT seq FROM sqlite_sequence WHERE name='recording_call'");
+        }
+        Path nativeScan = directory.resolve("native-scan.sqlite");
+        Files.copy(catalog, nativeScan);
+        try(Connection connection = open(nativeScan); var statement = connection.createStatement())
+        {
+            // STRICT runs quick_check even without a new CHECK, so neither native spelling is a bounded append.
+            for(String column: List.of("voice_decoded_frames INTEGER", ManagedRecordingSchema.VOICE_QUALITY_COLUMNS.getFirst()))
+            {
+                installBudget(connection, new java.util.concurrent.atomic.AtomicInteger());
+                try
+                {
+                    SQLException failure = assertThrows(SQLException.class,
+                        () -> statement.execute("ALTER TABLE recording_call ADD COLUMN " + column));
+                    assertEquals(9, failure.getErrorCode(), "The VM budget must interrupt the native retained-row scan");
+                }
+                finally { org.sqlite.ProgressHandler.clearHandler(connection); }
+                ManagedRecordingSchema.validate(connection, 11);
+            }
+        }
+        var calls = new java.util.concurrent.atomic.AtomicInteger();
+        assertDoesNotThrow(() -> ManagedRecordingCatalogMigrator.migrate(catalog, false, connection -> {}, path -> {
+            Connection connection = open(path);
+            installBudget(connection, calls);
+            return connection;
+        }), "The complete catalog update must not scan retained recordings");
+        try(Connection connection = open(catalog))
+        {
+            ManagedRecordingSchema.validate(connection, ManagedRecordingSchema.CURRENT_FORMAT_VERSION);
+            assertEquals(trees, trees(connection));
+            assertEquals(count, scalar(connection, "SELECT count(*) FROM recording_call"));
+            assertEquals(sequence, scalar(connection, "SELECT seq FROM sqlite_sequence WHERE name='recording_call'"));
+            assertEquals(0, scalar(connection, "SELECT count(*) FROM recording_call WHERE " +
+                QUALITY_COLUMNS.stream().map(column -> column + " IS NOT NULL").collect(
+                    java.util.stream.Collectors.joining(" OR "))));
+            integrity(connection);
+        }
+    }
+
+    private static void installBudget(Connection connection, java.util.concurrent.atomic.AtomicInteger calls)
+        throws SQLException
+    {
+        org.sqlite.ProgressHandler.setHandler(connection, 1000, new org.sqlite.ProgressHandler()
+        {
+            @Override protected int progress() { return calls.incrementAndGet() > 500 ? 1 : 0; }
+        });
     }
 
     @Test
@@ -262,6 +335,27 @@ class ManagedRecordingQualityMigrationTest
         var result = new ArrayList<String>();
         try(var statement = connection.createStatement(); var rows = statement.executeQuery("PRAGMA table_info(recording_call)"))
         { while(rows.next()) result.add(rows.getString("name")); }
+        return result;
+    }
+
+    private static List<String> columnLayout(Connection connection) throws SQLException
+    {
+        var result = new ArrayList<String>();
+        try(var statement = connection.createStatement(); var rows = statement.executeQuery("PRAGMA table_xinfo(recording_call)"))
+        {
+            while(rows.next()) result.add(rows.getInt("cid") + "|" + rows.getString("name") + "|" +
+                rows.getString("type") + "|" + rows.getInt("notnull") + "|" + rows.getString("dflt_value") +
+                "|" + rows.getInt("pk") + "|" + rows.getInt("hidden"));
+        }
+        return result;
+    }
+
+    private static Map<String,Long> trees(Connection connection) throws SQLException
+    {
+        var result = new java.util.TreeMap<String,Long>();
+        try(var statement = connection.createStatement(); var rows = statement.executeQuery(
+            "SELECT name,rootpage FROM sqlite_schema WHERE type IN('table','index') ORDER BY name"))
+        { while(rows.next()) result.put(rows.getString(1), rows.getLong(2)); }
         return result;
     }
 
