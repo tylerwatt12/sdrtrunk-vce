@@ -735,7 +735,7 @@ public final class ApplicationMigrationService
         return safeMultiply(sqliteFootprint(normalized), 2);
     }
 
-    private static boolean changesOnlyBoundedProfileData(DatabaseMigrationChain.StepPreflight step)
+    static boolean changesOnlyBoundedProfileData(DatabaseMigrationChain.StepPreflight step)
     {
         if(step.sourceVersion() == step.targetVersion()) return "repair-portable-preferences".equals(step.id());
         return step.targetVersion() == step.sourceVersion() + 1 && switch(step.sourceVersion())
