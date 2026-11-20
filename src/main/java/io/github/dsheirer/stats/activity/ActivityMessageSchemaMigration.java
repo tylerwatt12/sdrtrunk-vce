@@ -47,7 +47,7 @@ final class ActivityMessageSchemaMigration
         replaceEventDefinition(connection, "main", previous, current);
     }
 
-    /** Widens an admitted event CHECK without rewriting its unchanged physical record layout or indexes. */
+    /** Changes admitted event CHECKs without rewriting their unchanged physical record layout or indexes. */
     static void replaceEventDefinition(Connection connection, String schema, String previous, String current)
         throws SQLException
     {

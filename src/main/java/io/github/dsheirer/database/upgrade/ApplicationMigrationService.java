@@ -748,7 +748,7 @@ public final class ApplicationMigrationService
             case 69 -> "call-owned-voice-activity-v1".equals(step.id());
             case 70 -> "retired-mp3-normalization-v1".equals(step.id());
             case 71 -> "format-71-to-72".equals(step.id());
-            // Native nullable-column additions validate retained rows but dirty only bounded schema pages.
+            // Nullable denial columns and their NULL-valid checks change only bounded schema metadata.
             case 73 -> "p25-denial-reasons-v1".equals(step.id());
             case 74 -> "p25-regroup-types-v1".equals(step.id());
             default -> false;

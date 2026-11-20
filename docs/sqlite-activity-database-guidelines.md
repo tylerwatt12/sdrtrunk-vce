@@ -951,9 +951,11 @@ parent. The writer receives detached scalar facts on the existing background que
 added to receiver callbacks.
 
 The adjacent migration first normalizes a creation-only table-header clause through the existing guarded,
-layout-preserving helper, then adds native nullable columns with CHECK constraints and extends the existing resolved
-view. Header normalization changes no logical field or event record. SQLite
-may scan retained events to validate those constraints but does not rebuild their table or indexes. The small schema
+layout-preserving helper, then appends the two nullable INTEGER columns natively without new CHECKs. Their exact
+authoritative checks are installed through that same unchanged-layout guard before the transaction can commit.
+Every historical record reads NULL for both appended fields and therefore satisfies both new checks. This reaches
+the same physical columns and persisted constraints as native checked additions without their implicit full-history
+quick_check passes. The existing resolved view is extended. No event or index pages are rewritten or scanned. The small schema
 rollback pages and existing configuration allowance own the temporary workspace; no full history copy or additional
 recovery backup is required. Tests cover exact source/target fingerprints, preserved event/index root pages,
 transactional rollback and unchanged-source retry, old NULL values, paired-value constraints and SQLite integrity.

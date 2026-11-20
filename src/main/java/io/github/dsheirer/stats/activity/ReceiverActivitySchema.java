@@ -1148,8 +1148,16 @@ public class ReceiverActivitySchema
         if(!view.contains("a.duration_ms,")) throw new SQLException("Activity duration projection is missing");
         try(var statement = connection.createStatement())
         {
-            statement.executeUpdate("ALTER TABLE " + schema + ".receiver_activity_event ADD COLUMN " + DENIAL_REASON_DEFINITION);
-            statement.executeUpdate("ALTER TABLE " + schema + ".receiver_activity_event ADD COLUMN " + DENIAL_VENDOR_DEFINITION);
+            // Native ADD COLUMN with CHECK runs a full retained-event quick_check for each field. Both new
+            // nullable fields read NULL on every old record, which satisfies their exact target CHECKs.
+            // Append their physical columns natively, then install the checks through the existing guarded
+            // same-layout update within this migrator transaction; no unchecked shape can be committed.
+            statement.executeUpdate("ALTER TABLE " + schema + ".receiver_activity_event ADD COLUMN denial_reason_code INTEGER");
+            statement.executeUpdate("ALTER TABLE " + schema + ".receiver_activity_event ADD COLUMN denial_reason_vendor_specific INTEGER");
+            String current = currentReceiverActivityEventSql();
+            String unchecked = current.replace(DENIAL_REASON_DEFINITION, "denial_reason_code INTEGER")
+                .replace(DENIAL_VENDOR_DEFINITION, "denial_reason_vendor_specific INTEGER");
+            ActivityMessageSchemaMigration.replaceEventDefinition(connection, schema, unchecked, current);
             statement.executeUpdate("DROP VIEW " + schema + ".receiver_activity_event_resolved");
             // Retain the already-separated historical owner projection instead of reintroducing configuration joins.
             statement.executeUpdate(qualifySchemaObject(view.replace("a.duration_ms,",

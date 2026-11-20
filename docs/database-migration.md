@@ -426,9 +426,10 @@ new step. Format 72 remains a frozen populated source, and runtime startup valid
 The format 73-to-74 step adds optional raw P25 denial reasons and their vendor-specific selection flag to the
 existing detailed Activity row. Historical events keep both fields unknown; no reason is reconstructed from labels,
 identities or timestamps. Every existing row, counter, setting, relationship, recording and event/index b-tree survives.
-The Application Migrator uses native nullable-column additions and replaces only the resolved event view. SQLite
-validates the column constraints against retained events, so reading time scales with history, but there is no event
-rewrite, index rebuild, extra recovery copy or retained-history count. Transaction workspace covers bounded schema
+The Application Migrator appends the nullable columns natively, then installs their exact checks through the existing
+guarded schema update: both new fields are NULL on every historical record and satisfy those checks. Only the resolved
+event view is replaced. No retained-event scan, event rewrite, index rebuild, extra recovery copy or retained-history
+count is needed. Transaction workspace covers bounded schema
 pages and existing configuration work, with free-space headroom budgeted separately. Format 73 remains an exact
 populated source and runtime startup validates without altering existing databases.
 
