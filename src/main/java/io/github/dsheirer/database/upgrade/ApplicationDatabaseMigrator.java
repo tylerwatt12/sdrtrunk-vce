@@ -1638,8 +1638,9 @@ public final class ApplicationDatabaseMigrator
 
     private static String formatEffect(DatabaseMigrationEffect effect)
     {
-        String count = effect.affectedRows() >= 0 ? effect.affectedRows() + " row(s)" :
-            "count determined during migration";
+        String count = effect.kind() == DatabaseMigrationEffect.Kind.PRESERVE && effect.affectedRows() == 0 ?
+            "existing rows unchanged" : effect.affectedRows() >= 0 ? effect.affectedRows() + " row(s)" :
+                "count determined during migration";
         return effect.kind() + " " + effect.subject() + ": " + count + " - " + effect.detail();
     }
 

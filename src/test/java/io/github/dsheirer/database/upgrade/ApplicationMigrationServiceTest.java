@@ -127,6 +127,8 @@ class ApplicationMigrationServiceTest
         assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 4 + 1, plan.steps().size());
         assertTrue(plan.steps().stream().flatMap(step -> step.effects().stream())
             .anyMatch(effect -> effect.affectedRows() == DatabaseMigrationEffect.UNKNOWN_COUNT));
+        assertTrue(ApplicationMigrationService.describePlan(plan).contains(
+            "preserve detailed receiver activity history (existing rows unchanged)"));
         assertEquals("4", scalar(database, "SELECT value FROM database_metadata " +
             "WHERE key='database_format_version'"));
         assertEquals("1", scalar(database,

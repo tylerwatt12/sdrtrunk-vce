@@ -1182,7 +1182,11 @@ public final class ApplicationMigrationService
             {
                 description.append("\n  - ").append(effect.kind().name().toLowerCase()).append(' ')
                     .append(effect.subject());
-                if(effect.affectedRows() >= 0)
+                if(effect.kind() == DatabaseMigrationEffect.Kind.PRESERVE && effect.affectedRows() == 0)
+                {
+                    description.append(" (existing rows unchanged)");
+                }
+                else if(effect.affectedRows() >= 0)
                 {
                     description.append(" (").append(effect.affectedRows()).append(" row(s))");
                 }
