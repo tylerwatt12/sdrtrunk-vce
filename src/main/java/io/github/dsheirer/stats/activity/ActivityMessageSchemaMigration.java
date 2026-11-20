@@ -59,7 +59,9 @@ final class ActivityMessageSchemaMigration
                                        String current) throws SQLException
     {
         if(!List.of("main", "activity").contains(schema)) throw new SQLException("Unknown Activity migration schema");
-        if(!List.of("receiver_activity_event", "p25_site_patch_group", "p25_site_patch_group_summary").contains(table))
+        if(!List.of("receiver_activity_event", "p25_site_patch_group", "p25_site_patch_group_summary",
+            "conventional_call_identity_bucket", "conventional_activity_summary",
+            "receiver_activity_tone_sequence").contains(table))
             throw new SQLException("Unknown Activity constraint migration table");
         ApplicationMigrationTransaction.requireActive(connection);
         String prefix = schema.equals("main") ? "" : schema + ".";

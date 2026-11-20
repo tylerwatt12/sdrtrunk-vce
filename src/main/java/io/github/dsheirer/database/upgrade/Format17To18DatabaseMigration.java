@@ -15,12 +15,6 @@ import java.util.List;
 /** Allows the shared detailed-activity site field to retain valid DMR and NXDN site identifiers. */
 final class Format17To18DatabaseMigration implements DatabaseMigrationStep
 {
-    private static final String EVENT_COLUMNS = "id, channel_id, radio_system_id, observed_at_ms, action_code, " +
-        "event_type_code, source_observed_local_id, target_observed_local_id, target_kind_code, " +
-        "source_identity_summary_id, source_identity_kind_code, target_identity_summary_id, frequency_hz, " +
-        "lcn_band, lcn_number, timeslot, encrypted, encryption_algorithm_id, encryption_key_id, observed_nac, " +
-        "observed_rfss, observed_site";
-
     @Override public String id() { return "format-17-to-18"; }
     @Override public String description() { return "Retain full DMR and NXDN site identifiers in activity history"; }
     @Override public int sourceVersion() { return 17; }
@@ -30,6 +24,11 @@ final class Format17To18DatabaseMigration implements DatabaseMigrationStep
     public List<DatabaseMigrationEffect> declaredEffects()
     {
         return effects(DatabaseMigrationEffect.UNKNOWN_COUNT);
+    }
+
+    @Override public List<DatabaseMigrationEffect> declaredEffects(boolean selectedSourceStep)
+    {
+        return selectedSourceStep ? declaredEffects() : effects(0);
     }
 
     @Override
@@ -45,19 +44,17 @@ final class Format17To18DatabaseMigration implements DatabaseMigrationStep
     @Override
     public void migrateSource(Connection connection) throws SQLException
     {
-        try(Statement statement = connection.createStatement())
-        {
-            statement.executeUpdate("DROP VIEW receiver_activity_event_resolved");
-            ReceiverActivitySchema.createFormat18ReceiverActivityEventMigrationTable(connection);
-            statement.executeUpdate("INSERT INTO receiver_activity_event_format18 (" + EVENT_COLUMNS + ") " +
-                "SELECT " + EVENT_COLUMNS + " FROM receiver_activity_event");
-            statement.executeUpdate("DROP TABLE receiver_activity_event");
-            statement.executeUpdate(
-                "ALTER TABLE receiver_activity_event_format18 RENAME TO receiver_activity_event");
-            ReceiverActivitySchema.createCurrentIndexesAndViews(connection);
-        }
+        ReceiverActivitySchema.upgradeConstraintDomainsFrom17(connection);
     }
 
+    @Override public List<DatabaseMigrationEffect> migrateSourceAndReport(Connection connection,
+        boolean selectedSourceStep) throws SQLException
+    {
+        if(selectedSourceStep) return DatabaseMigrationStep.super.migrateSourceAndReport(connection);
+        migrateSource(connection);
+        // No retained rows are affected; owned upgrades need no history-wide count to report preservation.
+        return effects(0);
+    }
 
     private static List<DatabaseMigrationEffect> effects(long activityEvents)
     {

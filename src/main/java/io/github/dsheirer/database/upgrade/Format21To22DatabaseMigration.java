@@ -15,9 +15,6 @@ import java.util.List;
 /** Allows conventional NXDN Null Group calls to retain talkgroup identity zero in compact statistics. */
 final class Format21To22DatabaseMigration implements DatabaseMigrationStep
 {
-    private static final String COLUMNS = "channel_id, bucket_start_ms, identity_role_code, identity_kind_code, " +
-        "identity_id, call_count, encrypted_count, recorded_count, streamed_count";
-
     @Override public String id() { return "format-21-to-22"; }
     @Override public String description() { return "Track NXDN Null Group calls as a distinct destination"; }
     @Override public int sourceVersion() { return 21; }
@@ -27,6 +24,11 @@ final class Format21To22DatabaseMigration implements DatabaseMigrationStep
     public List<DatabaseMigrationEffect> declaredEffects()
     {
         return effects(DatabaseMigrationEffect.UNKNOWN_COUNT);
+    }
+
+    @Override public List<DatabaseMigrationEffect> declaredEffects(boolean selectedSourceStep)
+    {
+        return selectedSourceStep ? declaredEffects() : effects(0);
     }
 
     @Override
@@ -42,18 +44,16 @@ final class Format21To22DatabaseMigration implements DatabaseMigrationStep
     @Override
     public void migrateSource(Connection connection) throws SQLException
     {
-        try(Statement statement = connection.createStatement())
-        {
-            ReceiverActivitySchema.createFormat22ConventionalCallIdentityMigrationTable(connection);
-            statement.executeUpdate("INSERT INTO conventional_call_identity_bucket_format22 (" + COLUMNS + ") " +
-                "SELECT " + COLUMNS + " FROM conventional_call_identity_bucket");
-            statement.executeUpdate("DROP TABLE conventional_call_identity_bucket");
-            statement.executeUpdate("ALTER TABLE conventional_call_identity_bucket_format22 " +
-                "RENAME TO conventional_call_identity_bucket");
-            ReceiverActivitySchema.createCurrentIndexesAndViews(connection);
-        }
+        ReceiverActivitySchema.upgradeConstraintDomainsFrom21(connection);
     }
 
+    @Override public List<DatabaseMigrationEffect> migrateSourceAndReport(Connection connection,
+        boolean selectedSourceStep) throws SQLException
+    {
+        if(selectedSourceStep) return DatabaseMigrationStep.super.migrateSourceAndReport(connection);
+        migrateSource(connection);
+        return effects(0);
+    }
 
     private static List<DatabaseMigrationEffect> effects(long rows)
     {

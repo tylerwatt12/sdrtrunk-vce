@@ -543,11 +543,12 @@ public class ReceiverActivitySchema
         rebuildP25HomeIdentityKeyView(connection);
     }
 
-    /** Clean event definition used only by fresh format 50 and its adjacent migration. */
-    public static void createFormat50ReceiverActivityEventMigrationTable(Connection connection) throws SQLException
+    /** Admit prospective tone categories without rewriting retained format-49 events or indexes. */
+    public static void upgradeToneEventConstraints(Connection connection) throws SQLException
     {
-        String sql = receiverActivityEventSql().replace("receiver_activity_event (", "receiver_activity_event_format50 (");
-        try(Statement statement = connection.createStatement()) { statement.executeUpdate(sql); }
+        ActivityMessageSchemaMigration.relaxEventConstraints(connection,
+            receiverActivityEventSql(MAXIMUM_OBSERVED_SITE, EVENT_TYPES, true),
+            receiverActivityEventSql().replace("CREATE TABLE IF NOT EXISTS", "CREATE TABLE"));
     }
 
     public static void createFormat50ResolvedView(Connection connection) throws SQLException
@@ -1318,64 +1319,39 @@ public class ReceiverActivitySchema
                     workingAddressColumn("target_observed_working_id", true) + "," : "");
     }
 
-    /** Creates the replacement event table used only by the adjacent format-17-to-18 migration. */
-    public static void createFormat18ReceiverActivityEventMigrationTable(Connection connection) throws SQLException
+    /** Widen only the frozen format-17 site CHECK; records, allocators and indexes stay intact. */
+    public static void upgradeConstraintDomainsFrom17(Connection connection) throws SQLException
     {
+        ActivityMessageSchemaMigration.replaceEventDefinition(connection, "main",
+            receiverActivityEventSql(FORMAT_17_MAXIMUM_OBSERVED_SITE, PRE_FORMAT_26_EVENT_TYPES),
+            receiverActivityEventSql(MAXIMUM_OBSERVED_SITE, PRE_FORMAT_26_EVENT_TYPES)
+                .replace("CREATE TABLE IF NOT EXISTS", "CREATE TABLE"));
+    }
+
+    /** Widen only the two frozen event-type CHECKs and update their resolved names. */
+    public static void upgradeConstraintDomainsFrom25(Connection connection) throws SQLException
+    {
+        ActivityMessageSchemaMigration.replaceEventDefinition(connection, "main",
+            receiverActivityEventSql(MAXIMUM_OBSERVED_SITE, PRE_FORMAT_26_EVENT_TYPES),
+            receiverActivityEventSql(MAXIMUM_OBSERVED_SITE, EVENT_TYPES)
+                .replace("CREATE TABLE IF NOT EXISTS", "CREATE TABLE"));
+        ActivityMessageSchemaMigration.replaceTableDefinition(connection, "main", "conventional_activity_summary",
+            createConventionalActivitySummarySql(PRE_FORMAT_26_EVENT_TYPES),
+            createConventionalActivitySummarySql(EVENT_TYPES).replace("CREATE TABLE IF NOT EXISTS", "CREATE TABLE"));
         try(Statement statement = connection.createStatement())
         {
-            statement.executeUpdate(receiverActivityEventSql(MAXIMUM_OBSERVED_SITE, PRE_FORMAT_26_EVENT_TYPES)
-                .replace("receiver_activity_event (", "receiver_activity_event_format18 ("));
+            statement.executeUpdate("DROP VIEW receiver_activity_event_resolved");
+            statement.executeUpdate(createResolvedViewSql(EVENT_TYPES));
         }
     }
 
-    /** Creates the replacement event table used only by the adjacent format-25-to-26 migration. */
-    public static void createFormat26ReceiverActivityEventMigrationTable(Connection connection) throws SQLException
+    /** Admit NXDN Null Group identities while preserving every retained counter and index. */
+    public static void upgradeConstraintDomainsFrom21(Connection connection) throws SQLException
     {
-        try(Statement statement = connection.createStatement())
-        {
-            statement.executeUpdate(receiverActivityEventSql(MAXIMUM_OBSERVED_SITE, EVENT_TYPES)
-                .replace("receiver_activity_event (", "receiver_activity_event_format26 ("));
-        }
-    }
-
-    /** Creates the replacement conventional summary used only by the adjacent format-25-to-26 migration. */
-    public static void createFormat26ConventionalActivitySummaryMigrationTable(Connection connection)
-        throws SQLException
-    {
-        try(Statement statement = connection.createStatement())
-        {
-            statement.executeUpdate(createConventionalActivitySummarySql(EVENT_TYPES).replace(
-                "conventional_activity_summary (", "conventional_activity_summary_format26 ("));
-        }
-    }
-
-    /** Creates the replacement identity bucket used only by the adjacent format-21-to-22 migration. */
-    public static void createFormat22ConventionalCallIdentityMigrationTable(Connection connection)
-        throws SQLException
-    {
-        try(Statement statement = connection.createStatement())
-        {
-            statement.executeUpdate(createConventionalCallIdentityBucketSql(true).replace(
-                "conventional_call_identity_bucket (", "conventional_call_identity_bucket_format22 ("));
-        }
-    }
-
-    /** Restores the frozen pre-format-24 indexes and pre-format-26 view after a historical table rebuild. */
-    public static void createCurrentIndexesAndViews(Connection connection) throws SQLException
-    {
-        try(Statement statement = connection.createStatement())
-        {
-            createIndexesAndViews(statement, false, PRE_FORMAT_26_EVENT_TYPES);
-        }
-    }
-
-    /** Restores the complete format-26 indexes and resolved view after its adjacent table rebuild. */
-    public static void createFormat26IndexesAndViews(Connection connection) throws SQLException
-    {
-        try(Statement statement = connection.createStatement())
-        {
-            createIndexesAndViews(statement, true, EVENT_TYPES);
-        }
+        // Formatting this frozen CHECK leaves leading whitespace; match SQLite's stored CREATE spelling.
+        ActivityMessageSchemaMigration.replaceTableDefinition(connection, "main", "conventional_call_identity_bucket",
+            createConventionalCallIdentityBucketSql(false),
+            createConventionalCallIdentityBucketSql(true).replace("CREATE TABLE IF NOT EXISTS", "CREATE TABLE").strip());
     }
 
     /** Worker-only receipt for credits that will be retained only after their transaction commits. */

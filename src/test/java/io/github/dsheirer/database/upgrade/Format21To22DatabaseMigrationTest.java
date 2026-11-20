@@ -58,6 +58,7 @@ class Format21To22DatabaseMigrationTest
 
             assertEquals(1, new Format21To22DatabaseMigration().validateSource(connection)
                 .getFirst().affectedRows());
+            statement.execute("PRAGMA foreign_keys=OFF");
             connection.setAutoCommit(false);
             try
             {
@@ -73,6 +74,7 @@ class Format21To22DatabaseMigrationTest
             finally
             {
                 connection.setAutoCommit(true);
+                statement.execute("PRAGMA foreign_keys=ON");
             }
 
             assertEquals(7, number(statement, """

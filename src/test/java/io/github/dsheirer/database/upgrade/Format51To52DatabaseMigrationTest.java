@@ -259,6 +259,12 @@ class Format51To52DatabaseMigrationTest
         for(String table:tables)
         {
             if(CurrentFormatTestDatabase.addedCurrentTable(connection, table)) continue;
+            if(table.equals("p25_site_bsi"))
+            {
+                // This fixture has no historical channel callsigns to transfer into the format-73 owner.
+                assertEquals(0, scalar(connection, "SELECT count(*) FROM " + table));
+                continue;
+            }
             List<String> values=new ArrayList<>();
             try(var sql=connection.createStatement();var rows=sql.executeQuery("SELECT * FROM "+CurrentFormatTestDatabase.retainedMonolithQuery(connection,table)+
                 (table.equals("database_metadata")?" WHERE key<>'database_format_version'":
@@ -272,7 +278,8 @@ class Format51To52DatabaseMigrationTest
                     for(int column=1;column<=rows.getMetaData().getColumnCount();column++)
                     {
                         if("source_call_uuid".equals(rows.getMetaData().getColumnName(column)) ||
-                            table.equals("receiver_activity_event") && "duration_ms".equals(rows.getMetaData().getColumnName(column)))
+                            table.equals("receiver_activity_event") && List.of("duration_ms", "denial_reason_code",
+                                "denial_reason_vendor_specific").contains(rows.getMetaData().getColumnName(column)))
                         { assertNull(rows.getObject(column)); continue; }
                         if(CurrentFormatTestDatabase.addedMessageCounter(rows, column)) continue;
                         Object value=CurrentFormatTestDatabase.retainedValue(table, rows, column, targetFormat);

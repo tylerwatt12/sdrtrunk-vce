@@ -16,18 +16,6 @@ import java.util.List;
 /** Retains exact P25 radio inhibit and uninhibit commands and acknowledgements in Activity history. */
 final class Format25To26DatabaseMigration implements DatabaseMigrationStep
 {
-    private static final String EVENT_COLUMNS = "id, channel_id, radio_system_id, observed_at_ms, action_code, " +
-        "event_type_code, source_observed_local_id, target_observed_local_id, target_kind_code, " +
-        "source_identity_summary_id, source_identity_kind_code, target_identity_summary_id, frequency_hz, " +
-        "lcn_band, lcn_number, timeslot, encrypted, encryption_algorithm_id, encryption_key_id, observed_nac, " +
-        "observed_rfss, observed_site";
-    private static final String CONVENTIONAL_SUMMARY_COLUMNS =
-        "channel_id, frequency_hz, timeslot, first_seen_ms, last_seen_ms, acknowledge_count, active_count, " +
-        "busy_count, call_count, check_count, check_ack_count, continue_count, data_count, denial_count, " +
-        "emergency_count, gps_count, grant_count, join_count, logout_count, page_count, patch_count, " +
-        "patch_cancel_count, patch_create_count, queued_count, register_count, request_count, status_count, " +
-        "unknown_count, last_event_type_code, encrypted_count, recorded_count, streamed_count";
-
     @Override public String id() { return "format-25-to-26"; }
     @Override public String description()
     {
@@ -48,8 +36,7 @@ final class Format25To26DatabaseMigration implements DatabaseMigrationStep
         return selectedSourceStep ?
             effects(DatabaseMigrationEffect.UNKNOWN_COUNT, DatabaseMigrationEffect.UNKNOWN_COUNT,
                 DatabaseMigrationEffect.UNKNOWN_COUNT, RepairReport.declared(), true) :
-            activityEffects(DatabaseMigrationEffect.UNKNOWN_COUNT, DatabaseMigrationEffect.UNKNOWN_COUNT,
-                DatabaseMigrationEffect.UNKNOWN_COUNT);
+            activityEffects(0, 0, 0);
     }
 
     @Override
@@ -78,35 +65,15 @@ final class Format25To26DatabaseMigration implements DatabaseMigrationStep
     public List<DatabaseMigrationEffect> migrateSourceAndReport(Connection connection, boolean selectedSourceStep)
         throws SQLException
     {
+        ApplicationMigrationTransaction.requireActive(connection);
         RepairReport repairs = selectedSourceStep ? repair(connection) : RepairReport.none();
-        long events = count(connection, "receiver_activity_event");
-        long identityMembers = count(connection, "activity_event_identity_member");
-        long conventionalSummaries = count(connection, "conventional_activity_summary");
-        rebuildActivityTables(connection);
+        // Owned/intermediate sources preserve every row without counting untouched retained history.
+        long events = selectedSourceStep ? count(connection, "receiver_activity_event") : 0;
+        long identityMembers = selectedSourceStep ? count(connection, "activity_event_identity_member") : 0;
+        long conventionalSummaries = selectedSourceStep ? count(connection, "conventional_activity_summary") : 0;
+        ReceiverActivitySchema.upgradeConstraintDomainsFrom25(connection);
         return selectedSourceStep ? effects(events, identityMembers, conventionalSummaries, repairs, false) :
             activityEffects(events, identityMembers, conventionalSummaries);
-    }
-
-    private static void rebuildActivityTables(Connection connection) throws SQLException
-    {
-        try(Statement statement = connection.createStatement())
-        {
-            statement.executeUpdate("DROP VIEW receiver_activity_event_resolved");
-            ReceiverActivitySchema.createFormat26ReceiverActivityEventMigrationTable(connection);
-            ReceiverActivitySchema.createFormat26ConventionalActivitySummaryMigrationTable(connection);
-            statement.executeUpdate("INSERT INTO receiver_activity_event_format26 (" + EVENT_COLUMNS + ") " +
-                "SELECT " + EVENT_COLUMNS + " FROM receiver_activity_event");
-            statement.executeUpdate("INSERT INTO conventional_activity_summary_format26 (" +
-                CONVENTIONAL_SUMMARY_COLUMNS + ") SELECT " + CONVENTIONAL_SUMMARY_COLUMNS +
-                " FROM conventional_activity_summary");
-            statement.executeUpdate("DROP TABLE receiver_activity_event");
-            statement.executeUpdate(
-                "ALTER TABLE receiver_activity_event_format26 RENAME TO receiver_activity_event");
-            statement.executeUpdate("DROP TABLE conventional_activity_summary");
-            statement.executeUpdate("ALTER TABLE conventional_activity_summary_format26 " +
-                "RENAME TO conventional_activity_summary");
-            ReceiverActivitySchema.createFormat26IndexesAndViews(connection);
-        }
     }
 
     private static RepairReport inspectRepairs(Connection connection) throws SQLException
