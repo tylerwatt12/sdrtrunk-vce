@@ -211,22 +211,27 @@ java {
 
 def radioSystemCatalogInput = providers.gradleProperty('radioSystemCatalogFile')
 def radioSystemCatalogOutput = layout.buildDirectory.file('generated/radio-system-names/dsdplus.networks')
+//Capture plain values during configuration so the action does not access the build script at execution time.
+def radioSystemCatalogScript = file('tools/build/fetch_dsdplus_networks.py')
+def radioSystemCatalogOutputPath = radioSystemCatalogOutput.get().asFile.absolutePath
+def radioSystemCatalogSource = radioSystemCatalogInput.isPresent() ? file(radioSystemCatalogInput.get()) : null
+def radioSystemCatalogPython = providers.gradleProperty('catalogPython').getOrElse(
+        org.gradle.nativeplatform.platform.internal.DefaultNativePlatform.currentOperatingSystem.isWindows() ?
+                'python' : 'python3')
+
 tasks.register('prepareRadioSystemCatalog', Exec) {
     group = 'build'
     description = 'Fetches one immutable DSDPlus network-name snapshot, or validates an explicit local snapshot.'
-    inputs.file('tools/build/fetch_dsdplus_networks.py')
+    inputs.file(radioSystemCatalogScript)
     inputs.property('catalogSource', radioSystemCatalogInput.orElse('latest-public-wiki'))
-    if(radioSystemCatalogInput.isPresent()) inputs.file(radioSystemCatalogInput.map { file(it) })
+    if(radioSystemCatalogSource != null) inputs.file(radioSystemCatalogSource)
     outputs.file(radioSystemCatalogOutput)
     // A new build without an explicit snapshot checks the current source once, rather than reusing yesterday's data.
-    outputs.upToDateWhen { radioSystemCatalogInput.isPresent() }
+    outputs.upToDateWhen { radioSystemCatalogSource != null }
     doFirst {
-        def python = providers.gradleProperty('catalogPython').getOrElse(
-            org.gradle.nativeplatform.platform.internal.DefaultNativePlatform.currentOperatingSystem.isWindows() ?
-                'python' : 'python3')
-        def arguments = [python, file('tools/build/fetch_dsdplus_networks.py').absolutePath,
-            '--output', radioSystemCatalogOutput.get().asFile.absolutePath]
-        if(radioSystemCatalogInput.isPresent()) arguments += ['--source-file', file(radioSystemCatalogInput.get()).absolutePath]
+        def arguments = [radioSystemCatalogPython, radioSystemCatalogScript.absolutePath,
+                '--output', radioSystemCatalogOutputPath]
+        if(radioSystemCatalogSource != null) arguments += ['--source-file', radioSystemCatalogSource.absolutePath]
         commandLine(arguments)
     }
 }
