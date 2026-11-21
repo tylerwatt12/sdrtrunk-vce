@@ -32297,6 +32297,19 @@ async function renderStreaming() {
   }
 }
 
+async function renderAdminEncryptionKeys(renderContext) {
+  const { createEncryptionKeysWorkspace } = await import('./features/encryption-keys.js?v=1');
+  if (!renderIsCurrent(renderContext)) return;
+  const { table, jsonDocumentFetch, registerConnection } = administrationRequestDependencies(renderContext);
+  const workspace = createEncryptionKeysWorkspace({ node, section, sectionActionHost, formField, uiSelectFrame,
+    uiToggle, uiStatus, iconButton, table, browsingWorkflows, openReadOnlyModal, confirmAction,
+    modalFooter: aliasModalFooter, fetchDocument: jsonDocumentFetch, formatNumber: number,
+    signal: renderContext.signal, isCurrent: () => renderIsCurrent(renderContext) });
+  content.append(workspace.element);
+  registerConnection(workspace);
+  await workspace.load();
+}
+
 async function renderAdminRemoteLinks(renderContext) {
   const { requestJson } = administrationRequestDependencies(renderContext);
   const { createRemoteLinksWorkspace } = await import('./features/remote-links.js?v=25');
@@ -36258,6 +36271,8 @@ function adminSettingsGroups() {
     { label: 'Receiver configuration', items: [
       { id: 'remote-links', label: 'Remote Links', icon: 'network-visualizer', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
         description: 'Receive P25 feeds here or send local P25 feeds to another installation.' },
+      { id: 'encryption-keys', label: 'Encryption keys', icon: 'key', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
+        description: 'Manage keys used to decrypt received voice calls.' },
       { id: 'protocol-p25', label: 'P25 band plans', icon: 'radio-tower', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
         description: 'Configure P25 band plan overrides.' }
     ] },
@@ -36354,6 +36369,7 @@ async function renderAdmin(options = {}) {
     }
   }
   else if (active === 'remote-links') await renderAdminRemoteLinks(renderContext);
+  else if (active === 'encryption-keys') await renderAdminEncryptionKeys(renderContext);
   else if (active === 'push-setup') {
     const workspace = await alertsWorkspace(renderContext, 'setup', renderContext.guideData ? {
       guideMode: true, requestJson, onPushEnabledChanged: () => {}

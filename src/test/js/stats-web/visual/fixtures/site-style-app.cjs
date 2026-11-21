@@ -3,6 +3,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
+const { createEncryptionKeySnapshot } = require('./encryption-keys.cjs');
 const { recording, transcript, scanLists, liveCall } = require('./audio-dock-app.cjs');
 const root = path.resolve(__dirname, '../../../../../..');
 const now = Date.parse('2026-10-01T12:00:00Z');
@@ -508,6 +509,7 @@ async function installSiteStyleApplication(page, theme = 'light', liveInitialSna
     if (p === '/api/v1/admin/aliases/options') return respond({ revision: 1, alias_list: list,
       streams: [{ configuration_id: stream.configuration_id, name: stream.name }] });
     if (p === '/api/v1/admin/operational-preferences') return route.fulfill({ json: operational });
+    if (p === '/api/v1/admin/encryption-keys') return route.fulfill({ json: createEncryptionKeySnapshot() });
     if (p === '/api/v1/admin/paging-tone-detection') return route.fulfill({ json: {
       revision: '1'.repeat(64), enabled: true, status: 'ready' } });
     if (p === '/api/v1/admin/call-filtering') return route.fulfill({ json: {

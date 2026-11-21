@@ -98,7 +98,7 @@ async function main() {
   assert.deepEqual(plain(groups.map((group) => group.items.map((item) => item.id))), [
     ['computer', 'health', 'application-log', 'web-diagnostic-log', 'support', 'remote-support'], ['call-matching', 'tuner-allocation'], ['recordings', 'audio-quality', 'transcription'],
     ['push-setup'],
-    ['activity', 'retained-statistics'], ['remote-links', 'protocol-p25'], ['display', 'users', 'access']
+    ['activity', 'retained-statistics'], ['remote-links', 'encryption-keys', 'protocol-p25'], ['display', 'users', 'access']
   ]);
   const html = fs.readFileSync(path.resolve(path.dirname(process.argv[2] ||
     path.resolve(__dirname, '../../../../stats-web/assets/app.js')), '../index.html'), 'utf8');

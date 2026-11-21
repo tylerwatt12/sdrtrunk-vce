@@ -1364,7 +1364,7 @@ void initializeReceiverHealth();
     ['Audio & recordings', [['recording', 'Recording settings', 'recording-settings'],
       ['audio', 'Audio quality', 'audio-quality'], ['transcription', 'Transcription', 'transcription']]],
     ['Activity & storage', [['activity', 'Activity settings', 'activity'], ['cleanup', 'Saved data cleanup', 'cleanup']]],
-    ['Receiver configuration', [['remote', 'Remote Links', 'network-visualizer'], ['bandplans', 'P25 band plans', 'radio-tower']]],
+    ['Receiver configuration', [['remote', 'Remote Links', 'network-visualizer'], ['encryption-keys', 'Encryption keys', 'key'], ['bandplans', 'P25 band plans', 'radio-tower']]],
     ['Web interface', [['display', 'Display settings', 'display'], ['accounts', 'Web accounts', 'users'],
       ['access', 'Page access', 'admin']]]
   ];

@@ -88,7 +88,8 @@ const contracts = [
   ["web call player", "web-call-player.test.js", "stats-web/assets/web-call-player.js"],
   ["paging-tone detection settings", "paging-tone-detection.test.js", "stats-web/assets/features/paging-tone-detection.js"],
   ["paging-tone summaries", "paging-tone-summary.test.js", "stats-web/assets/core/call-audio-details.js"],
-  ["call filtering settings", "call-filtering.test.js", "stats-web/assets/features/call-filtering.js"]
+  ["call filtering settings", "call-filtering.test.js", "stats-web/assets/features/call-filtering.js"],
+  ["encryption key management", "encryption-keys.test.js", "stats-web/assets/features/encryption-keys.js"]
 ];
 
 // Some contracts invoke exported checks in sibling test files. Derive those helpers

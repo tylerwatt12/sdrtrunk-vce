@@ -51,6 +51,7 @@ const administration = [
   ['retained-statistics', '.retained-statistics-page', 'Saved data'],
   ['remote-links', '.remote-links-page', 'Regional receiver'],
   ['remote-support', '[data-remote-support]', 'Allow remote support'],
+  ['encryption-keys', '.encryption-keys-workspace', 'County Dispatch'],
   ['protocol-p25', '.p25-overrides-workspace', '851'],
   ['display', '.admin-display-settings', 'United States'],
   ['users', '.admin-account-card', 'field.operator'],
@@ -63,6 +64,16 @@ const openAliasChannelScope = async (page) => {
   await expect(page.locator('.alias-coverage-channel-grid')).toBeVisible();
 };
 const additionalCases = [
+  ['admin-encryption-key-add', 'view=admin&tab=encryption-keys', '.encryption-keys-workspace', 'County Dispatch',
+    async page => {
+      await page.getByRole('button', { name: 'Add key', exact: true }).click();
+      await expect(page.getByRole('dialog', { name: 'Add encryption key', exact: true })).toBeVisible();
+    }],
+  ['admin-encryption-key-edit', 'view=admin&tab=encryption-keys', '.encryption-keys-workspace', 'County Dispatch',
+    async page => {
+      await page.getByRole('button', { name: 'Edit key County Dispatch', exact: true }).click();
+      await expect(page.getByRole('dialog', { name: 'Edit encryption key', exact: true })).toBeVisible();
+    }],
   ['recordings-quality-details', 'view=recordings', '.recordings-library', 'Fire Dispatch',
     async page => {
       await page.locator('.recordings-call-info').first().click();

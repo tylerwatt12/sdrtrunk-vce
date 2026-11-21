@@ -12,8 +12,8 @@ for (const theme of ['light']) {
       const navigation = workspace.getByRole('navigation', { name: 'Administration sections' });
       const picker = navigation.getByLabel('Administration section', { exact: true });
       await expect(navigation.locator('.ui-settings-nav-group')).toHaveCount(6);
-      await expect(navigation.locator('.ui-settings-nav-link')).toHaveCount(16);
-      await expect(navigation.locator('.ui-settings-nav-link svg')).toHaveCount(16);
+      await expect(navigation.locator('.ui-settings-nav-link')).toHaveCount(17);
+      await expect(navigation.locator('.ui-settings-nav-link svg')).toHaveCount(17);
       await expect(navigation.getByRole('link', { name: 'Call matching', exact: true, includeHidden: true })).toHaveCount(1);
       await expect(navigation.getByRole('link', { name: 'Tuner allocation', exact: true, includeHidden: true })).toHaveCount(1);
       await expect(navigation.locator('[aria-current="page"]')).toHaveText('Recording settings');
