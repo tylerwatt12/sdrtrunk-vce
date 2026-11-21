@@ -16,7 +16,7 @@ are not accepted.
 | Your starting point | Choose | What to expect |
 | --- | --- | --- |
 | You are new to VCE | **Start fresh** | Create a new profile, then set up your administrator account, web access, audio, and radios. |
-| You already use VCE | **Upgrade existing VCE**, then choose its folder | Transfer its portable data into this installation, including recordings, the Managed Recordings catalog, voice libraries, optional modules, and encryption vault. |
+| You already use VCE | **Upgrade existing VCE**, then choose its folder | Transfer its portable data into this installation, including recordings, the Managed Recordings catalog, voice libraries and saved settings. |
 | You use mainline sdrtrunk or an older XML playlist | **Import XML playlist**, then choose the playlist | Bring over supported channels, aliases, and streaming settings. The XML file stays unchanged. |
 
 Before a VCE upgrade begins large operations, close the previous VCE application, make a complete manual backup,
@@ -43,7 +43,7 @@ Statistics & history, Recordings, Your radios, Improve performance, and Review &
 
 A healthy completed profile starts normally. Optional JMBE checks, decoding optimization, and unread release notes
 alone do not reopen setup. Interrupted first setup resumes; required data updates, administrator or web-access
-repairs, and a required vault unlock are handled before reception starts.
+repairs are handled before reception starts.
 
 - **Administrator:** Create the password for the fixed `admin` account if the imported profile does not already have
   a usable one. Imported accounts are retained when valid. Changing an existing administrator password requires
@@ -73,7 +73,7 @@ and decoding tests show progress in the wizard. Navigation waits for a running o
 safely. Exit keeps accepted settings and discards unsaved password entries.
 
 On **Review & finish**, check the actual output folders, web access, and channels selected to start automatically.
-Unlock the vault if requested. Reception starts after required setup and decoding preparation finish. Successful
+Reception starts after required setup and decoding preparation finish. Successful
 imports and updates continue to the next needed step; their report remains available without a countdown.
 
 ## What a VCE upgrade brings over
@@ -83,7 +83,8 @@ imports and updates continue to the next needed step; their report remains avail
 | Channels, aliases, accounts, and preferences | Preserved, with required conversion and declared repairs or resets |
 | Application Activity, statistics, learned observations, and alert history | Preserved when selected and supported; otherwise start fresh without copying or counting the discarded history |
 | Remote Links pairing and connection settings and paging-tone detection | Imported from the database, including eligible legacy settings kept with an older profile |
-| Encryption vault, JMBE library in `jmbe`, and optional files in `modules` | Transferred with the portable data folder |
+| Voice encryption keys | Saved as ordinary, unencrypted configuration in the application database |
+| JMBE library in `jmbe` and other existing profile files | Transferred with the portable data folder |
 | Classic and Managed call audio, logs, event logs, screenshots, and streaming output inside `data` | Transferred with the portable data folder |
 | Managed Recordings catalog | Transferred with its audio; a required catalog update preserves the recording entries |
 | Saved output and library paths inside the previous data folder | Changed to the matching location in the new data folder |
@@ -141,11 +142,15 @@ playlist, start VCE in a new folder.
 | Radios | Web **Tuners** |
 | Channel auto-start | Web **Channels → Auto-start** |
 | Decoding optimization | Desktop **Settings → CPU → Vector Calibration** |
-| Unlock saved encryption keys | Desktop **View → Encryption Keys → Unlock Vault** |
+| Voice encryption keys | Desktop **View → Encryption Keys** |
 | Release notes | Desktop **Help → What's New** |
 
 On **Web Server**, **Change Password** requires the current password; **Reset Password** provides explicit local
 account recovery. **Use HTTPS** can be changed locally and remains required for **Other devices**.
+
+Voice decryption is included for P25 Phase 1 and Phase 2 (DES-OFB, AES-256 and ADP), DMR (RC4, AES-128 and AES-256),
+and NXDN (scrambler, DES-OFB and AES-256-OFB). Enter known keys in **View → Encryption Keys**; no separate module
+installation or vault password is required. Keys are saved without encryption alongside your other settings.
 
 JMBE setup remains local to the desktop application. The desktop statistics panel provides maintenance actions;
 collection and retention choices are in the web interface. The Managed recording folder is shown in Recording
@@ -155,8 +160,8 @@ settings and is separate from the Classic output folder. Changing Classic's fold
 
 Windows, Linux, and current macOS downloads use `<install>/data`. The configuration database is
 `data/database/sdrtrunk.sqlite`; its matching Activity database is `data/database/activity.sqlite`. Preserve the
-matching pair together when keeping history. Settings, the encryption vault, JMBE libraries, and optional modules
-belong to this profile. Recording and other output folders can be changed, so their effective locations may be elsewhere.
+matching pair together when keeping history. Settings and voice encryption keys are in the configuration database.
+JMBE libraries and other profile files belong to this profile. Recording and other output folders can be changed, so their effective locations may be elsewhere.
 
 To make a complete manual backup, stop VCE and copy the entire installation folder, including `data`, to a separate
 backup location. A legacy macOS `.app` keeps its profile in the sibling `<app-name>-data` folder; back up that folder
@@ -207,7 +212,7 @@ Use only one of these options. Fresh creation and XML import create and validate
 before installing it. `--upgrade-data` accepts a supported previous installation folder, portable data folder, or
 macOS application bundle. It retains the strict source-preserving copy-import behavior for existing command-line
 workflows; it does not move the old portable folder like **Upgrade existing VCE** in the graphical wizard. It copies
-the database and available vault, JMBE, and optional module files, but not audio, logs, streaming output, screenshots,
+the database and available JMBE and other supported profile files, but not audio, logs, streaming output, screenshots,
 or the Managed Recordings catalog. The selected old source remains unchanged. A standalone SQLite file is refused.
 These options apply only when the active data folder has no database; they cannot merge into or replace an existing
 profile. The retired `--import-sqlite` flag is refused rather than treated as a normal launch.

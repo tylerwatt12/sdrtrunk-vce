@@ -22,7 +22,6 @@ package io.github.dsheirer.gui.preference;
 import io.github.dsheirer.gui.preference.application.AppearancePreferenceEditor;
 import io.github.dsheirer.gui.preference.calibration.VectorCalibrationPreferenceEditor;
 import io.github.dsheirer.gui.preference.decoder.JmbeLibraryPreferenceEditor;
-import io.github.dsheirer.gui.preference.decoder.VoiceDecryptionModulePreferenceEditor;
 import io.github.dsheirer.gui.preference.directory.DirectoryPreferenceEditor;
 import io.github.dsheirer.gui.preference.stats.StatsServerPreferenceEditor;
 import io.github.dsheirer.gui.preference.stats.WebServerPreferenceEditor;
@@ -51,8 +50,6 @@ public class PreferenceEditorFactory
                 return new DirectoryPreferenceEditor(userPreferences);
             case JMBE_LIBRARY:
                 return new JmbeLibraryPreferenceEditor(userPreferences);
-            case VOICE_DECRYPTION_MODULE:
-                return new VoiceDecryptionModulePreferenceEditor(userPreferences);
             case SOURCE_TUNERS:
                 return new TunerPreferenceEditor(userPreferences);
             case STATS_SERVER:

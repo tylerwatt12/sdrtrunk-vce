@@ -38,14 +38,14 @@ class SdrTrunkDatabaseDdlBoundaryTest
     private static final Pattern TEMP_VIEW_DDL = Pattern.compile("(?i)CREATE\\s+TEMP(?:ORARY)?\\s+VIEW");
     private static final Pattern SCHEMA_DDL_CALL = Pattern.compile(
         "\\b(?:(?:SdrTrunkDatabaseSchema|DmrActivitySchema|TrunkedSiteSchema|" +
-            "EncryptionKeyVaultSchema|TrunkedIdentitySchema|ReceiverActivitySchema)\\.create\\w*|" +
+            "TrunkedIdentitySchema|ReceiverActivitySchema)\\.create\\w*|" +
             "ReceiverActivitySchema\\.(?:rebuildCoveringActivityIndexes|rebuildHistoricalMemberEvidenceIndexes|" +
                 "rebuildStoredMemberChannelEvidence|rebuildTargetIdentityForeignKeyIndex)|" +
             "ConfigurationHistorySchema\\.(?:createConfiguration|createHistory|separateHistoryOwners|" +
                 "addAliasActivityIdentity|removeConfiguration)|" +
             "Format(?:2|4|5)SchemaSql\\.create\\w*|ManagedRecordingSchema\\.ddlForFormat)\\s*\\(");
     private static final Pattern FRESH_SCHEMA_CALL = Pattern.compile(
-        "\\bSdrTrunkDatabaseStartup(?:::|\\.)(?:createGlobalDatabase|createVaultDatabase)\\b");
+        "\\bSdrTrunkDatabaseStartup(?:::|\\.)createGlobalDatabase\\b");
     private static final Set<String> DDL_OWNERS = Set.of(
         "java/io/github/dsheirer/alerts/TopicAlertSchema.java",
         "java/io/github/dsheirer/stats/activity/ActivityMessageCatalog.java",
@@ -59,7 +59,6 @@ class SdrTrunkDatabaseDdlBoundaryTest
         "java/io/github/dsheirer/stats/activity/DmrActivitySchema.java",
         "java/io/github/dsheirer/stats/site/TrunkedSiteSchema.java",
         "java/io/github/dsheirer/record/managed/ManagedRecordingSchema.java",
-        "java/io/github/dsheirer/preference/encryption/vault/EncryptionKeyVaultSchema.java",
         "java/io/github/dsheirer/database/upgrade/Format2To3DatabaseMigration.java",
         "java/io/github/dsheirer/database/upgrade/Format3To4DatabaseMigration.java",
         "java/io/github/dsheirer/database/upgrade/Format4SchemaSql.java",

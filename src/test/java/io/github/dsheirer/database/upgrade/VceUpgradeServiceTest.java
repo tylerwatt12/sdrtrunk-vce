@@ -527,12 +527,12 @@ class VceUpgradeServiceTest
         }
         Files.createDirectories(root.resolve("recordings"));
         Files.writeString(root.resolve("recordings/classic.wav"), "classic");
-        Files.createDirectories(root.resolve("vault"));
-        Files.writeString(root.resolve("vault/opaque.bin"), "opaque vault state");
+        Files.createDirectories(root.resolve("screenshots"));
+        Files.writeString(root.resolve("screenshots/receiver.png"), "image bytes");
         Files.createDirectories(root.resolve("jmbe"));
         Files.writeString(root.resolve("jmbe/library.jar"), "installed library");
         List<String> names = new ArrayList<>(List.of("recordings-managed/saved.wav", "recordings/classic.wav",
-            "database/managed-recordings.sqlite", "vault/opaque.bin", "jmbe/library.jar"));
+            "database/managed-recordings.sqlite", "screenshots/receiver.png", "jmbe/library.jar"));
         if(largeOpaqueFile)
         {
             Path opaque = root.resolve("recordings/large-opaque.dat");

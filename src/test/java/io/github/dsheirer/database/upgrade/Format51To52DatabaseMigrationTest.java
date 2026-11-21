@@ -239,7 +239,7 @@ class Format51To52DatabaseMigrationTest
 
     private static Map<String,List<String>> currentContents(Connection connection) throws Exception
     {
-        // Format 64 adds only this default; every pre-existing row still participates in the comparison.
+        // Formats 64 and 76 add declared defaults; every pre-existing row still participates in the comparison.
         try(var sql = connection.createStatement(); var row = sql.executeQuery(
             "SELECT settings_json,updated_at_ms FROM application_settings WHERE key='receiver.nicknames'"))
         {
@@ -248,10 +248,20 @@ class Format51To52DatabaseMigrationTest
             assertTrue(row.getLong(2) > 0);
             assertFalse(row.next());
         }
+        try(var sql = connection.createStatement(); var row = sql.executeQuery(
+            "SELECT settings_json,updated_at_ms,typeof(updated_at_ms) FROM application_settings " +
+                "WHERE key='voice.encryption_keys'"))
+        {
+            assertTrue(row.next());
+            assertEquals("[]", row.getString(1));
+            assertTrue(row.getLong(2) > 0);
+            assertEquals("integer", row.getString(3));
+            assertFalse(row.next());
+        }
         return contents(connection, true, DatabaseFormatCatalog.CURRENT_VERSION);
     }
 
-    private static Map<String,List<String>> contents(Connection connection, boolean excludeNicknameDefault,
+    private static Map<String,List<String>> contents(Connection connection, boolean excludeAddedDefaults,
                                                     int targetFormat) throws Exception
     {
         List<String> tables=CurrentFormatTestDatabase.retainedMonolithTables(connection);
@@ -269,7 +279,8 @@ class Format51To52DatabaseMigrationTest
             try(var sql=connection.createStatement();var rows=sql.executeQuery("SELECT * FROM "+CurrentFormatTestDatabase.retainedMonolithQuery(connection,table)+
                 (table.equals("database_metadata")?" WHERE key<>'database_format_version'":
                     table.equals("application_settings")?" WHERE key NOT IN ('remote.links','audio.paging_tones','audio.voice_enhancement')" +
-                        (excludeNicknameDefault ? " AND key<>'receiver.nicknames'" : ""):"")))
+                        (excludeAddedDefaults ? " AND key<>'receiver.nicknames'" +
+                            (targetFormat >= 76 ? " AND key<>'voice.encryption_keys'" : "") : ""):"")))
             {
                 while(rows.next())
                 {

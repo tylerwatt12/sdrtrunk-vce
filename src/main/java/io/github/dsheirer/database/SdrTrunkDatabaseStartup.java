@@ -12,7 +12,6 @@
 package io.github.dsheirer.database;
 
 import io.github.dsheirer.database.upgrade.DatabaseFormatCatalog;
-import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultSchema;
 import io.github.dsheirer.stats.activity.ReceiverActivitySchema;
 import io.github.dsheirer.web.settings.SpectrumSnapSettings;
 import java.io.IOException;
@@ -63,6 +62,7 @@ public final class SdrTrunkDatabaseStartup
             SpectrumSnapSettings.write(configuration, SpectrumSnapSettings.defaults());
             io.github.dsheirer.database.settings.ReceiverSettingsSchema.initializeMissing(configuration);
             io.github.dsheirer.database.settings.ReceiverNicknameSchema.initializeMissing(configuration);
+            io.github.dsheirer.database.settings.EncryptionKeySchema.initializeMissing(configuration);
             ConfigurationHistorySchema.setIdentity(configuration, ConfigurationHistorySchema.CONFIGURATION_ROLE, pairId);
             setMetadata(configuration, DatabaseFormatCatalog.FORMAT_VERSION_KEY,
                 Integer.toString(DatabaseFormatCatalog.CURRENT_VERSION));
@@ -119,40 +119,6 @@ public final class SdrTrunkDatabaseStartup
         {
             configure(configuration);
             configure(activity);
-        }
-    }
-
-    public static void createVaultDatabase(Path vaultPath) throws IOException, SQLException
-    {
-        Path normalized = vaultPath.toAbsolutePath().normalize();
-
-        if(Files.exists(normalized))
-        {
-            throw new IOException("Refusing to overwrite existing encryption vault database: " + normalized);
-        }
-
-        Files.createDirectories(normalized.getParent());
-
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + normalized))
-        {
-            configure(connection);
-            EncryptionKeyVaultSchema.create(connection);
-            EncryptionKeyVaultSchema.validate(connection);
-        }
-    }
-
-    public static void validateVaultDatabase(Path vaultPath) throws IOException, SQLException
-    {
-        Path normalized = requireDatabase(vaultPath, "Encryption vault");
-
-        try(Connection connection = openReadOnly(normalized))
-        {
-            EncryptionKeyVaultSchema.validate(connection);
-        }
-
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + normalized))
-        {
-            configure(connection);
         }
     }
 

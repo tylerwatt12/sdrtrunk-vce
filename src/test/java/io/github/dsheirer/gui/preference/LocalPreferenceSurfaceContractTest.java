@@ -53,11 +53,15 @@ class LocalPreferenceSurfaceContractTest
         String factory = Files.readString(PREFERENCES.resolve("PreferenceEditorFactory.java"));
         String tree = Files.readString(PREFERENCES.resolve("UserPreferencesEditor.java"));
 
-        for(String type: new String[]{"DIRECTORY", "JMBE_LIBRARY", "VOICE_DECRYPTION_MODULE", "SOURCE_TUNERS", "WEB_SERVER"})
+        for(String type: new String[]{"DIRECTORY", "JMBE_LIBRARY", "SOURCE_TUNERS", "WEB_SERVER"})
         {
             assertTrue(types.contains(type));
             assertTrue(tree.contains("PreferenceEditorType." + type));
         }
+        assertFalse(types.contains("VOICE_DECRYPTION_MODULE"));
+        assertFalse(tree.contains("VOICE_DECRYPTION_MODULE"));
+        assertFalse(factory.contains("VoiceDecryptionModulePreferenceEditor"));
+        assertFalse(Files.exists(PREFERENCES.resolve("decoder/VoiceDecryptionModulePreferenceEditor.java")));
         assertTrue(types.contains("SOURCE_TUNERS(\"RSPduo startup mode\")"));
         assertTrue(Files.exists(PREFERENCES.resolve("stats/WebServerPreferenceEditor.java")));
         assertFalse(factory.contains("UserPreferences userPreferences)"));

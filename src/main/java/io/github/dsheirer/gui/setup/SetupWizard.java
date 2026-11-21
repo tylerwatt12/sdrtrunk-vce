@@ -91,7 +91,6 @@ public final class SetupWizard extends JDialog
     private RadioReferenceDirectoryService rrSetupService;
     private SetupRadioReferenceRegion rrSetupRegion;
     private boolean administratorConfigured;
-    private boolean vaultDeferred;
     private boolean editJmbe;
     private boolean jmbeInstalled;
     private boolean jmbeUpdateChecked;
@@ -366,7 +365,6 @@ public final class SetupWizard extends JDialog
         SdrTrunkDatabaseStartup.validateGlobalDatabaseForStartup(database);
         InitialAdminSetup.initializeNewProfile(database);
         InitialAdminSetup.isPasswordRequired(database); //A persisted administrator is authoritative after interruption.
-        SdrTrunkDatabaseBootstrap.prepareVault(root);
         if(lock == null) lock = PortableDataRootLock.acquire(root);
         SqlitePreferencesFactory.install(database);
         preferences = new UserPreferences();
@@ -403,8 +401,6 @@ public final class SetupWizard extends JDialog
                 progress.set(SetupStep.RADIO_REFERENCE, DEFERRED);
             progress.set(SetupStep.HARDWARE, DEFERRED);
         }
-        if(preferences.getVoiceDecryptionModulePreference().getModuleManager().isLoaded())
-            preferences.getEncryptionKeyPreference().getVaultService().tryAutoUnlockSavedPassword();
         readAutoStart();
         if(limitedVisit && !autoStartNeedsJmbe && progress.get(SetupStep.JMBE) == PENDING)
             progress.set(SetupStep.JMBE, DEFERRED);
@@ -465,7 +461,7 @@ public final class SetupWizard extends JDialog
     {
         if(preferences == null) return true;
         return !progress.isComplete() || !progress.isDone(SetupStep.ADMINISTRATOR) ||
-            !progress.isDone(SetupStep.WEB) || vaultLocked();
+            !progress.isDone(SetupStep.WEB);
     }
 
     private SetupStep initialStep()
@@ -1248,13 +1244,6 @@ public final class SetupWizard extends JDialog
         }
     }
 
-    private boolean vaultLocked()
-    {
-        if(preferences == null || vaultDeferred || !preferences.getVoiceDecryptionModulePreference().getModuleManager().isLoaded()) return false;
-        var vault = preferences.getEncryptionKeyPreference().getVaultService();
-        return vault.hasVault() && !vault.isUnlocked() && vault.isPromptOnLaunch();
-    }
-
     private void reviewPage()
     {
         paragraph("Review your choices, then finish setup. VCE will open in your browser, where you can add channels or start listening.");
@@ -1277,25 +1266,11 @@ public final class SetupWizard extends JDialog
         JCheckBox launchChannels = WizardStyles.checkBox("Start these channels when VCE opens", startChannels);
         launchChannels.addItemListener(event -> startChannels = launchChannels.isSelected());
         if(!listenerRecovery && !autoStart.isEmpty()) append(launchChannels);
-        if(vaultLocked())
-        {
-            paragraph("Your saved encryption keys are locked. Unlock them to use them, or continue without them for this run.");
-            JPasswordField secret = password("Vault password");
-            button("Unlock vault", () -> {
-                char[] value=secret.getPassword(); secret.setText("");
-                job("Unlocking vault…",null,() -> {
-                    try { preferences.getEncryptionKeyPreference().getVaultService().unlock(value,false); return true; }
-                    finally { Arrays.fill(value,'\0'); }
-                }, ignored -> showPage(step));
-            });
-            button("Continue without vault for this run", () -> { preferences.getEncryptionKeyPreference().getVaultService().disableForRun(); vaultDeferred=true; showPage(step); });
-        }
         WhatsNewDialog.getPendingReleaseNotes().ifPresent(notes -> {
             append(new WizardDisclosure("What's new", WhatsNewDialog.createReleaseNotesView(notes)));
         });
         accept = () -> {
             if(!progress.isDone(SetupStep.ADMINISTRATOR)) throw new IllegalArgumentException("Complete administrator setup before launching.");
-            if(vaultLocked()) throw new IllegalArgumentException("Unlock the vault or choose to continue without it for this run.");
             job("Checking web access…", null, () -> {
                 save();
                 if(liveServer != null)

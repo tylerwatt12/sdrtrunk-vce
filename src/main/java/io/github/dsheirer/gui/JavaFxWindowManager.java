@@ -33,8 +33,6 @@ import io.github.dsheirer.jmbe.JmbeEditor;
 import io.github.dsheirer.jmbe.JmbeEditorRequest;
 import io.github.dsheirer.monitor.ResourceMonitor;
 import io.github.dsheirer.monitor.StatusBox;
-import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultService;
-import io.github.dsheirer.audio.codec.mbe.decrypt.VoiceDecryptionModuleManager;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.stats.StatsWebNavigationState;
 import io.github.dsheirer.stats.StatsWebServerService;
@@ -123,8 +121,7 @@ public class JavaFxWindowManager
      * @param resourceMonitor for statistics
      * @return JFXPanel accessible on Swing thread that delegates JavaFX scene creation to the FX event thread.
      */
-    public JFXPanel getStatusPanel(ResourceMonitor resourceMonitor, EncryptionKeyVaultService vaultService,
-                                   VoiceDecryptionModuleManager moduleManager,
+    public JFXPanel getStatusPanel(ResourceMonitor resourceMonitor,
                                    Supplier<StatsWebNavigationState> navigationStateSupplier,
                                    Supplier<UpdateCheckResult> updateResultSupplier,
                                    Consumer<URI> updateReleasePageConsumer)
@@ -135,7 +132,7 @@ public class JavaFxWindowManager
 
             //JFXPanel has to be populated on the FX event thread
             Platform.runLater(() -> {
-                Scene scene = new Scene(new StatusBox(resourceMonitor, vaultService, moduleManager,
+                Scene scene = new Scene(new StatusBox(resourceMonitor,
                     navigationStateSupplier, updateResultSupplier, updateReleasePageConsumer));
                 ThemeManager.getInstance().register(scene);
                 mStatusPanel.setScene(scene);
@@ -467,11 +464,6 @@ public class JavaFxWindowManager
     @Subscribe
     public void process(final ViewEncryptionKeyPreferenceEditorRequest request)
     {
-        if(!mUserPreferences.getVoiceDecryptionModulePreference().getModuleManager().isLoaded())
-        {
-            return;
-        }
-
         execute(() -> {
             restoreStage(getEncryptionKeyStage());
             getEncryptionKeyPreferenceEditor().activate();

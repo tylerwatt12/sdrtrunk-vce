@@ -320,12 +320,20 @@ class Format55To56DatabaseMigrationTest
 
     private static Map<String,List<String>> currentContents(Connection connection) throws Exception
     {
-        // The new nickname default is separate from the existing settings whose values must survive.
+        // New bounded defaults are checked separately from existing settings whose exact values must survive.
         try(var sql = connection.createStatement(); var row = sql.executeQuery(
             "SELECT settings_json,updated_at_ms FROM application_settings WHERE key='receiver.nicknames'"))
         {
             assertTrue(row.next());
             assertEquals("{}", row.getString(1));
+            assertTrue(row.getLong(2) > 0);
+            assertFalse(row.next());
+        }
+        try(var sql = connection.createStatement(); var row = sql.executeQuery(
+            "SELECT settings_json,updated_at_ms FROM application_settings WHERE key='voice.encryption_keys'"))
+        {
+            assertTrue(row.next());
+            assertEquals("[]", row.getString(1));
             assertTrue(row.getLong(2) > 0);
             assertFalse(row.next());
         }
@@ -355,7 +363,8 @@ class Format55To56DatabaseMigrationTest
                     String key = rows.getString(1);
                     if(table.equals("database_metadata") && DatabaseFormatCatalog.FORMAT_VERSION_KEY.equals(key)) continue;
                     if(applyRetirement && table.equals("application_settings") && VOICE_KEY.equals(key)) continue;
-                    if(excludeNicknameDefault && table.equals("application_settings") && "receiver.nicknames".equals(key)) continue;
+                    if(excludeNicknameDefault && table.equals("application_settings") &&
+                        List.of("receiver.nicknames", "voice.encryption_keys").contains(key)) continue;
                     List<String> row = new ArrayList<>();
                     for(int column = 1; column <= rows.getMetaData().getColumnCount(); column++)
                     {

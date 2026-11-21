@@ -20,6 +20,7 @@
 package io.github.dsheirer.audio.codec.mbe.decrypt;
 
 import io.github.dsheirer.preference.encryption.VoiceEncryptionKey;
+import io.github.dsheirer.voice.decrypt.module.SdrTrunkVoiceDecryptionModule;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
@@ -37,7 +38,7 @@ public class VoiceFrameDecryptorFactory
 
     public VoiceFrameDecryptorFactory()
     {
-        this(List.of());
+        this(new SdrTrunkVoiceDecryptionModule().getProviders());
     }
 
     public VoiceFrameDecryptorFactory(Collection<VoiceFrameDecryptorProvider> providers)

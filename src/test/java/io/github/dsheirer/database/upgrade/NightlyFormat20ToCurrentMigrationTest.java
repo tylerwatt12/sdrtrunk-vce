@@ -219,6 +219,10 @@ class NightlyFormat20ToCurrentMigrationTest
             assertEquals("{}", scalar(connection, "SELECT settings_json FROM application_settings WHERE key='receiver.nicknames'"));
             assertTrue(Long.parseLong(scalar(connection,
                 "SELECT updated_at_ms FROM application_settings WHERE key='receiver.nicknames'")) > 0);
+            assertEquals("[]", scalar(connection,
+                "SELECT settings_json FROM application_settings WHERE key='voice.encryption_keys'"));
+            assertTrue(Long.parseLong(scalar(connection,
+                "SELECT updated_at_ms FROM application_settings WHERE key='voice.encryption_keys'")) > 0);
             assertEquals(before.contents(), tableContents(connection, before.columns(), true),
                 "Valid configuration, aliases, credentials, activity, relationships or allocators changed");
             assertEquals("3", scalar(connection, "SELECT count(*) FROM application_settings " +
@@ -307,7 +311,7 @@ class NightlyFormat20ToCurrentMigrationTest
     }
 
     private static Map<String,TableContents> tableContents(Connection connection, Map<String,List<String>> tables,
-                                                         boolean excludeNicknameDefault) throws Exception
+                                                         boolean excludeCurrentDefaults) throws Exception
     {
         Map<String,TableContents> contents = new LinkedHashMap<>();
         for(var table: tables.entrySet())
@@ -316,7 +320,7 @@ class NightlyFormat20ToCurrentMigrationTest
                 .collect(java.util.stream.Collectors.joining(","));
             String projection = table.getValue().stream().map(name -> {
                 if(table.getKey().equals("receiver_activity_event") && name.equals("encrypted"))
-                    return excludeNicknameDefault ? "encryption_state AS encrypted" :
+                    return excludeCurrentDefaults ? "encryption_state AS encrypted" :
                         "CASE WHEN encrypted=1 OR event_type_code IN (6,8,10,17,20,26) THEN 2 ELSE 0 END AS encrypted";
                 return "\"" + name + "\"";
             }).collect(java.util.stream.Collectors.joining(","));
@@ -325,7 +329,7 @@ class NightlyFormat20ToCurrentMigrationTest
                     "'database_role','configuration_history_pair_id')";
                 case "application_settings" -> " WHERE key NOT IN " +
                     "('setup_wizard','remote.links','audio.paging_tones','alert.configuration')" +
-                    (excludeNicknameDefault ? " AND key<>'receiver.nicknames'" : "");
+                    (excludeCurrentDefaults ? " AND key NOT IN ('receiver.nicknames','voice.encryption_keys')" : "");
                 // New tables may acquire their own allocator. Every original table's high-water mark must survive.
                 case "sqlite_sequence" -> " WHERE name IN (" + tables.keySet().stream()
                     .map(name -> "'" + name + "'").collect(java.util.stream.Collectors.joining(",")) + ")";

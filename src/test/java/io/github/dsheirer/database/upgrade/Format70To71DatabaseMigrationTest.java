@@ -195,9 +195,25 @@ class Format70To71DatabaseMigrationTest
                 assertEquals("0", scalar(connection, "SELECT count(*) FROM p25_site_bsi"));
                 continue;
             }
+            boolean excludeAddedKeyDefault = table.equals("application_settings") &&
+                DatabaseFormatCatalog.inspect(connection).version() >= 76;
+            if(excludeAddedKeyDefault)
+            {
+                try(var query = connection.createStatement(); var value = query.executeQuery(
+                    "SELECT settings_json,updated_at_ms,typeof(updated_at_ms) FROM application_settings " +
+                        "WHERE key='voice.encryption_keys'"))
+                {
+                    assertTrue(value.next());
+                    assertEquals("[]", value.getString(1));
+                    assertTrue(value.getLong(2) > 0);
+                    assertEquals("integer", value.getString(3));
+                    assertFalse(value.next());
+                }
+            }
             List<String> rows = new ArrayList<>();
             String where = table.equals("database_metadata") ? " WHERE key<>'database_format_version'" :
                 omitPortable && table.equals("application_settings") ? " WHERE key<>'" + PORTABLE + "'" : "";
+            if(excludeAddedKeyDefault) where += (where.isEmpty() ? " WHERE " : " AND ") + "key<>'voice.encryption_keys'";
             try(var query = connection.createStatement(); var values = query.executeQuery("SELECT * FROM " + table + where))
             {
                 while(values.next())

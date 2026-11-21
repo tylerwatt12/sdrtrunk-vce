@@ -26,8 +26,6 @@ import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.database.SdrTrunkTestDatabase;
 import io.github.dsheirer.module.decode.DecoderFactory;
 import io.github.dsheirer.module.decode.DecoderType;
-import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultPath;
-import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultSchema;
 import io.github.dsheirer.source.config.SourceConfigTuner;
 import io.github.dsheirer.stats.activity.DmrActivitySchema;
 import io.github.dsheirer.web.auth.WebAccessService;
@@ -176,9 +174,7 @@ class ApplicationMigrationServiceTest
         Path sourceModule = Files.createDirectories(sourceRoot.resolve("modules")).resolve("module-test.jar");
         Files.write(sourceJmbe, new byte[] {1, 2, 3});
         Files.write(sourceModule, new byte[] {4, 5, 6});
-        Path sourceVault = createValidVault(sourceRoot);
         byte[] sourceHash = sha256(sourceDatabase);
-        byte[] sourceVaultHash = sha256(sourceVault);
         Path targetRoot = Files.createDirectory(mTemporaryFolder.resolve("format-2-import-target"));
 
         ApplicationMigrationService.MigrationResult result = new ApplicationMigrationService()
@@ -204,75 +200,9 @@ class ApplicationMigrationServiceTest
             Files.readAllBytes(targetRoot.resolve("jmbe/nested/jmbe-test.jar")));
         assertArrayEquals(Files.readAllBytes(sourceModule),
             Files.readAllBytes(targetRoot.resolve("modules/module-test.jar")));
-        Path targetVault = EncryptionKeyVaultPath.getVaultPath(targetRoot);
-        assertEquals("1", scalar(targetVault,
-            "SELECT value FROM vault_metadata WHERE key='schema_version'"));
-        assertArrayEquals(sourceVaultHash, sha256(sourceVault));
         assertTrue(result.helperOutput().contains("- JMBE library files: copied."));
         assertTrue(result.helperOutput().contains("- optional decoder module files: copied."));
-        assertTrue(result.helperOutput().contains("- encryption-key vault: copied."));
         assertEquals("wal", journalMode(targetDatabase));
-    }
-
-    @Test
-    @Tag("platform-filesystem")
-    void invalidOptionalVaultIsSkippedWithoutLosingTheMigratedDatabaseOrReportingDetails() throws Exception
-    {
-        Path sourceRoot = mTemporaryFolder.resolve("invalid-optional-vault-source");
-        Path sourceDatabase = SdrTrunkDatabasePath.getDatabasePath(sourceRoot);
-        SdrTrunkTestDatabase.create(sourceDatabase);
-        Path sourceVault = EncryptionKeyVaultPath.getVaultPath(sourceRoot);
-        Files.createDirectories(sourceVault.getParent());
-        String secret = "DO-NOT-REPORT-vault-secret";
-        Files.writeString(sourceVault, secret);
-        byte[] sourceHash = sha256(sourceDatabase);
-        Path targetRoot = mTemporaryFolder.resolve("invalid-optional-vault-target");
-        List<String> progress = new ArrayList<>();
-        ApplicationMigrationService service = new ApplicationMigrationService(SqliteDatabaseSnapshot::create,
-            (staged, source, target, content) -> "mandatory database complete");
-
-        ApplicationMigrationService.MigrationResult result =
-            service.importPrevious(sourceRoot, targetRoot, progress::add);
-
-        assertCurrentFormat(SdrTrunkDatabasePath.getDatabasePath(targetRoot));
-        assertFalse(Files.exists(targetRoot.resolve(EncryptionKeyVaultPath.VAULT_DIRECTORY)));
-        assertTrue(result.helperOutput().contains(
-            "- encryption-key vault: WARNING - skipped because it could not be imported safely."));
-        assertFalse(result.helperOutput().contains(secret));
-        assertFalse(result.helperOutput().contains(sourceVault.toString()));
-        assertFalse(result.helperOutput().contains("not a database"));
-        assertTrue(progress.stream().noneMatch(status -> status.contains(secret) ||
-            status.contains(sourceVault.toString()) || status.contains("not a database")));
-        assertArrayEquals(sourceHash, sha256(sourceDatabase));
-        assertEquals(secret, Files.readString(sourceVault));
-    }
-
-    @Test
-    @Tag("platform-filesystem")
-    void unsupportedOptionalVaultVersionIsSkippedWithoutBlockingTheDatabase() throws Exception
-    {
-        Path sourceRoot = mTemporaryFolder.resolve("unsupported-vault-source");
-        Path sourceDatabase = SdrTrunkDatabasePath.getDatabasePath(sourceRoot);
-        SdrTrunkTestDatabase.create(sourceDatabase);
-        Path sourceVault = createValidVault(sourceRoot);
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + sourceVault);
-            Statement statement = connection.createStatement())
-        {
-            statement.executeUpdate("UPDATE vault_metadata SET value='99' WHERE key='schema_version'");
-        }
-        Path targetRoot = mTemporaryFolder.resolve("unsupported-vault-target");
-        ApplicationMigrationService service = new ApplicationMigrationService(SqliteDatabaseSnapshot::create,
-            (staged, source, target, content) -> "mandatory database complete");
-
-        ApplicationMigrationService.MigrationResult result =
-            service.importPrevious(sourceRoot, targetRoot, ignored -> { });
-
-        assertCurrentFormat(SdrTrunkDatabasePath.getDatabasePath(targetRoot));
-        assertFalse(Files.exists(targetRoot.resolve(EncryptionKeyVaultPath.VAULT_DIRECTORY)));
-        assertTrue(result.helperOutput().contains(
-            "- encryption-key vault: WARNING - skipped because it could not be imported safely."));
-        assertEquals("99", scalar(sourceVault,
-            "SELECT value FROM vault_metadata WHERE key='schema_version'"));
     }
 
     @Test
@@ -407,8 +337,8 @@ class ApplicationMigrationServiceTest
         Files.writeString(sourceRoot.resolve("jmbe/jmbe-test.jar"), "must not be copied");
         Files.createDirectories(sourceRoot.resolve("modules"));
         Files.writeString(sourceRoot.resolve("modules/module-test.jar"), "must not be copied");
-        Files.createDirectories(sourceRoot.resolve("vault"));
-        Files.writeString(sourceRoot.resolve("vault/encryption-key-vault.sqlite"), "invalid and not selected");
+        Files.createDirectories(sourceRoot.resolve("screenshots"));
+        Files.writeString(sourceRoot.resolve("screenshots/ignored.png"), "invalid and not selected");
         //Internal database-only engine coverage; public source selection accepts installation folders only.
         PreviousBuildLocator.Selection selection = new PreviousBuildLocator.Selection(sourceDatabase,
             PreviousBuildLocator.InputScope.DATABASE_FILE);
@@ -437,7 +367,7 @@ class ApplicationMigrationServiceTest
         assertEquals("Database Only Alias", scalar(targetDatabase, "SELECT name FROM alias WHERE id=1"));
         assertFalse(Files.exists(targetRoot.resolve("jmbe")));
         assertFalse(Files.exists(targetRoot.resolve("modules")));
-        assertFalse(Files.exists(targetRoot.resolve("vault")));
+        assertFalse(Files.exists(targetRoot.resolve("screenshots")));
         assertArrayEquals(sourceHash, sha256(sourceDatabase));
         int scopeIndex = java.util.stream.IntStream.range(0, progress.size())
             .filter(index -> progress.get(index).startsWith("Migration scope:"))
@@ -1264,8 +1194,6 @@ class ApplicationMigrationServiceTest
             "- JMBE library files: not present in the selected profile."));
         assertTrue(result.helperOutput().contains(
             "- optional decoder module files: not present in the selected profile."));
-        assertTrue(result.helperOutput().contains(
-            "- encryption-key vault: not present in the selected profile."));
         Path targetDatabase = SdrTrunkDatabasePath.getDatabasePath(targetRoot);
         assertEquals(1, count(targetDatabase, "alias"));
         assertCurrentProfileSentinels(targetDatabase);
@@ -1926,17 +1854,6 @@ class ApplicationMigrationServiceTest
                 }
             }
         }
-    }
-
-    private static Path createValidVault(Path dataRoot) throws Exception
-    {
-        Path vault = EncryptionKeyVaultPath.getVaultPath(dataRoot);
-        Files.createDirectories(vault.getParent());
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + vault))
-        {
-            EncryptionKeyVaultSchema.create(connection);
-        }
-        return vault;
     }
 
     private static void insertCurrentProfileSentinels(Path database) throws Exception

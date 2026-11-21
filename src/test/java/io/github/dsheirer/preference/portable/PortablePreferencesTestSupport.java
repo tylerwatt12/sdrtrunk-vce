@@ -2,6 +2,8 @@
 package io.github.dsheirer.preference.portable;
 
 import io.github.dsheirer.database.SdrTrunkTestDatabase;
+import io.github.dsheirer.database.SdrTrunkDatabasePath;
+import io.github.dsheirer.portable.PortableApplicationPaths;
 import java.nio.file.Files;
 import java.util.prefs.Preferences;
 import org.junit.platform.launcher.LauncherSession;
@@ -31,7 +33,9 @@ public final class PortablePreferencesTestSupport implements LauncherSessionList
     {
         if(!installed)
         {
-            var database = Files.createTempDirectory("portable-test-preferences-").resolve("sdrtrunk.sqlite");
+            var dataRoot = Files.createTempDirectory("portable-test-preferences-");
+            System.setProperty(PortableApplicationPaths.DATA_ROOT_PROPERTY, dataRoot.toString());
+            var database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
             SdrTrunkTestDatabase.create(database);
             SqlitePreferencesFactory.install(database);
             if(!Preferences.userRoot().getClass().getName().contains("SqlitePreferencesFactory"))

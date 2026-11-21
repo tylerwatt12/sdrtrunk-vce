@@ -25,14 +25,7 @@ import io.github.dsheirer.preference.encryption.EncryptionKeyPreference;
 import io.github.dsheirer.preference.encryption.VoiceEncryptionAlgorithm;
 import io.github.dsheirer.preference.encryption.VoiceEncryptionKey;
 import io.github.dsheirer.preference.encryption.VoiceEncryptionProtocol;
-import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultException;
-import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultService;
-import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultState;
-import java.io.File;
-import java.nio.file.Path;
-import java.util.Arrays;
 import java.util.Optional;
-import javafx.application.Platform;
 import javafx.beans.property.ReadOnlyStringWrapper;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
@@ -46,19 +39,16 @@ import javafx.scene.control.CheckBox;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Dialog;
 import javafx.scene.control.Label;
-import javafx.scene.control.PasswordField;
 import javafx.scene.control.TableColumn;
 import javafx.scene.control.TableView;
 import javafx.scene.control.TextField;
 import javafx.scene.layout.ColumnConstraints;
 import javafx.scene.layout.BorderPane;
-import javafx.scene.layout.FlowPane;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
-import javafx.stage.FileChooser;
 
 /**
  * Preference editor for voice encryption keys.
@@ -67,17 +57,8 @@ public class EncryptionKeyPreferenceEditor extends BorderPane
 {
     private final io.github.dsheirer.audio.codec.mbe.decrypt.VoiceDecryptionModuleManager mModuleManager;
     private final EncryptionKeyPreference mPreference;
-    private final EncryptionKeyVaultService mVaultService;
     private ObservableList<VoiceEncryptionKey> mKeys;
     private TableView<VoiceEncryptionKey> mTableView;
-    private Label mVaultStatusLabel;
-    private CheckBox mPromptOnLaunchCheckBox;
-    private Button mCreateVaultButton;
-    private Button mUnlockVaultButton;
-    private Button mLockVaultButton;
-    private Button mChangePasswordButton;
-    private Button mForgetPasswordButton;
-    private Button mExportVaultButton;
     private Button mEditButton;
     private Button mRemoveButton;
 
@@ -85,8 +66,6 @@ public class EncryptionKeyPreferenceEditor extends BorderPane
     {
         mModuleManager = userPreferences.getVoiceDecryptionModulePreference().getModuleManager();
         mPreference = userPreferences.getEncryptionKeyPreference();
-        mVaultService = mPreference.getVaultService();
-        mVaultService.addStatusListener((previous, current) -> updateOnFx(this::refresh));
         setPadding(new Insets(10, 10, 10, 10));
         setCenter(createContent());
         refresh();
@@ -94,76 +73,26 @@ public class EncryptionKeyPreferenceEditor extends BorderPane
 
     public void activate()
     {
-        mVaultService.refreshState();
         refresh();
-
-        if(!mVaultService.isUnlocked())
-        {
-            promptForVaultAccess();
-        }
-    }
-
-    private static void updateOnFx(Runnable update)
-    {
-        if(Platform.isFxApplicationThread()) update.run();
-        else Platform.runLater(update);
     }
 
     private VBox createContent()
     {
         VBox content = new VBox(10);
         Label title = new Label("Voice Encryption Keys");
-        Label storage = new Label("Keys are stored in a password-protected vault. Decryption is unavailable while the vault is locked.");
+        Label storage = new Label("Manage keys used to decrypt received voice calls.");
         storage.setWrapText(true);
-        VBox vaultBox = new VBox(6);
-        FlowPane vaultButtonBox = new FlowPane(8, 6);
-        vaultButtonBox.getChildren().addAll(getCreateVaultButton(), getUnlockVaultButton(),
-            getLockVaultButton(), getChangePasswordButton(), getForgetPasswordButton(), getExportVaultButton());
-        vaultBox.getChildren().addAll(getVaultStatusLabel(), vaultButtonBox, getPromptOnLaunchCheckBox());
         HBox buttonBox = new HBox(8);
         buttonBox.getChildren().addAll(createAddButton(), getEditButton(), getRemoveButton());
-        content.getChildren().addAll(title, storage, vaultBox, getTableView(), buttonBox);
+        content.getChildren().addAll(title, storage, getTableView(), buttonBox);
         VBox.setVgrow(getTableView(), Priority.ALWAYS);
         return content;
     }
 
     private void refresh()
     {
-        if(mVaultService.isUnlocked())
-        {
-            getKeys().setAll(mPreference.getKeys());
-        }
-        else
-        {
-            getKeys().clear();
-        }
-
+        getKeys().setAll(mPreference.getKeys());
         updateButtons();
-    }
-
-    private Label getVaultStatusLabel()
-    {
-        if(mVaultStatusLabel == null)
-        {
-            mVaultStatusLabel = new Label();
-            mVaultStatusLabel.setMaxWidth(Double.MAX_VALUE);
-            mVaultStatusLabel.setWrapText(true);
-        }
-
-        return mVaultStatusLabel;
-    }
-
-    private CheckBox getPromptOnLaunchCheckBox()
-    {
-        if(mPromptOnLaunchCheckBox == null)
-        {
-            mPromptOnLaunchCheckBox = new CheckBox("Prompt for vault password on VCE launch");
-            mPromptOnLaunchCheckBox.setSelected(mVaultService.isPromptOnLaunch());
-            mPromptOnLaunchCheckBox.setOnAction(event ->
-                mVaultService.setPromptOnLaunch(mPromptOnLaunchCheckBox.isSelected()));
-        }
-
-        return mPromptOnLaunchCheckBox;
     }
 
     private ObservableList<VoiceEncryptionKey> getKeys()
@@ -224,84 +153,10 @@ public class EncryptionKeyPreferenceEditor extends BorderPane
     {
         Button button = createButton("Add");
         button.setOnAction(event -> showKeyDialog(null).ifPresent(key -> {
-            mPreference.addKey(key);
             refresh();
             selectKey(key);
         }));
         return button;
-    }
-
-    private Button getCreateVaultButton()
-    {
-        if(mCreateVaultButton == null)
-        {
-            mCreateVaultButton = createButton("Create Vault");
-            mCreateVaultButton.setOnAction(event -> showCreateVaultDialog());
-        }
-
-        return mCreateVaultButton;
-    }
-
-    private Button getUnlockVaultButton()
-    {
-        if(mUnlockVaultButton == null)
-        {
-            mUnlockVaultButton = createButton("Unlock Vault");
-            mUnlockVaultButton.setOnAction(event -> showUnlockVaultDialog());
-        }
-
-        return mUnlockVaultButton;
-    }
-
-    private Button getLockVaultButton()
-    {
-        if(mLockVaultButton == null)
-        {
-            mLockVaultButton = createButton("Lock Vault");
-            mLockVaultButton.setOnAction(event -> {
-                mVaultService.lock();
-                refresh();
-            });
-        }
-
-        return mLockVaultButton;
-    }
-
-    private Button getChangePasswordButton()
-    {
-        if(mChangePasswordButton == null)
-        {
-            mChangePasswordButton = createButton("Change Vault Password");
-            mChangePasswordButton.setOnAction(event -> showChangePasswordDialog());
-        }
-
-        return mChangePasswordButton;
-    }
-
-    private Button getForgetPasswordButton()
-    {
-        if(mForgetPasswordButton == null)
-        {
-            mForgetPasswordButton = createButton("Forget Vault Password");
-            mForgetPasswordButton.setOnAction(event -> {
-                mVaultService.forgetSavedPassword();
-                showInformation("Saved Password Removed", "The unsafe saved vault password has been removed.");
-                refresh();
-            });
-        }
-
-        return mForgetPasswordButton;
-    }
-
-    private Button getExportVaultButton()
-    {
-        if(mExportVaultButton == null)
-        {
-            mExportVaultButton = createButton("Export Vault");
-            mExportVaultButton.setOnAction(event -> showExportVaultDialog());
-        }
-
-        return mExportVaultButton;
     }
 
     private Button getEditButton()
@@ -312,7 +167,6 @@ public class EncryptionKeyPreferenceEditor extends BorderPane
             mEditButton.setOnAction(event -> {
                 VoiceEncryptionKey selected = getTableView().getSelectionModel().getSelectedItem();
                 showKeyDialog(selected).ifPresent(key -> {
-                    mPreference.updateKey(key);
                     refresh();
                     selectKey(key);
                 });
@@ -332,8 +186,20 @@ public class EncryptionKeyPreferenceEditor extends BorderPane
 
                 if(selected != null)
                 {
-                    mPreference.removeKey(selected);
-                    refresh();
+                    mRemoveButton.setDisable(true);
+                    try
+                    {
+                        mPreference.removeKey(selected);
+                        refresh();
+                    }
+                    catch(IllegalStateException e)
+                    {
+                        showError("Remove Key Failed", "The key could not be removed. Check that the application data folder is writable, then try again.");
+                    }
+                    finally
+                    {
+                        updateButtons();
+                    }
                 }
             });
         }
@@ -350,21 +216,9 @@ public class EncryptionKeyPreferenceEditor extends BorderPane
 
     private void updateButtons()
     {
-        EncryptionKeyVaultState state = mVaultService.getState();
-        boolean unlocked = mVaultService.isUnlocked();
-        boolean hasVault = mVaultService.hasVault();
         boolean selected = getTableView().getSelectionModel().getSelectedItem() != null;
-        getVaultStatusLabel().setText("Vault: " + state + " - " + mVaultService.getStatus());
-        getTableView().setDisable(!unlocked);
-        getCreateVaultButton().setDisable(hasVault);
-        getUnlockVaultButton().setDisable(!hasVault || unlocked);
-        getLockVaultButton().setDisable(!unlocked);
-        getChangePasswordButton().setDisable(!unlocked);
-        getForgetPasswordButton().setDisable(!mVaultService.hasSavedPassword());
-        getExportVaultButton().setDisable(!hasVault);
-        getPromptOnLaunchCheckBox().setSelected(mVaultService.isPromptOnLaunch());
-        getEditButton().setDisable(!unlocked || !selected);
-        getRemoveButton().setDisable(!unlocked || !selected);
+        getEditButton().setDisable(!selected);
+        getRemoveButton().setDisable(!selected);
     }
 
     private void selectKey(VoiceEncryptionKey key)
@@ -379,219 +233,12 @@ public class EncryptionKeyPreferenceEditor extends BorderPane
         }
     }
 
-    private void promptForVaultAccess()
-    {
-        if(!mVaultService.hasVault())
-        {
-            showCreateVaultDialog();
-        }
-        else
-        {
-            showUnlockVaultDialog();
-        }
-    }
-
-    private void showCreateVaultDialog()
-    {
-        Optional<PasswordResult> result = showPasswordDialog("Create Encryption Key Vault", "Create Vault",
-            true, false);
-
-        result.ifPresent(passwordResult -> {
-            try
-            {
-                mVaultService.createVault(passwordResult.password());
-                refresh();
-            }
-            catch(EncryptionKeyVaultException e)
-            {
-                showError("Create Vault Failed", e.getMessage());
-            }
-            finally
-            {
-                passwordResult.clear();
-            }
-        });
-    }
-
-    private void showUnlockVaultDialog()
-    {
-        Optional<PasswordResult> result = showPasswordDialog("Unlock Encryption Key Vault", "Unlock Vault",
-            false, true);
-
-        result.ifPresent(passwordResult -> {
-            try
-            {
-                mVaultService.unlock(passwordResult.password(), passwordResult.savePassword());
-                refresh();
-            }
-            catch(EncryptionKeyVaultException e)
-            {
-                showError("Unlock Vault Failed", e.getMessage());
-            }
-            finally
-            {
-                passwordResult.clear();
-            }
-        });
-    }
-
-    private void showChangePasswordDialog()
-    {
-        Optional<PasswordChangeResult> result = showPasswordChangeDialog();
-
-        result.ifPresent(passwordResult -> {
-            try
-            {
-                mVaultService.changePassword(passwordResult.currentPassword(), passwordResult.newPassword());
-                showInformation("Vault Password Changed", "The encryption key vault password has been changed.");
-                refresh();
-            }
-            catch(EncryptionKeyVaultException e)
-            {
-                showError("Change Password Failed", e.getMessage());
-            }
-            finally
-            {
-                passwordResult.clear();
-            }
-        });
-    }
-
-    private void showExportVaultDialog()
-    {
-        Optional<PasswordResult> password = showPasswordDialog("Export Encryption Key Vault", "Verify Password",
-            false, false);
-
-        password.ifPresent(passwordResult -> {
-            try
-            {
-                if(!mVaultService.verifyPassword(passwordResult.password()))
-                {
-                    showError("Export Vault Failed", "Incorrect encryption vault password.");
-                    return;
-                }
-
-                FileChooser fileChooser = new FileChooser();
-                fileChooser.setTitle("Export Encryption Key Vault");
-                fileChooser.setInitialFileName("encryption-key-vault.sqlite");
-                File selected = fileChooser.showSaveDialog(getScene() != null ? getScene().getWindow() : null);
-
-                if(selected != null)
-                {
-                    Path destination = selected.toPath();
-                    mVaultService.exportVault(destination);
-                    showInformation("Vault Exported", "Encryption key vault exported.");
-                }
-            }
-            catch(EncryptionKeyVaultException e)
-            {
-                showError("Export Vault Failed", e.getMessage());
-            }
-            finally
-            {
-                passwordResult.clear();
-            }
-        });
-    }
-
-    private Optional<PasswordResult> showPasswordDialog(String title, String okText, boolean confirmPassword,
-                                                       boolean allowSavePassword)
-    {
-        Dialog<PasswordResult> dialog = new Dialog<>();
-        dialog.setTitle(title);
-        ButtonType ok = new ButtonType(okText, javafx.scene.control.ButtonBar.ButtonData.OK_DONE);
-        dialog.getDialogPane().getButtonTypes().addAll(ok, ButtonType.CANCEL);
-
-        GridPane gridPane = new GridPane();
-        gridPane.setHgap(10);
-        gridPane.setVgap(10);
-        gridPane.setPadding(new Insets(10, 10, 10, 10));
-
-        PasswordField passwordField = new PasswordField();
-        PasswordField confirmField = new PasswordField();
-        CheckBox savePassword = new CheckBox("Save password (Warning! Unsafe!)");
-
-        int row = 0;
-        addLabeledControl(gridPane, "Password:", passwordField, row++);
-
-        if(confirmPassword)
-        {
-            addLabeledControl(gridPane, "Confirm:", confirmField, row++);
-        }
-
-        if(allowSavePassword)
-        {
-            gridPane.add(savePassword, 1, row);
-        }
-
-        dialog.getDialogPane().setContent(gridPane);
-
-        Button okButton = (Button)dialog.getDialogPane().lookupButton(ok);
-        okButton.addEventFilter(ActionEvent.ACTION, event -> {
-            if(passwordField.getText() == null || passwordField.getText().isBlank())
-            {
-                event.consume();
-                showError("Invalid Password", "Enter a vault password.");
-            }
-            else if(confirmPassword && !passwordField.getText().equals(confirmField.getText()))
-            {
-                event.consume();
-                showError("Invalid Password", "Vault passwords do not match.");
-            }
-        });
-
-        dialog.setResultConverter(buttonType -> buttonType == ok ?
-            new PasswordResult(passwordField.getText().toCharArray(), savePassword.isSelected()) : null);
-
-        return dialog.showAndWait();
-    }
-
-    private Optional<PasswordChangeResult> showPasswordChangeDialog()
-    {
-        Dialog<PasswordChangeResult> dialog = new Dialog<>();
-        dialog.setTitle("Change Encryption Key Vault Password");
-        ButtonType ok = new ButtonType("Change Password", javafx.scene.control.ButtonBar.ButtonData.OK_DONE);
-        dialog.getDialogPane().getButtonTypes().addAll(ok, ButtonType.CANCEL);
-
-        GridPane gridPane = new GridPane();
-        gridPane.setHgap(10);
-        gridPane.setVgap(10);
-        gridPane.setPadding(new Insets(10, 10, 10, 10));
-
-        PasswordField currentPassword = new PasswordField();
-        PasswordField newPassword = new PasswordField();
-        PasswordField confirmPassword = new PasswordField();
-        addLabeledControl(gridPane, "Current:", currentPassword, 0);
-        addLabeledControl(gridPane, "New:", newPassword, 1);
-        addLabeledControl(gridPane, "Confirm:", confirmPassword, 2);
-        dialog.getDialogPane().setContent(gridPane);
-
-        Button okButton = (Button)dialog.getDialogPane().lookupButton(ok);
-        okButton.addEventFilter(ActionEvent.ACTION, event -> {
-            if(currentPassword.getText() == null || currentPassword.getText().isBlank() ||
-                newPassword.getText() == null || newPassword.getText().isBlank())
-            {
-                event.consume();
-                showError("Invalid Password", "Enter the current and new vault passwords.");
-            }
-            else if(!newPassword.getText().equals(confirmPassword.getText()))
-            {
-                event.consume();
-                showError("Invalid Password", "New vault passwords do not match.");
-            }
-        });
-
-        dialog.setResultConverter(buttonType -> buttonType == ok ?
-            new PasswordChangeResult(currentPassword.getText().toCharArray(),
-                newPassword.getText().toCharArray()) : null);
-        return dialog.showAndWait();
-    }
-
     private Optional<VoiceEncryptionKey> showKeyDialog(VoiceEncryptionKey existing)
     {
         Dialog<VoiceEncryptionKey> dialog = new Dialog<>();
         dialog.setTitle(existing == null ? "Add Voice Encryption Key" : "Edit Voice Encryption Key");
-        dialog.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
+        ButtonType save = new ButtonType("Save", javafx.scene.control.ButtonBar.ButtonData.OK_DONE);
+        dialog.getDialogPane().getButtonTypes().addAll(save, ButtonType.CANCEL);
 
         GridPane gridPane = new GridPane();
         gridPane.setHgap(10);
@@ -610,7 +257,7 @@ public class EncryptionKeyPreferenceEditor extends BorderPane
         DualBaseIntegerField algorithmIdField = new DualBaseIntegerField(0, 0xFF);
         algorithmIdField.setEditable(false);
         DualBaseIntegerField keyIdField = new DualBaseIntegerField(0, 0xFFFF);
-        PasswordField keyField = new PasswordField();
+        TextField keyField = new TextField();
         TextField scopeField = new TextField();
 
         protocolComboBox.getSelectionModel().selectedItemProperty().addListener((observable, oldValue, newValue) -> {
@@ -649,14 +296,14 @@ public class EncryptionKeyPreferenceEditor extends BorderPane
         addLabeledControl(gridPane, "Key ID:", keyIdField, row++);
         addLabeledControl(gridPane, "Key Hex:", keyField, row++);
         addLabeledControl(gridPane, "Scope:", scopeField, row++);
-        Label scopeHelpLabel = new Label("Optional. Leave blank to match any call with this protocol, algorithm, and key ID. Enter any part of the current call identifiers, such as a talkgroup or radio ID, to limit where this key is used.");
+        Label scopeHelpLabel = new Label("Optional. Enter part of a call identifier to limit where this key is used.");
         scopeHelpLabel.setWrapText(true);
         scopeHelpLabel.setMaxWidth(460);
         gridPane.add(scopeHelpLabel, 1, row);
 
         dialog.getDialogPane().setContent(gridPane);
 
-        Button okButton = (Button)dialog.getDialogPane().lookupButton(ButtonType.OK);
+        Button okButton = (Button)dialog.getDialogPane().lookupButton(save);
         okButton.addEventFilter(ActionEvent.ACTION, event -> {
             String validationMessage = validate(protocolComboBox.getSelectionModel().getSelectedItem(),
                 algorithmComboBox.getSelectionModel().getSelectedItem(), algorithmIdField, keyIdField, keyField.getText());
@@ -664,29 +311,35 @@ public class EncryptionKeyPreferenceEditor extends BorderPane
             if(validationMessage != null)
             {
                 event.consume();
-                Alert alert = new Alert(Alert.AlertType.ERROR, validationMessage, ButtonType.OK);
-                alert.setTitle("Invalid Voice Encryption Key");
-                alert.setHeaderText("Invalid Voice Encryption Key");
-                alert.showAndWait();
+                showError("Invalid Voice Encryption Key", validationMessage);
+                return;
             }
-        });
 
-        dialog.setResultConverter(buttonType -> {
-            if(buttonType == ButtonType.OK)
+            seed.setEnabled(enabledCheckBox.isSelected());
+            seed.setLabel(labelField.getText());
+            seed.setProtocol(protocolComboBox.getSelectionModel().getSelectedItem());
+            seed.setAlgorithmId(algorithmIdField.getValue());
+            seed.setKeyId(keyIdField.getValue());
+            seed.setKeyHex(keyField.getText());
+            seed.setScope(scopeField.getText());
+            okButton.setDisable(true);
+            try
             {
-                VoiceEncryptionKey key = seed.copy();
-                key.setEnabled(enabledCheckBox.isSelected());
-                key.setLabel(labelField.getText());
-                key.setProtocol(protocolComboBox.getSelectionModel().getSelectedItem());
-                key.setAlgorithmId(algorithmIdField.getValue());
-                key.setKeyId(keyIdField.getValue());
-                key.setKeyHex(keyField.getText());
-                key.setScope(scopeField.getText());
-                return key;
+                if(existing == null) mPreference.addKey(seed);
+                else mPreference.updateKey(seed);
             }
-
-            return null;
+            catch(IllegalStateException e)
+            {
+                event.consume();
+                showError("Save Key Failed", "The key could not be saved. Check that the application data folder is writable, then try again.");
+            }
+            finally
+            {
+                okButton.setDisable(false);
+            }
         });
+
+        dialog.setResultConverter(buttonType -> buttonType == save ? seed : null);
 
         return dialog.showAndWait();
     }
@@ -796,31 +449,7 @@ public class EncryptionKeyPreferenceEditor extends BorderPane
         Alert alert = new Alert(Alert.AlertType.ERROR, message, ButtonType.OK);
         alert.setTitle(title);
         alert.setHeaderText(title);
+        if(getScene() != null) alert.initOwner(getScene().getWindow());
         alert.showAndWait();
-    }
-
-    private void showInformation(String title, String message)
-    {
-        Alert alert = new Alert(Alert.AlertType.INFORMATION, message, ButtonType.OK);
-        alert.setTitle(title);
-        alert.setHeaderText(title);
-        alert.showAndWait();
-    }
-
-    private record PasswordResult(char[] password, boolean savePassword)
-    {
-        private void clear()
-        {
-            Arrays.fill(password, '\0');
-        }
-    }
-
-    private record PasswordChangeResult(char[] currentPassword, char[] newPassword)
-    {
-        private void clear()
-        {
-            Arrays.fill(currentPassword, '\0');
-            Arrays.fill(newPassword, '\0');
-        }
     }
 }

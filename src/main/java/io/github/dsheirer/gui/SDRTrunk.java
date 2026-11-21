@@ -261,19 +261,6 @@ public class SDRTrunk
         mEncryptionKeysItem = new JMenuItem("Encryption Keys");
         mEncryptionKeysItem.setIcon(IconFontSwing.buildIcon(FontAwesome.KEY, 12));
         mEncryptionKeysItem.addActionListener(e -> MyEventBus.getGlobalEventBus().post(new ViewEncryptionKeyPreferenceEditorRequest()));
-        mEncryptionKeysItem.setVisible(mUserPreferences.getVoiceDecryptionModulePreference().getModuleManager().isLoaded());
-        mUserPreferences.getVoiceDecryptionModulePreference().getModuleManager()
-            .addStatusListener((previous, current) -> {
-                if(previous.loaded() == current.loaded()) return;
-                EventQueue.invokeLater(() -> {
-                    mEncryptionKeysItem.setVisible(current.loaded());
-
-                    if(!current.loaded())
-                    {
-                        mUserPreferences.getEncryptionKeyPreference().getVaultService().lock();
-                    }
-                });
-            });
         viewMenu.add(mEncryptionKeysItem);
 
         viewMenu.add(new JSeparator());
@@ -826,8 +813,6 @@ public class SDRTrunk
         if(mResourceStatusPanel == null)
         {
             mResourceStatusPanel = mJavaFxWindowManager.getStatusPanel(mResourceMonitor,
-                mUserPreferences.getEncryptionKeyPreference().getVaultService(),
-                mUserPreferences.getVoiceDecryptionModulePreference().getModuleManager(),
                 mStatsWebServerService::getNavigationState, () -> mUpdateCheckResult,
                 this::openUpdateReleasePage);
             //The JavaFX scene is assigned asynchronously; reserve its two-row height in Swing immediately.

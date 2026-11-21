@@ -146,13 +146,29 @@ class Format69To70DatabaseMigrationTest
     private static void assertPreserved(Path database, Map<String,List<String>> expected, int version) throws Exception
     {
         try(var connection = open(database))
-        { assertEquals(expected, snapshot(connection)); assertEquals(version, DatabaseFormatCatalog.inspect(connection).version()); }
+        {
+            boolean currentKeys = version >= 76 && ConfigurationHistoryDatabase.isPairedConfiguration(connection);
+            if(currentKeys)
+            {
+                try(var query = connection.createStatement(); var row = query.executeQuery(
+                    "SELECT settings_json,updated_at_ms FROM application_settings WHERE key='voice.encryption_keys'"))
+                {
+                    assertTrue(row.next()); assertEquals("[]", row.getString(1)); assertTrue(row.getLong(2) > 0);
+                    assertFalse(row.next());
+                }
+            }
+            assertEquals(expected, snapshot(connection, false, currentKeys));
+            assertEquals(version, DatabaseFormatCatalog.inspect(connection).version());
+        }
     }
 
     /** Complete fixture contents, including encryption, children, planner statistics and allocators. */
     private static Map<String,List<String>> snapshot(Connection connection) throws Exception
     { return snapshot(connection, false); }
     private static Map<String,List<String>> snapshot(Connection connection, boolean upgradedPreferences) throws Exception
+    { return snapshot(connection, upgradedPreferences, false); }
+    private static Map<String,List<String>> snapshot(Connection connection, boolean upgradedPreferences,
+        boolean excludeNewKeyDefault) throws Exception
     {
         Map<String,List<String>> result = new LinkedHashMap<>(); List<String> tables = new ArrayList<>();
         try(var query = connection.createStatement(); var values = query.executeQuery(
@@ -172,6 +188,8 @@ class Format69To70DatabaseMigrationTest
             {
                 while(values.next())
                 {
+                    if(excludeNewKeyDefault && table.equals("application_settings") &&
+                        "voice.encryption_keys".equals(values.getString("key"))) continue;
                     StringBuilder row = new StringBuilder();
                     for(int index = 1; index <= values.getMetaData().getColumnCount(); index++)
                     {

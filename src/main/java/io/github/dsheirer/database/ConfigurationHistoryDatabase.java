@@ -32,7 +32,7 @@ public final class ConfigurationHistoryDatabase
         if(version >= 69 && version <= 72) return FORMAT_69_HISTORY_FINGERPRINT;
         if(version == 73) return FORMAT_73_HISTORY_FINGERPRINT;
         if(version == 74) return FORMAT_74_HISTORY_FINGERPRINT;
-        if(version == 75) return HISTORY_FINGERPRINT;
+        if(version == 75 || version == 76) return HISTORY_FINGERPRINT;
         throw new SQLException("Unsupported activity database format");
     }
 

@@ -9,7 +9,6 @@ import io.github.dsheirer.database.upgrade.ApplicationMigrationService;
 import io.github.dsheirer.database.upgrade.ManagedRecordingCatalogMigrator;
 import io.github.dsheirer.database.upgrade.PreviousBuildLocator;
 import io.github.dsheirer.portable.PortableApplicationPaths;
-import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultPath;
 import io.github.dsheirer.web.auth.Pbkdf2PasswordHasher;
 import java.io.IOException;
 import java.io.Reader;
@@ -150,7 +149,6 @@ public final class SdrTrunkDatabaseBootstrap
                     "Receiving will continue; retry the catalog update on a later launch. " + failure.getMessage());
             }
         }
-        prepareVault(normalized);
         return new BootstrapResult(true, freshPreferences);
     }
 
@@ -211,20 +209,6 @@ public final class SdrTrunkDatabaseBootstrap
     public static void createFresh(Path databasePath) throws IOException, SQLException
     {
         DatabaseFileInstaller.install(databasePath, SdrTrunkDatabaseStartup::createGlobalDatabase);
-    }
-
-    public static void prepareVault(Path dataRoot) throws IOException, SQLException
-    {
-        Path vault = EncryptionKeyVaultPath.getVaultPath(dataRoot);
-
-        if(Files.isRegularFile(vault))
-        {
-            SdrTrunkDatabaseStartup.validateVaultDatabase(vault);
-        }
-        else
-        {
-            DatabaseFileInstaller.install(vault, SdrTrunkDatabaseStartup::createVaultDatabase);
-        }
     }
 
     public record BootstrapResult(boolean startApplication, boolean initializeNewPreferences)

@@ -138,7 +138,7 @@ class JavaShellCleanupUiContractTest
         String footer = Files.readString(Path.of("src/main/java/io/github/dsheirer/monitor/StatusBox.java"));
         double secondaryRowWidth = 2 * constant(footer, "STORAGE_CELL_WIDTH") +
             constant(footer, "STATS_CELL_WIDTH") + constant(footer, "WEB_CELL_WIDTH") +
-            constant(footer, "VAULT_CELL_WIDTH") + 4 * 2 + 8;
+            constant(footer, "KEYS_CELL_WIDTH") + 4 * 2 + 8;
 
         //Main frame is at least 480px wide with 6px of layout inset on each side.
         assertTrue(secondaryRowWidth <= 480 - 12, "Secondary status row must fit the compact shell");

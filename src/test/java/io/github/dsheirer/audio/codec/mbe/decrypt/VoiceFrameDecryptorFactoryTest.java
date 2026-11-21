@@ -21,11 +21,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 public class VoiceFrameDecryptorFactoryTest
 {
     @Test
-    void returnsEmptyWithoutModuleProviders()
+    void defaultFactoryIncludesBundledProviders()
     {
         VoiceEncryptionContext context = new VoiceEncryptionContext(VoiceEncryptionProtocol.APCO25, 0xAA, 1,
             "000000000000000000", 0, null);
-        assertTrue(new VoiceFrameDecryptorFactory().create(context, key()).isEmpty());
+        assertTrue(new VoiceFrameDecryptorFactory().create(context, key()).isPresent());
     }
 
     @Test

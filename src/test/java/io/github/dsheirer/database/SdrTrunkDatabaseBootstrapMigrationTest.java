@@ -24,7 +24,6 @@ import io.github.dsheirer.database.upgrade.Format3TestDatabase;
 import io.github.dsheirer.database.upgrade.Format30TestDatabase;
 import io.github.dsheirer.database.upgrade.ManagedRecordingCatalogMigrator;
 import io.github.dsheirer.record.managed.ManagedRecordingSchema;
-import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultPath;
 import io.github.dsheirer.web.auth.WebAccessService;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -141,7 +140,7 @@ class SdrTrunkDatabaseBootstrapMigrationTest
         assertCurrentDatabase(database);
         assertEquals("Migrated In Place", scalar(database, "SELECT name FROM alias WHERE id=1"));
         assertFalse(Files.exists(database.getParent().resolve("backups")));
-        assertTrue(Files.isRegularFile(EncryptionKeyVaultPath.getVaultPath(dataRoot)));
+        assertFalse(Files.exists(dataRoot.resolve("vault")));
         assertNoPrivateMigrationArtifacts(mTemporaryFolder);
     }
 
@@ -168,7 +167,7 @@ class SdrTrunkDatabaseBootstrapMigrationTest
         assertEquals("0", scalar(database, "SELECT COUNT(*) FROM trunked_signaling_activity_bucket"));
         assertEquals("0", scalar(database, "SELECT COUNT(*) FROM radio_system"));
         assertFalse(Files.exists(database.getParent().resolve("backups")));
-        assertTrue(Files.isRegularFile(EncryptionKeyVaultPath.getVaultPath(dataRoot)));
+        assertFalse(Files.exists(dataRoot.resolve("vault")));
         assertNoPrivateMigrationArtifacts(mTemporaryFolder);
     }
 
@@ -193,7 +192,7 @@ class SdrTrunkDatabaseBootstrapMigrationTest
         assertCurrentDatabase(targetDatabase);
         assertEquals("Imported Format 2", scalar(targetDatabase, "SELECT name FROM alias WHERE id=1"));
         assertFalse(Files.exists(targetDatabase.getParent().resolve("backups")));
-        assertTrue(Files.isRegularFile(EncryptionKeyVaultPath.getVaultPath(targetRoot)));
+        assertFalse(Files.exists(targetRoot.resolve("vault")));
         assertNoPrivateMigrationArtifacts(mTemporaryFolder);
     }
 
@@ -208,7 +207,7 @@ class SdrTrunkDatabaseBootstrapMigrationTest
         Files.createDirectories(sourceRoot.resolve("modules"));
         Files.writeString(sourceRoot.resolve("modules/module-test.jar"), "must not be copied");
         Files.createDirectories(sourceRoot.resolve("vault"));
-        Files.writeString(EncryptionKeyVaultPath.getVaultPath(sourceRoot), "invalid unselected vault");
+        Files.writeString(sourceRoot.resolve("vault/encryption-key-vault.sqlite"), "invalid unselected vault");
         Path targetRoot = mTemporaryFolder.resolve("database-file-import-target");
         Path passwordFile = passwordFile("database-file-import-password.txt");
 
@@ -223,10 +222,10 @@ class SdrTrunkDatabaseBootstrapMigrationTest
         assertFalse(Files.exists(SdrTrunkDatabasePath.getDatabasePath(targetRoot)));
         assertFalse(Files.exists(targetRoot.resolve("jmbe")));
         assertFalse(Files.exists(targetRoot.resolve("modules")));
-        assertFalse(Files.exists(EncryptionKeyVaultPath.getVaultPath(targetRoot)));
+        assertFalse(Files.exists(targetRoot.resolve("vault/encryption-key-vault.sqlite")));
         assertEquals("must not be copied", Files.readString(sourceRoot.resolve("jmbe/jmbe-test.jar")));
         assertEquals("must not be copied", Files.readString(sourceRoot.resolve("modules/module-test.jar")));
-        assertEquals("invalid unselected vault", Files.readString(EncryptionKeyVaultPath.getVaultPath(sourceRoot)));
+        assertEquals("invalid unselected vault", Files.readString(sourceRoot.resolve("vault/encryption-key-vault.sqlite")));
         assertNoPrivateMigrationArtifacts(mTemporaryFolder);
     }
 
@@ -245,7 +244,7 @@ class SdrTrunkDatabaseBootstrapMigrationTest
         assertFalse(result.initializeNewPreferences());
         assertCurrentDatabase(database);
         assertFalse(Files.exists(database.getParent().resolve("backups")));
-        assertTrue(Files.isRegularFile(EncryptionKeyVaultPath.getVaultPath(dataRoot)));
+        assertFalse(Files.exists(dataRoot.resolve("vault")));
         assertNoPrivateMigrationArtifacts(mTemporaryFolder);
     }
 

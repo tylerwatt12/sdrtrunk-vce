@@ -462,6 +462,8 @@ class MigrationContentTest
         DatabaseFormatCatalog.requireCurrent(connection);
         assertEquals(1, scalar(connection, "SELECT count(*) FROM application_settings " +
             "WHERE key='receiver.nicknames' AND settings_json='{}'"));
+        assertEquals(1, scalar(connection, "SELECT count(*) FROM application_settings " +
+            "WHERE key='voice.encryption_keys' AND settings_json='[]' AND typeof(updated_at_ms)='integer' AND updated_at_ms>0"));
         for(String table: CurrentDatabaseDerivedStateRepair.REPRODUCIBLE_TABLES)
             if(!table.equals("alias_activity_summary")) assertEquals(0, count(connection, table), table);
         assertEquals(0, count(connection, "alias_list_analog_activity_summary"));
@@ -499,7 +501,8 @@ class MigrationContentTest
                 {
                     if(convertedFields && table.equals("application_settings") &&
                         (rows.getString("key").equals("setup_wizard") ||
-                            rows.getString("key").equals("receiver.nicknames") && rows.getString("settings_json").equals("{}"))) continue;
+                            rows.getString("key").equals("receiver.nicknames") && rows.getString("settings_json").equals("{}") ||
+                            rows.getString("key").equals("voice.encryption_keys") && rows.getString("settings_json").equals("[]"))) continue;
                     List<String> fields = new ArrayList<>();
                     for(int index = 1; index <= rows.getMetaData().getColumnCount(); index++)
                     {

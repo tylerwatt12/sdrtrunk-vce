@@ -20,7 +20,7 @@
 package io.github.dsheirer.preference.encryption;
 
 /**
- * Known voice encryption algorithm IDs.  The optional decryption module declares which of these it supports.
+ * Known voice encryption algorithm IDs. The bundled provider catalog declares which of these it supports.
  */
 public enum VoiceEncryptionAlgorithm
 {

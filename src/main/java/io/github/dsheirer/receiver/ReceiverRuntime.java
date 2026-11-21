@@ -25,7 +25,6 @@ import io.github.dsheirer.module.log.EventLogManager;
 import io.github.dsheirer.module.log.EventLogger;
 import io.github.dsheirer.portable.PortableDataRootLock;
 import io.github.dsheirer.preference.UserPreferences;
-import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultService;
 import io.github.dsheirer.preference.portable.SqlitePreferencesFactory;
 import io.github.dsheirer.record.AudioRecordingManager;
 import io.github.dsheirer.record.managed.ManagedRecordingCatalog;
@@ -189,11 +188,6 @@ public final class ReceiverRuntime implements AutoCloseable
         if(!mActivated) throw new IllegalStateException("Activate the receiver before starting channels");
         if(mConfiguredChannelsStarted) return;
         mConfiguredChannelsStarted = true;
-        if(unattended && mPreferences.getVoiceDecryptionModulePreference().getModuleManager().isLoaded())
-        {
-            EncryptionKeyVaultService vault = mPreferences.getEncryptionKeyPreference().getVaultService();
-            if(vault.hasVault() && !vault.isUnlocked() && vault.isPromptOnLaunch()) vault.disableForRun();
-        }
         mConfiguration.executeConfigurationTask(() ->
         {
             for(Channel channel: mConfiguration.getChannelModel().getAutoStartChannels())
@@ -216,8 +210,6 @@ public final class ReceiverRuntime implements AutoCloseable
     {
         mApplicationLog = new ApplicationLog(mPreferences);
         mApplicationLog.start();
-        if(mPreferences.getVoiceDecryptionModulePreference().getModuleManager().isLoaded())
-            mPreferences.getEncryptionKeyPreference().getVaultService().tryAutoUnlockSavedPassword();
         //Load before TunerManager initializes generated SDRplay native bindings.
         if(SDRPlayLibraryHelper.LOADED) LOGGER.info("SDRPlay API native library preemptively loaded");
         ThreadPool.logSettings();
@@ -444,8 +436,7 @@ public final class ReceiverRuntime implements AutoCloseable
         if(mTuners != null) safe &= shutdownStep("tuners", mTuners::stop);
         if(mPreferences.getVoiceDecryptionModulePreference().getModuleManager().isLoaded())
         {
-            safe &= shutdownStep("encryption keys", mPreferences.getEncryptionKeyPreference().getVaultService()::lock);
-            safe &= shutdownStep("optional decoder module", mPreferences.getVoiceDecryptionModulePreference().getModuleManager()::close);
+            safe &= shutdownStep("voice decryption", mPreferences.getVoiceDecryptionModulePreference().getModuleManager()::close);
         }
         safe &= shutdownStep("JMBE decoder libraries", JmbeLibraryLoader.getInstance()::close);
         safe &= shutdownStep("pending receiver settings", ApplicationSettingsStore::flushPendingWritesNow);

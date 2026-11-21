@@ -20,17 +20,13 @@
 package io.github.dsheirer.monitor;
 
 import io.github.dsheirer.application.update.UpdateCheckResult;
-import io.github.dsheirer.audio.codec.mbe.decrypt.VoiceDecryptionModuleManager;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.gui.preference.encryption.ViewEncryptionKeyPreferenceEditorRequest;
-import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultService;
-import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultState;
 import io.github.dsheirer.stats.StatsWebNavigationState;
 import java.net.URI;
 import java.util.Objects;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
-import javafx.application.Platform;
 import javafx.animation.Animation;
 import javafx.animation.KeyFrame;
 import javafx.animation.Timeline;
@@ -66,20 +62,16 @@ public class StatusBox extends VBox
     private static final double DATABASE_CELL_WIDTH = 76;
     private static final double STATS_CELL_WIDTH = 62;
     private static final double WEB_CELL_WIDTH = 74;
-    private static final double VAULT_CELL_WIDTH = 70;
+    private static final double KEYS_CELL_WIDTH = 70;
     private static final double UPDATE_CELL_WIDTH = 30;
     private static final Color ACTIVE_COLOR = Color.FORESTGREEN;
     private static final Color INACTIVE_COLOR = Color.DIMGRAY;
     private final ResourceMonitor mResourceMonitor;
-    private final EncryptionKeyVaultService mVaultService;
-    private final VoiceDecryptionModuleManager mModuleManager;
     private final Supplier<StatsWebNavigationState> mNavigationStateSupplier;
     private final Supplier<UpdateCheckResult> mUpdateResultSupplier;
     private final Consumer<URI> mUpdateReleasePageConsumer;
     private final HBox mPrimaryRow = new HBox();
     private final HBox mSecondaryRow = new HBox();
-    private HBox mVaultStatusBox;
-    private Tooltip mVaultTooltip;
     private Label mStatsStatusLabel;
     private Label mWebStatusLabel;
     private Tooltip mStatsStatusTooltip;
@@ -92,15 +84,12 @@ public class StatusBox extends VBox
     private Tooltip mUpdateStatusTooltip;
     private UpdateCheckResult mLastUpdateResult;
 
-    public StatusBox(ResourceMonitor resourceMonitor, EncryptionKeyVaultService vaultService,
-                     VoiceDecryptionModuleManager moduleManager,
+    public StatusBox(ResourceMonitor resourceMonitor,
                      Supplier<StatsWebNavigationState> navigationStateSupplier,
                      Supplier<UpdateCheckResult> updateResultSupplier,
                      Consumer<URI> updateReleasePageConsumer)
     {
         mResourceMonitor = resourceMonitor;
-        mVaultService = vaultService;
-        mModuleManager = moduleManager;
         mNavigationStateSupplier = navigationStateSupplier;
         mUpdateResultSupplier = updateResultSupplier;
         mUpdateReleasePageConsumer = updateReleasePageConsumer;
@@ -120,10 +109,7 @@ public class StatusBox extends VBox
             addNavigationStatusCells();
         }
 
-        if(mVaultService != null)
-        {
-            addVaultStatusCell();
-        }
+        addKeysCell();
 
         if(mUpdateResultSupplier != null)
         {
@@ -293,38 +279,18 @@ public class StatusBox extends VBox
         mUpdateStatusBox.setManaged(visible);
     }
 
-    private void addVaultStatusCell()
+    private void addKeysCell()
     {
-        Separator separator = createSeparator();
-        mSecondaryRow.getChildren().add(separator);
-        mSecondaryRow.getChildren().add(getVaultStatusBox());
-        boolean moduleLoaded = mModuleManager == null || mModuleManager.isLoaded();
-        separator.setVisible(moduleLoaded);
-        separator.setManaged(moduleLoaded);
-        mVaultStatusBox.setVisible(moduleLoaded);
-        mVaultStatusBox.setManaged(moduleLoaded);
-
-        if(mModuleManager != null)
-        {
-            mModuleManager.addStatusListener((previous, current) -> {
-                if(previous.loaded() == current.loaded()) return;
-                updateOnFx(() -> {
-                    separator.setVisible(current.loaded());
-                    separator.setManaged(current.loaded());
-                    mVaultStatusBox.setVisible(current.loaded());
-                    mVaultStatusBox.setManaged(current.loaded());
-                });
-            });
-        }
-
-        mVaultService.addStatusListener((previous, current) -> updateOnFx(this::updateVaultStatus));
-        updateVaultStatus();
-    }
-
-    private static void updateOnFx(Runnable update)
-    {
-        if(Platform.isFxApplicationThread()) update.run();
-        else Platform.runLater(update);
+        HBox keysCell = createCell(KEYS_CELL_WIDTH);
+        keysCell.setSpacing(3);
+        IconNode icon = new IconNode(FontAwesome.KEY);
+        icon.setIconSize(14);
+        icon.setFill(INACTIVE_COLOR);
+        keysCell.getChildren().addAll(fixedLabel("Keys", 26, Pos.CENTER_LEFT), icon);
+        Tooltip.install(keysCell, new Tooltip("Manage encryption keys"));
+        keysCell.setOnMouseClicked(event ->
+            MyEventBus.getGlobalEventBus().post(new ViewEncryptionKeyPreferenceEditorRequest()));
+        addCell(mSecondaryRow, keysCell);
     }
 
     private HBox createCell(double width)
@@ -423,44 +389,4 @@ public class StatusBox extends VBox
         label.setTextFill(active ? ACTIVE_COLOR : INACTIVE_COLOR);
     }
 
-    private HBox getVaultStatusBox()
-    {
-        if(mVaultStatusBox == null)
-        {
-            mVaultStatusBox = createCell(VAULT_CELL_WIDTH);
-            mVaultStatusBox.setSpacing(3);
-            mVaultTooltip = new Tooltip();
-            Tooltip.install(mVaultStatusBox, mVaultTooltip);
-            mVaultStatusBox.setOnMouseClicked(event ->
-                MyEventBus.getGlobalEventBus().post(new ViewEncryptionKeyPreferenceEditorRequest()));
-        }
-
-        return mVaultStatusBox;
-    }
-
-    private void updateVaultStatus()
-    {
-        if(mVaultService == null || mVaultStatusBox == null)
-        {
-            return;
-        }
-
-        EncryptionKeyVaultState state = mVaultService.getState();
-        IconNode lockIcon = new IconNode(state == EncryptionKeyVaultState.UNLOCKED ? FontAwesome.UNLOCK : FontAwesome.LOCK);
-        lockIcon.setIconSize(14);
-        lockIcon.setFill(state == EncryptionKeyVaultState.UNLOCKED ? Color.FORESTGREEN : Color.DARKGRAY);
-        Label label = fixedLabel("Keys", 26, Pos.CENTER_LEFT);
-        mVaultStatusBox.getChildren().setAll(label, lockIcon);
-
-        if(mVaultService.hasSavedPassword())
-        {
-            IconNode warningIcon = new IconNode(FontAwesome.EXCLAMATION_TRIANGLE);
-            warningIcon.setIconSize(14);
-            warningIcon.setFill(Color.ORANGERED);
-            mVaultStatusBox.getChildren().add(warningIcon);
-        }
-
-        String saved = mVaultService.hasSavedPassword() ? " Saved password enabled: unsafe." : "";
-        mVaultTooltip.setText(mVaultService.getStatus() + "." + saved + " Click to manage encryption keys.");
-    }
 }

@@ -20,8 +20,6 @@ import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.database.InitialAdminSetup;
 import io.github.dsheirer.database.configuration.ConfigurationRepository;
 import io.github.dsheirer.configuration.ConfigurationSnapshotValidator;
-import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultPath;
-import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultSchema;
 import io.github.dsheirer.stats.activity.DmrActivitySchema;
 import io.github.dsheirer.stats.activity.ReceiverActivitySchema;
 import io.github.dsheirer.stats.site.TrunkedSiteSchema;
@@ -751,6 +749,7 @@ public final class ApplicationMigrationService
             // Nullable denial columns and their NULL-valid checks change only bounded schema metadata.
             case 73 -> "p25-denial-reasons-v1".equals(step.id());
             case 74 -> "p25-regroup-types-v1".equals(step.id());
+            case 75 -> "database-voice-keys-v1".equals(step.id());
             default -> false;
         };
     }
@@ -1201,7 +1200,7 @@ public final class ApplicationMigrationService
         return inputScope == PreviousBuildLocator.InputScope.PORTABLE_PROFILE ?
             "portable-profile import; usable neighboring artifacts are attempted independently and stored paths " +
                 "may be remapped." :
-            "configuration and saved activity only; neighboring vault, JMBE, module, and other profile files are " +
+            "configuration and saved activity only; neighboring JMBE, module, and other profile files are " +
                 "not copied, and stored paths are not remapped.";
     }
 
@@ -1316,26 +1315,10 @@ public final class ApplicationMigrationService
         return actual;
     }
 
-    private static void validateVault(Path vault) throws IOException, SQLException
-    {
-        if(Files.isSymbolicLink(vault) || !Files.isRegularFile(vault, LinkOption.NOFOLLOW_LINKS))
-        {
-            throw new IOException("The optional encryption-key vault snapshot is not a regular file.");
-        }
-
-        try(Connection connection = openReadOnly(vault))
-        {
-            EncryptionKeyVaultSchema.validate(connection);
-            requireIntegrity(connection);
-            requireForeignKeysValid(connection);
-        }
-        requireNoSidecars(vault, "The optional encryption-key vault snapshot remained active.");
-    }
-
     private List<String> copyProfileData(Path sourceRoot, Path stageRoot, ProgressListener listener) throws IOException
     {
         MigrationTimings timings = new MigrationTimings(listener::update);
-        List<String> statuses = new ArrayList<>(3);
+        List<String> statuses = new ArrayList<>(2);
         try(var phase = timings.phase("Copy optional JMBE library files"))
         {
             statuses.add(copyOptionalDirectory(sourceRoot.resolve(JMBE_DIRECTORY), stageRoot.resolve(JMBE_DIRECTORY),
@@ -1349,58 +1332,7 @@ public final class ApplicationMigrationService
                 "Select or reinstall the optional decoder modules again after setup."));
             phase.complete();
         }
-        try(var phase = timings.phase("Copy and validate optional encryption-key vault"))
-        {
-            statuses.add(copyOptionalVault(sourceRoot, stageRoot));
-            phase.complete();
-        }
         return List.copyOf(statuses);
-    }
-
-    private String copyOptionalVault(Path sourceRoot, Path stageRoot) throws IOException
-    {
-        Path sourceDirectory = sourceRoot.resolve(EncryptionKeyVaultPath.VAULT_DIRECTORY);
-        Path destinationDirectory = stageRoot.resolve(EncryptionKeyVaultPath.VAULT_DIRECTORY);
-        String label = "encryption-key vault";
-
-        if(!Files.exists(sourceDirectory, LinkOption.NOFOLLOW_LINKS))
-        {
-            return optionalMissing(label);
-        }
-
-        if(Files.isSymbolicLink(sourceDirectory) ||
-            !Files.isDirectory(sourceDirectory, LinkOption.NOFOLLOW_LINKS) || !Files.isReadable(sourceDirectory))
-        {
-            return optionalSkipped(label, "Set up encrypted credentials or keys again after setup.");
-        }
-
-        Path sourceVault = EncryptionKeyVaultPath.getVaultPath(sourceRoot);
-
-        if(!Files.exists(sourceVault, LinkOption.NOFOLLOW_LINKS))
-        {
-            return optionalMissing(label);
-        }
-
-        if(Files.isSymbolicLink(sourceVault) || !Files.isRegularFile(sourceVault, LinkOption.NOFOLLOW_LINKS) ||
-            !Files.isReadable(sourceVault))
-        {
-            return optionalSkipped(label, "Set up encrypted credentials or keys again after setup.");
-        }
-
-        try
-        {
-            Path destinationVault = EncryptionKeyVaultPath.getVaultPath(stageRoot);
-            mExternalSnapshotter.create(sourceVault, destinationVault);
-            FileAccessAttributeSnapshot.restrictSensitiveFile(destinationVault);
-            validateVault(destinationVault);
-            FileAccessAttributeSnapshot.restrictSensitiveFile(destinationVault);
-            return optionalCopied(label);
-        }
-        catch(IOException | SQLException | RuntimeException failure)
-        {
-            discardOptionalComponent(destinationDirectory, failure);
-            return optionalSkipped(label, "Set up encrypted credentials or keys again after setup.");
-        }
     }
 
     private static String copyOptionalDirectory(Path source, Path destination, String label, String recovery)

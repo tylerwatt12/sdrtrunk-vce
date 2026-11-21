@@ -63,7 +63,7 @@ class SdrTrunkDatabaseBootstrapAdminSetupTest
         assertTrue(access.isPrimaryAdminConfigured());
         assertTrue(access.authenticate("admin", plaintext.toCharArray()).isPresent());
         assertFalse(new String(Files.readAllBytes(database), StandardCharsets.ISO_8859_1).contains(plaintext));
-        assertTrue(Files.isRegularFile(dataRoot.resolve("vault/encryption-key-vault.sqlite")));
+        assertFalse(Files.exists(dataRoot.resolve("vault")));
     }
 
     @Test

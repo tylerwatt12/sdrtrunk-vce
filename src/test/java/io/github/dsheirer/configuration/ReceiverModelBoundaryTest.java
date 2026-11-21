@@ -18,7 +18,7 @@ class ReceiverModelBoundaryTest
         Path root = Path.of("src/main/java/io/github/dsheirer");
         for(String directory: List.of("alias", "configuration", "channel", "controller/channel", "audio/broadcast",
             "identifier/tone", "receiver", "source/tuner/manager", "module/decode/dmr/channel",
-            "audio/codec/mbe/decrypt", "preference/encryption/vault"))
+            "audio/codec/mbe/decrypt", "preference/encryption"))
         {
             try(var paths = Files.walk(root.resolve(directory)))
             {

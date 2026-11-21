@@ -454,42 +454,59 @@ tasks.register('verifyBundledApplicationDatabaseMigrator') {
     }
 }
 
-tasks.register('verifyNoBundledVoiceDecryption') {
-    dependsOn jar
-    inputs.file(tasks.named('jar', Jar).flatMap { it.archiveFile })
-    inputs.files(configurations.runtimeClasspath)
-    doLast {
-        def forbiddenEntries = [
-            'io/github/dsheirer/audio/codec/mbe/decrypt/Apco25AdpVoiceFrameDecryptor.class',
-            'io/github/dsheirer/audio/codec/mbe/decrypt/Apco25OfbVoiceFrameDecryptor.class',
-            'io/github/dsheirer/audio/codec/mbe/decrypt/Apco25VoiceFrameDecryptorProvider.class',
-            'io/github/dsheirer/audio/codec/mbe/decrypt/P25VoiceKeystreamFactory.class',
-            'io/github/dsheirer/audio/codec/mbe/decrypt/dmr/DmrPrivacyFrameDecryptor.class',
-            'io/github/dsheirer/audio/codec/mbe/decrypt/dmr/DmrPrivacyFrameDecryptorProvider.class',
-            'io/github/dsheirer/audio/codec/mbe/decrypt/crypto/AesOfb.class',
-            'io/github/dsheirer/audio/codec/mbe/decrypt/crypto/DesOfb.class',
-            'io/github/dsheirer/audio/codec/mbe/decrypt/crypto/Rc4.class',
-            'io/github/dsheirer/voice/decrypt/module/SdrTrunkVoiceDecryptionModule.class'
-        ] as Set
-        def archives = inputs.files.files.findAll {
-            it.isFile() && it.name.endsWith('.jar')
-        }
+def bundledVoiceDecryptionEntries = [
+    'io/github/dsheirer/audio/codec/mbe/decrypt/Apco25AdpVoiceFrameDecryptor.class',
+    'io/github/dsheirer/audio/codec/mbe/decrypt/Apco25OfbVoiceFrameDecryptor.class',
+    'io/github/dsheirer/audio/codec/mbe/decrypt/P25Phase2AmbeVoiceFrameDecryptor.class',
+    'io/github/dsheirer/audio/codec/mbe/decrypt/Apco25VoiceFrameDecryptorProvider.class',
+    'io/github/dsheirer/audio/codec/mbe/decrypt/dmr/DmrPrivacyFrameDecryptor.class',
+    'io/github/dsheirer/audio/codec/mbe/decrypt/dmr/DmrPrivacyFrameDecryptorProvider.class',
+    'io/github/dsheirer/audio/codec/mbe/decrypt/nxdn/NxdnPrivacyFrameDecryptor.class',
+    'io/github/dsheirer/audio/codec/mbe/decrypt/nxdn/NxdnVoiceFrameDecryptorProvider.class',
+    'io/github/dsheirer/audio/codec/mbe/decrypt/crypto/AesOfb.class',
+    'io/github/dsheirer/audio/codec/mbe/decrypt/crypto/DesOfb.class',
+    'io/github/dsheirer/audio/codec/mbe/decrypt/crypto/Rc4.class',
+    'io/github/dsheirer/voice/decrypt/module/SdrTrunkVoiceDecryptionModule.class',
+    'META-INF/services/io.github.dsheirer.audio.codec.mbe.decrypt.VoiceDecryptionModule'
+]
 
-        archives.each { archive ->
-            def zip = new java.util.zip.ZipFile(archive)
-            try {
-                def bundled = forbiddenEntries.findAll { zip.getEntry(it) != null }
-                if(!bundled.isEmpty()) {
-                    throw new GradleException("Voice decryption implementation bundled in ${archive.name}: ${bundled}")
-                }
-            } finally {
-                zip.close()
-            }
+def retiredEncryptionEntries = [
+    'io/github/dsheirer/gui/preference/decoder/VoiceDecryptionModulePreferenceEditor.class'
+]
+def retiredEncryptionPrefixes = ['io/github/dsheirer/preference/encryption/vault/']
+def verifyVoiceDecryptionEntries = { Set<String> entries, String archiveName ->
+    Set<String> missing = (bundledVoiceDecryptionEntries as Set) - entries
+    if(!missing.isEmpty()) {
+        throw new GradleException("Bundled voice decryption is missing from ${archiveName}: ${missing}")
+    }
+    Set<String> retired = entries.findAll { entry ->
+        retiredEncryptionEntries.contains(entry) || retiredEncryptionPrefixes.any { entry.startsWith(it) }
+    } as Set
+    if(!retired.isEmpty()) {
+        throw new GradleException("Retired encryption-vault or module-installation classes remain in " +
+                "${archiveName}: ${retired}")
+    }
+}
+
+tasks.register('verifyBundledVoiceDecryption') {
+    description = 'Verifies the application JAR includes all bundled voice decryption providers.'
+    dependsOn jar
+    inputs.property('requiredEntries', bundledVoiceDecryptionEntries)
+    inputs.property('retiredEntries', retiredEncryptionEntries)
+    inputs.property('retiredPrefixes', retiredEncryptionPrefixes)
+    inputs.file(tasks.named('jar', Jar).flatMap { it.archiveFile })
+    doLast {
+        def archive = tasks.named('jar', Jar).get().archiveFile.get().asFile
+        def zip = new java.util.zip.ZipFile(archive)
+        try {
+            verifyVoiceDecryptionEntries(zip.entries().toList()*.name as Set, archive.name)
+        } finally {
+            zip.close()
         }
     }
 }
 
-check.dependsOn tasks.named('verifyNoBundledVoiceDecryption')
+check.dependsOn tasks.named('verifyBundledVoiceDecryption')
 check.dependsOn tasks.named('verifyBundledApplicationDatabaseMigrator')
 check.dependsOn tasks.named('verifyUpdateChannelMetadata')
 
@@ -813,6 +830,8 @@ def verifyRuntimePackage = { Map target, File archive ->
                 applicationEntries.add(applicationEntry.name)
             }
 
+            verifyVoiceDecryptionEntries(applicationEntries, archive.name)
+
             Set<String> requiredApplicationIcons = [
                     'images/app/vce-app-icon.png',
                     'images/app/vce-app-icon.svg',
@@ -1036,6 +1055,10 @@ runtimeTargets.each { target ->
         dependsOn(tasks.named('installDist'))
         dependsOn('verifyApprovedReleaseNotes')
         dependsOn('verifyBundledApplicationDatabaseMigrator')
+        dependsOn('verifyBundledVoiceDecryption')
+        inputs.property('bundledVoiceDecryptionEntries', bundledVoiceDecryptionEntries)
+        inputs.property('retiredEncryptionEntries', retiredEncryptionEntries)
+        inputs.property('retiredEncryptionPrefixes', retiredEncryptionPrefixes)
         dependsOn('verifyUpdateChannelMetadata')
 
         if(!target.windows) {

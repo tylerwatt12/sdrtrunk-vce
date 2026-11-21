@@ -75,15 +75,14 @@ public final class SupportBundleService implements AutoCloseable
         "alias_list_new_alias_scan_list_membership", "alias_broadcast_channel",
         "alias_list_unmatched_talkgroup_stream", "alias_list_new_alias_stream");
     private static final Set<String> ALWAYS_PRIVATE_TABLES = Set.of("web_user", "web_access_policy",
-        "application_settings", "application_icons", "configuration_broadcast_stream", "vault_metadata",
-        "vault_payload", "sqlite_sequence");
+        "application_settings", "application_icons", "configuration_broadcast_stream", "sqlite_sequence");
     private static final List<String> ACTIVITY_PREFIXES = List.of("receiver_", "radio_system",
         "trunked_", "p25_", "dmr_", "nxdn_", "conventional_", "activity_", "alias_activity_");
     private static final List<String> TIME_COLUMNS = List.of("timestamp_ms", "timestamp", "time_start",
         "time_start_ms", "started_at_ms", "updated_at_ms", "observed_at_ms", "last_seen_at_ms", "last_seen_ms",
         "bucket_start_ms", "created_at_ms", "event_at_ms");
     private static final Pattern PRIVATE_COLUMN = Pattern.compile(
-        "(?i)(password|password_verifier|api_key|access_token|refresh_token|session_id|secret|vault_payload|action_config_json)");
+        "(?i)(password|password_verifier|api_key|access_token|refresh_token|session_id|secret|key_hex|action_config_json)");
     private static final Pattern LOG_SECRET = Pattern.compile(
         "(?i)(authorization\\s*[:=]\\s*(?:bearer\\s+)?|api[_ -]?key\\s*[:=]\\s*|password\\s*[:=]\\s*)([^\\s,;]+)");
     private static final Pattern USER_PATH = Pattern.compile("(?i)(/Users/|/home/|[A-Z]:\\\\Users\\\\)[^/\\\\\\s]+", Pattern.CASE_INSENSITIVE);

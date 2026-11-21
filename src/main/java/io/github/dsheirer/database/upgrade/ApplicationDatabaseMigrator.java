@@ -1212,7 +1212,7 @@ public final class ApplicationDatabaseMigrator
                     {
                         continue;
                     }
-                    //Ordinary setup imports copy optional modules and vault, but do not copy recording audio/catalogs.
+                    //Ordinary setup imports copy optional modules, but do not copy recording audio/catalogs.
                     if("directory.recording.managed".equals(key) && !relocation.completeProfileCopy())
                     {
                         continue;

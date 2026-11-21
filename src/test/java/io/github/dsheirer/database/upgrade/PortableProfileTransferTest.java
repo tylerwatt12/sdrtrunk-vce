@@ -33,7 +33,7 @@ class PortableProfileTransferTest
             transfer.move();
             assertFalse(Files.exists(source));
             assertEquals("catalog", Files.readString(target.resolve("database/managed-recordings.sqlite")));
-            assertEquals("vault", Files.readString(target.resolve("vault/keys.sqlite")));
+            assertEquals("screenshot", Files.readString(target.resolve("screenshots/receiver.png")));
             assertEquals("voice-library", Files.readString(target.resolve("jmbe/library.jar")));
             assertEquals("classic", Files.readString(target.resolve("recordings/call.wav")));
             assertEquals(audioIdentity, PortableFileIdentity.read(target.resolve("recordings-managed/call.wav")));
@@ -218,7 +218,7 @@ class PortableProfileTransferTest
         Path root = Files.createDirectories(temporary.resolve("old-install/data"));
         for(var file: Map.of("database/sdrtrunk.sqlite", "configuration", "database/activity.sqlite", "history",
             "database/managed-recordings.sqlite", "catalog", "recordings-managed/call.wav", "audio",
-            "recordings/call.wav", "classic", "vault/keys.sqlite", "vault", "jmbe/library.jar", "voice-library").entrySet())
+            "recordings/call.wav", "classic", "screenshots/receiver.png", "screenshot", "jmbe/library.jar", "voice-library").entrySet())
         {
             Path path = root.resolve(file.getKey());
             Files.createDirectories(path.getParent());

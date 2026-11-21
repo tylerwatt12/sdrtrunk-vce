@@ -280,7 +280,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
         this(parentChannel, bandplanOverrideRegistry, identityResolver, () -> false);
     }
 
-    /** Shared receiver identity state and the current, non-blocking optional decryption module state. */
+    /** Shared receiver identity state and the current, non-blocking voice-decryption availability. */
     public P25TrafficChannelManager(Channel parentChannel, P25BandplanOverrideRegistry bandplanOverrideRegistry,
                                     P25IdentityResolver identityResolver,
                                     BooleanSupplier voiceDecryptionModuleLoaded)

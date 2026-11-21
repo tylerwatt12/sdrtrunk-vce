@@ -159,7 +159,7 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
     }
 
     /**
-     * Constructs an instance with a live, non-blocking view of optional voice-decryption module state.
+     * Constructs an instance with a live, non-blocking view of voice-decryption availability.
      */
     public DMRTrafficChannelManager(Channel parentChannel, BooleanSupplier voiceDecryptionModuleLoaded)
     {

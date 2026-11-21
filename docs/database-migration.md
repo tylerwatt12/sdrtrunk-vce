@@ -12,7 +12,7 @@ the [documentation index](README.md).
 | What you want to do | Where to start | What changes |
 | --- | --- | --- |
 | Use a newer build with the same active VCE data folder | Review the **Update** offered during startup | Confirm your manual backup and choose history scope before large operations. The active profile is updated in place. |
-| Upgrade a previous VCE installation into a new download | **Upgrade existing VCE**, then choose its folder | Confirm your manual backup and choose history scope first. Its portable data folder is moved into the empty new installation, preserving recordings, the Managed Recordings catalog, vault, JMBE, and optional modules. |
+| Upgrade a previous VCE installation into a new download | **Upgrade existing VCE**, then choose its folder | Confirm your manual backup and choose history scope first. Its portable data folder is moved into the empty new installation, preserving recordings, the Managed Recordings catalog, JMBE, and optional modules. |
 | Start a new installation from a supported XML playlist | **Import XML playlist**, then choose the playlist | Supported channels, aliases, and streaming settings initialize the new profile; the XML source stays unchanged. |
 
 VCE folder upgrades and XML imports are offered only before the destination has a database. Choose an installation folder, portable
@@ -139,7 +139,7 @@ those database choices because a default may also be an intentional selection. E
 recovery can restore selected valid legacy values over reviewed defaults; normal setup does not offer this repair
 as a starting-point choice. Recovery stops if the reviewed database value changes. Newer or non-default choices are retained.
 
-A VCE folder upgrade moves the complete portable `data` folder, including its encryption vault, JMBE files,
+A VCE folder upgrade moves the complete portable `data` folder, including its JMBE files,
 optional modules, logs, recordings, screenshots, event logs, streaming output, and separate Managed Recordings
 catalog. A settings-only choice changes application history scope, not the ownership of those other files.
 
@@ -274,7 +274,7 @@ ambiguous markerless state instead of guessing which build produced it.
 Migration steps form one ordered chain:
 
 ```text
-format 2 (Alpha 12 family) -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 -> format 11 -> format 12 -> format 13 -> format 14 -> format 15 -> format 16 -> format 17 -> format 18 -> format 19 -> format 20 -> format 21 -> format 22 -> format 23 -> format 24 -> format 25 -> format 26 -> format 27 -> format 28 -> format 29 -> format 30 -> format 31 -> format 32 -> format 33 -> format 34 -> format 35 -> format 36 -> format 37 -> format 38 -> format 39 -> format 40 -> format 41 -> format 42 -> format 43 -> format 44 -> format 45 -> format 46 -> format 47 -> format 48 -> format 49 -> format 50 -> format 51 -> format 52 -> format 53 -> format 54 -> format 55 -> format 56 -> format 57 -> format 58 -> format 59 -> format 60 -> format 61 -> format 62 -> format 63 -> format 64 -> format 65 -> format 66 -> format 67 -> format 68 -> format 69 -> format 70 -> format 71 -> format 72 -> format 73 -> format 74 -> format 75 (current)
+format 2 (Alpha 12 family) -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 -> format 11 -> format 12 -> format 13 -> format 14 -> format 15 -> format 16 -> format 17 -> format 18 -> format 19 -> format 20 -> format 21 -> format 22 -> format 23 -> format 24 -> format 25 -> format 26 -> format 27 -> format 28 -> format 29 -> format 30 -> format 31 -> format 32 -> format 33 -> format 34 -> format 35 -> format 36 -> format 37 -> format 38 -> format 39 -> format 40 -> format 41 -> format 42 -> format 43 -> format 44 -> format 45 -> format 46 -> format 47 -> format 48 -> format 49 -> format 50 -> format 51 -> format 52 -> format 53 -> format 54 -> format 55 -> format 56 -> format 57 -> format 58 -> format 59 -> format 60 -> format 61 -> format 62 -> format 63 -> format 64 -> format 65 -> format 66 -> format 67 -> format 68 -> format 69 -> format 70 -> format 71 -> format 72 -> format 73 -> format 74 -> format 75 -> format 76 (current)
 ```
 
 Each step owns exactly one `N -> N+1` transformation. The runner repeatedly applies the next registered step until it
@@ -440,6 +440,20 @@ Native column additions preserve all table and index b-trees. SQLite may scan th
 the new checks, but retained Activity is neither scanned nor rewritten. Both format markers advance in the existing
 transaction. Format 74 remains a frozen populated source and normal startup validates without schema changes.
 
+The format 75-to-76 step adds one bounded `voice.encryption_keys` record to the existing configuration
+`application_settings` table. New profiles and upgraded profiles begin with an empty key list. Each configured
+key stores its identifier, label, enabled state, protocol, algorithm, key ID, hexadecimal key and optional scope
+as ordinary unencrypted configuration. There is no password, unlock state, separate key store or legacy-key import.
+Saved keys travel with the main configuration database, including settings-only upgrades and imports.
+
+Every other setting, credential, account, retained observation, relationship, counter and allocator is preserved.
+No table or index changes. The existing transaction adds the bounded configuration row and advances both format
+markers without scanning, copying, rewriting or counting retained Activity or rebuilding its indexes. Workspace
+covers the small configuration transaction and bounded key settings; the existing 64 MiB settings allowance and
+separate free-space headroom apply. Cost scales with configured keys, rather than retained reception history.
+The populated format-75 fixture remains frozen and supported. Runtime startup validates the required setting;
+only fresh creation and the Application Migrator create it.
+
 ## Shared Upgrade And Import Boundary
 
 The global format catalog and adjacent chain runner are the shared migration path. Alpha-specific source
@@ -467,7 +481,7 @@ Source selection and review share the Your settings step, with explicit review h
 available only for an empty destination. Success continues to the next needed setup step without a countdown.
 Errors remain compact and inline with expandable details and a Copy error action. After promotion, Back can review
 the installed source/results but cannot repeat the import. Completed profiles return to setup only for required
-administrator or web readiness, vault access, data-format preparation, or interrupted first setup. Optional JMBE and
+administrator or web readiness, data-format preparation, or interrupted first setup. Optional JMBE and
 calibration work and unread release notes alone do not cause a new setup visit.
 
 Format 13 adds only the bounded `setup_wizard` record in `application_settings`. The adjacent 12-to-13 step preserves
@@ -1178,7 +1192,7 @@ availability; measured zero remains distinct from unavailable. The adjacent form
 existing field, row, relationship, transcript, index, counter and allocator. Historical quality remains unknown;
 the update neither reads audio files nor guesses measurements. The populated format-11 fixture remains frozen and
 supported. The main application database is independently at
-format 71; recording-catalog migrations do not change it. Recognized older catalogs are updated in one transaction
+format 76; recording-catalog migrations do not change it. Recognized older catalogs are updated in one transaction
 at the pre-receiver setup boundary under the same manual-backup policy, without an additional automatic upgrade
 backup. Normal catalog startup validates only. A catalog upgrade failure offers retry or continuation with
 Managed Recordings unavailable, so optional catalog trouble does not prevent ordinary receiving.
@@ -1268,7 +1282,7 @@ The graphical workflow follows this order:
    on that bounded working data. For full history, retain the existing adjacent chain and its declared preservation
    and reset policies. Do not add a direct-to-current fallback.
 5. Rebase supported saved paths within transferred data, including Managed Recordings and Recording Tuner files.
-   Preserve external paths. Keep the vault, libraries, recording audio, and recording catalog together with their
+   Preserve external paths. Keep libraries, recording audio, and recording catalog together with their
    existing ownership. The application history choice does not clear those artifacts.
 6. Check the final global format, exact role schemas and pair identity, required settings, and startup configuration
    before activation. A required Managed Recordings catalog update uses its own adjacent chain before receiving.
@@ -1335,12 +1349,12 @@ their failure-injection tests remain even though there is no public menu, flag, 
 
 The explicit graphical VCE upgrade transfers the whole portable data directory. Its supported saved paths are
 rebased from the old data root to the new one; absolute paths outside that root remain external. Managed Recordings
-audio and catalog, Classic audio, vault, JMBE, modules, logs, and other existing portable artifacts move together.
+audio and catalog, Classic audio, JMBE, modules, logs, and other existing portable artifacts move together.
 The operation never silently substitutes a recursive cross-filesystem copy or leaves the old installation labeled
 as its backup.
 
 Headless `--upgrade-data` and internal portable-profile copy-import may copy supported profile artifacts such
-as the vault, JMBE library, optional modules, converted legacy JSON settings, and paths that need remapping. Their
+as the JMBE library, optional modules, converted legacy JSON settings, and paths that need remapping. Their
 legacy copy scope excludes recording audio, logs, streaming output, screenshots, and the Managed Recordings catalog;
 their selected sources remain unchanged.
 Remote Links settings and paging-tone choices already in the application database are preserved for every import scope.
@@ -1381,7 +1395,7 @@ every retained format from the Alpha 12 format-2 baseline and exercise:
 - same-filesystem folder transfer with stable lock-file identity, platform-appropriate ownership checks, external-path
   preservation, and refusal of cross-filesystem,
   overlapping, in-use, symbolic-link, or nonempty destination profiles before transfer;
-- transfer interruption and failure recovery, including preservation of Managed audio/catalog, Classic audio, vault,
+- transfer interruption and failure recovery, including preservation of Managed audio/catalog, Classic audio,
   libraries, optional modules, and existing Recording Tuner files; and
 - registry completeness: no gap, duplicate source, duplicate target, or missing format-2-to-current route.
 

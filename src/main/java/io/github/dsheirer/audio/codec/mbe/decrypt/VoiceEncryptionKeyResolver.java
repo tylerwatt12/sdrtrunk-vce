@@ -22,7 +22,6 @@ package io.github.dsheirer.audio.codec.mbe.decrypt;
 import io.github.dsheirer.preference.encryption.EncryptionKeyPreference;
 import io.github.dsheirer.preference.encryption.VoiceEncryptionKey;
 import java.util.Collection;
-import java.util.List;
 import java.util.Optional;
 
 /**
@@ -47,7 +46,12 @@ public class VoiceEncryptionKeyResolver
 
     public Optional<VoiceEncryptionKey> resolve(VoiceEncryptionContext context)
     {
-        Collection<VoiceEncryptionKey> keys = mPreference != null ? mPreference.getKeys() : mStaticKeys;
+        if(mPreference != null)
+        {
+            return mPreference.resolve(context);
+        }
+
+        Collection<VoiceEncryptionKey> keys = mStaticKeys;
 
         if(keys != null)
         {
@@ -65,8 +69,6 @@ public class VoiceEncryptionKeyResolver
 
     public boolean hasKeys()
     {
-        List<VoiceEncryptionKey> keys = mPreference != null ? mPreference.getKeys() :
-            mStaticKeys == null ? List.of() : List.copyOf(mStaticKeys);
-        return !keys.isEmpty();
+        return mPreference != null ? mPreference.hasKeys() : mStaticKeys != null && !mStaticKeys.isEmpty();
     }
 }

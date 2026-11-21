@@ -19,32 +19,47 @@
 
 package io.github.dsheirer.preference.encryption;
 
+import io.github.dsheirer.database.SdrTrunkDatabasePath;
+import io.github.dsheirer.audio.codec.mbe.decrypt.VoiceEncryptionContext;
+import io.github.dsheirer.database.settings.ApplicationSettingsStore;
+import io.github.dsheirer.database.settings.EncryptionKeySchema;
 import io.github.dsheirer.preference.Preference;
 import io.github.dsheirer.preference.PreferenceType;
 import io.github.dsheirer.preference.directory.DirectoryPreference;
-import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultException;
-import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultPath;
-import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultService;
 import io.github.dsheirer.sample.Listener;
+import java.io.IOException;
+import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.List;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import java.util.Optional;
 
-/**
- * Vault-backed voice encryption key list.
- */
+/** Ordinary SQLite configuration with a process-local snapshot for receiver callbacks. */
 public class EncryptionKeyPreference extends Preference
 {
-    private static final Logger mLog = LoggerFactory.getLogger(EncryptionKeyPreference.class);
-    private final EncryptionKeyVaultService mVaultService;
+    private final ApplicationSettingsStore mSettings;
+    private volatile List<VoiceEncryptionKey> mKeys;
 
     public EncryptionKeyPreference(Listener<PreferenceType> updateListener, DirectoryPreference directoryPreference)
     {
+        this(updateListener, new ApplicationSettingsStore(SdrTrunkDatabasePath.getDatabasePath(
+            directoryPreference.getDirectoryApplicationRoot())));
+    }
+
+    public EncryptionKeyPreference(Listener<PreferenceType> updateListener, ApplicationSettingsStore settings)
+    {
         super(updateListener);
-        mVaultService = new EncryptionKeyVaultService(EncryptionKeyVaultPath.getVaultPath(directoryPreference));
+        mSettings = settings;
+        try
+        {
+            mKeys = sorted(EncryptionKeySchema.decode(settings.loadJson(EncryptionKeySchema.KEY,
+                EncryptionKeySchema.MAXIMUM_BYTES).orElseThrow(() -> new SQLException("Voice encryption keys are missing"))));
+        }
+        catch(IOException | SQLException failure)
+        {
+            throw new IllegalStateException("Unable to load voice encryption keys; restore valid settings before starting");
+        }
     }
 
     @Override
@@ -53,65 +68,71 @@ public class EncryptionKeyPreference extends Preference
         return PreferenceType.ENCRYPTION_KEYS;
     }
 
-    public EncryptionKeyVaultService getVaultService()
+    /** No lock, filesystem access or database work occurs on receiver reads. */
+    public List<VoiceEncryptionKey> getKeys()
     {
-        return mVaultService;
+        return mKeys.stream().map(VoiceEncryptionKey::copy).toList();
     }
 
-    public synchronized List<VoiceEncryptionKey> getKeys()
+    public boolean hasKeys()
     {
-        return sorted(mVaultService.getKeys());
+        return !mKeys.isEmpty();
+    }
+
+    public Optional<VoiceEncryptionKey> resolve(VoiceEncryptionContext context)
+    {
+        for(VoiceEncryptionKey key: mKeys)
+        {
+            if(key.matches(context)) return Optional.of(key.copy());
+        }
+        return Optional.empty();
     }
 
     public synchronized void addKey(VoiceEncryptionKey key)
     {
-        List<VoiceEncryptionKey> keys = new ArrayList<>(mVaultService.getKeys());
+        List<VoiceEncryptionKey> keys = new ArrayList<>(mKeys);
         keys.add(key.copy());
         replace(keys);
     }
 
     public synchronized void updateKey(VoiceEncryptionKey key)
     {
-        List<VoiceEncryptionKey> keys = new ArrayList<>(mVaultService.getKeys());
-
-        for(int x = 0; x < keys.size(); x++)
+        List<VoiceEncryptionKey> keys = new ArrayList<>(mKeys);
+        for(int index = 0; index < keys.size(); index++)
         {
-            if(keys.get(x).getId().equals(key.getId()))
+            if(keys.get(index).getId().equals(key.getId()))
             {
-                keys.set(x, key.copy());
+                keys.set(index, key.copy());
                 replace(keys);
                 return;
             }
         }
-
         keys.add(key.copy());
         replace(keys);
     }
 
     public synchronized void removeKey(VoiceEncryptionKey key)
     {
-        List<VoiceEncryptionKey> keys = new ArrayList<>(mVaultService.getKeys());
-
-        if(keys.removeIf(existing -> existing.getId().equals(key.getId())))
-        {
-            replace(keys);
-        }
+        List<VoiceEncryptionKey> keys = new ArrayList<>(mKeys);
+        if(keys.removeIf(existing -> existing.getId().equals(key.getId()))) replace(keys);
     }
 
     private void replace(Collection<VoiceEncryptionKey> keys)
     {
+        List<VoiceEncryptionKey> next = sorted(keys);
         try
         {
-            mVaultService.replaceKeys(keys);
-            notifyPreferenceUpdated();
+            mSettings.save(EncryptionKeySchema.KEY, EncryptionKeySchema.encode(next));
         }
-        catch(EncryptionKeyVaultException e)
+        catch(IOException | SQLException failure)
         {
-            mLog.warn("Unable to save voice encryption keys to vault", e);
+            throw new IllegalStateException("Unable to save voice encryption keys; check database access and try again");
         }
+        mKeys = next;
+        notifyPreferenceUpdated();
     }
 
-    private List<VoiceEncryptionKey> sorted(Collection<VoiceEncryptionKey> keys)
+    private static List<VoiceEncryptionKey> sorted(Collection<VoiceEncryptionKey> keys)
     {
         return keys.stream().map(VoiceEncryptionKey::copy)
             .sorted(Comparator.comparing(VoiceEncryptionKey::toString, String.CASE_INSENSITIVE_ORDER)).toList();

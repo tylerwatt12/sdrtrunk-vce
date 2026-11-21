@@ -15,7 +15,7 @@ import io.github.dsheirer.preference.encryption.VoiceEncryptionAlgorithm;
 import java.util.Collection;
 
 /**
- * Runtime extension point for an optional voice decryption module.
+ * Algorithm and provider catalog for bundled voice decryption.
  */
 public interface VoiceDecryptionModule
 {

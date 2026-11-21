@@ -151,7 +151,7 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
     }
 
     /**
-     * Constructs an instance with a live, non-blocking view of optional voice-decryption module state.
+     * Constructs an instance with a live, non-blocking view of voice-decryption availability.
      */
     public NXDNTrafficChannelManager(Channel parentChannel, BooleanSupplier voiceDecryptionModuleLoaded)
     {

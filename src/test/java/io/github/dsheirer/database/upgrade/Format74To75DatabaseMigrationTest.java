@@ -44,7 +44,7 @@ class Format74To75DatabaseMigrationTest
             connection.setAutoCommit(false);
             new Format74To75DatabaseMigration().migrate(connection);
             DatabaseFormatCatalog.stamp(connection, 75);
-            assertEquals(ConfigurationHistoryDatabase.HISTORY_FINGERPRINT,
+            assertEquals(ConfigurationHistoryDatabase.historyFingerprint(75),
                 SqliteSchemaValidator.fingerprint(connection, "activity"));
             assertEquals(75, DatabaseFormatCatalog.inspect(connection).version());
             assertEquals(0, scalar(connection, "SELECT regroup_type FROM activity.p25_site_patch_group WHERE local_patch_group_id=500"));
@@ -80,7 +80,7 @@ class Format74To75DatabaseMigrationTest
                 assertFalse(rows.next());
             }
         }
-        ConfigurationHistoryDatabase.validatePair(database);
+        assertExactFormat75Pair(database);
     }
 
     @Test
@@ -158,7 +158,7 @@ class Format74To75DatabaseMigrationTest
             finally { org.sqlite.ProgressHandler.clearHandler(connection); }
             DatabaseFormatCatalog.stamp(connection, 75); connection.commit();
             assertEquals(originalTrees, trees(connection));
-            assertEquals(ConfigurationHistoryDatabase.HISTORY_FINGERPRINT,
+            assertEquals(ConfigurationHistoryDatabase.historyFingerprint(75),
                 SqliteSchemaValidator.fingerprint(connection, "activity"));
             assertEquals(0, scalar(connection, "PRAGMA writable_schema"));
             for(String table: tables)
@@ -183,7 +183,27 @@ class Format74To75DatabaseMigrationTest
             { assertTrue(rows.next()); assertEquals("ok", rows.getString(1)); assertFalse(rows.next()); }
             try(var rows = statement.executeQuery("PRAGMA foreign_key_check")) { assertFalse(rows.next()); }
         }
-        ConfigurationHistoryDatabase.validatePair(database);
+        assertExactFormat75Pair(database);
+    }
+
+    private static void assertExactFormat75Pair(Path database) throws Exception
+    {
+        // This adjacent-step test stops at frozen format 75, before current-only settings are installed.
+        ConfigurationHistoryDatabase.validatePairIdentity(database);
+        try(var connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            assertEquals(75, DatabaseFormatCatalog.inspect(connection).version());
+            assertEquals(DatabaseFormatCatalog.requireVersion(75).fingerprint(),
+                SqliteSchemaValidator.fingerprint(connection));
+            assertEquals(0, scalar(connection,
+                "SELECT count(*) FROM application_settings WHERE key='voice.encryption_keys'"));
+        }
+        try(var connection = DriverManager.getConnection("jdbc:sqlite:" + ActivityDatabasePath.forConfiguration(database)))
+        {
+            assertEquals(75, DatabaseFormatCatalog.inspect(connection).version());
+            assertEquals(ConfigurationHistoryDatabase.historyFingerprint(75),
+                SqliteSchemaValidator.fingerprint(connection));
+        }
     }
 
     private static void installWorkBudget(Connection connection) throws SQLException

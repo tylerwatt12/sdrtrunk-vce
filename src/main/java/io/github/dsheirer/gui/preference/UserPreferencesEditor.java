@@ -135,7 +135,6 @@ public class UserPreferencesEditor extends BorderPane
 
             TreeItem<Object> decoderItem = new TreeItem<>("Decoder");
             decoderItem.getChildren().add(new TreeItem<>(PreferenceEditorType.JMBE_LIBRARY));
-            decoderItem.getChildren().add(new TreeItem<>(PreferenceEditorType.VOICE_DECRYPTION_MODULE));
             treeRoot.getChildren().add(decoderItem);
             decoderItem.setExpanded(true);
 

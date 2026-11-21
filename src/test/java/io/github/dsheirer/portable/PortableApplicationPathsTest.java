@@ -12,12 +12,14 @@
 package io.github.dsheirer.portable;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.database.SdrTrunkDatabaseBootstrap;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -26,10 +28,21 @@ class PortableApplicationPathsTest
     @TempDir
     Path mTemporaryFolder;
 
+    private String mPreviousDataRoot;
+
+    @BeforeEach
+    void isolatePaths()
+    {
+        mPreviousDataRoot = System.getProperty(PortableApplicationPaths.DATA_ROOT_PROPERTY);
+        System.clearProperty(PortableApplicationPaths.DATA_ROOT_PROPERTY);
+        PortableApplicationPaths.resetForTest();
+    }
+
     @AfterEach
     void cleanup()
     {
-        System.clearProperty(PortableApplicationPaths.DATA_ROOT_PROPERTY);
+        if(mPreviousDataRoot == null) System.clearProperty(PortableApplicationPaths.DATA_ROOT_PROPERTY);
+        else System.setProperty(PortableApplicationPaths.DATA_ROOT_PROPERTY, mPreviousDataRoot);
         PortableApplicationPaths.resetForTest();
     }
 
@@ -60,7 +73,7 @@ class PortableApplicationPathsTest
         assertTrue(SdrTrunkDatabaseBootstrap.run(new String[]{"--fresh", "--admin-password-file",
             passwordFile.toString()}).startApplication());
         assertTrue(Files.isRegularFile(dataRoot.resolve("database/sdrtrunk.sqlite")));
-        assertTrue(Files.isRegularFile(dataRoot.resolve("vault/encryption-key-vault.sqlite")));
+        assertFalse(Files.exists(dataRoot.resolve("vault")));
     }
 
     @Test

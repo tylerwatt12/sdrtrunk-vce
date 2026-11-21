@@ -121,7 +121,7 @@ public class UserPreferences implements Listener<PreferenceType>
     }
 
     /**
-     * Optional voice decryption module preference and runtime manager.
+     * Bundled voice decryption runtime manager.
      */
     public VoiceDecryptionModulePreference getVoiceDecryptionModulePreference()
     {
