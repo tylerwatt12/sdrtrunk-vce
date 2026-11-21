@@ -990,9 +990,9 @@ runtimeTargets.findAll { !it.windows }.each { target ->
     target.materializeLegalTask = materializeTask
 }
 
-//The packaging tasks close over per-target task state and build-script helpers, which the
-//configuration cache cannot serialize (tracked in issue #99). Declare them explicitly so a build
-//with the cache enabled completes; these tasks re-execute each run instead of blocking every other task.
+//These packaging tasks are not yet configuration-cache compatible; the capture refactor is
+//tracked in issue #99. If one is included in an invocation, Gradle discards the cache entry for
+//that entire invocation. Normal up-to-date checks still apply; this does not force task actions.
 tasks.matching { task ->
     task.name.startsWith('downloadLiberica') ||
         task.name.startsWith('materializeRuntimeLegalLinks') ||
