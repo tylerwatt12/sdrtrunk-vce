@@ -473,7 +473,8 @@ def bundledVoiceDecryptionEntries = [
 def retiredEncryptionEntries = [
     'io/github/dsheirer/gui/preference/decoder/VoiceDecryptionModulePreferenceEditor.class'
 ]
-def retiredEncryptionPrefixes = ['io/github/dsheirer/preference/encryption/vault/']
+def retiredEncryptionPrefixes = ['io/github/dsheirer/preference/encryption/vault/',
+    'io/github/dsheirer/gui/preference/encryption/']
 def verifyVoiceDecryptionEntries = { Set<String> entries, String archiveName ->
     Set<String> missing = (bundledVoiceDecryptionEntries as Set) - entries
     if(!missing.isEmpty()) {
@@ -483,7 +484,7 @@ def verifyVoiceDecryptionEntries = { Set<String> entries, String archiveName ->
         retiredEncryptionEntries.contains(entry) || retiredEncryptionPrefixes.any { entry.startsWith(it) }
     } as Set
     if(!retired.isEmpty()) {
-        throw new GradleException("Retired encryption-vault or module-installation classes remain in " +
+        throw new GradleException("Retired encryption UI, vault or module-installation classes remain in " +
                 "${archiveName}: ${retired}")
     }
 }

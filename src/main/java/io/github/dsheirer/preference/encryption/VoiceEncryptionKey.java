@@ -122,16 +122,6 @@ public class VoiceEncryptionKey
         mKeyHex = normalizeKeyHex(keyHex);
     }
 
-    public int getKeyByteLength()
-    {
-        return mKeyHex == null ? 0 : mKeyHex.length() / 2;
-    }
-
-    public String getKeyStatus()
-    {
-        return getKeyByteLength() > 0 ? "Configured (" + getKeyByteLength() + " bytes)" : "Missing";
-    }
-
     public String getScope()
     {
         return mScope;

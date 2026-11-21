@@ -11,7 +11,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.google.common.eventbus.Subscribe;
 import io.github.dsheirer.gui.preference.ViewUserPreferenceEditorRequest;
-import io.github.dsheirer.gui.preference.encryption.ViewEncryptionKeyPreferenceEditorRequest;
 import io.github.dsheirer.gui.viewer.ViewRecordingViewerRequest;
 import io.github.dsheirer.jmbe.JmbeEditorRequest;
 import java.nio.file.Files;
@@ -124,7 +123,7 @@ class JavaShellCleanupUiContractTest
             })
             .collect(Collectors.toSet());
         assertEquals(Set.of(JmbeEditorRequest.class, ViewUserPreferenceEditorRequest.class,
-            ViewEncryptionKeyPreferenceEditorRequest.class, ViewRecordingViewerRequest.class), requestTypes);
+            ViewRecordingViewerRequest.class), requestTypes);
 
         String javaFxPreferences = Files.readString(
             Path.of("src/main/java/io/github/dsheirer/preference/javafx/JavaFxPreferences.java"));
@@ -133,12 +132,29 @@ class JavaShellCleanupUiContractTest
     }
 
     @Test
+    void encryptionKeyAdministrationHasNoLocalUiSurface() throws Exception
+    {
+        assertFalse(Files.exists(ROOT.resolve("preference/encryption/EncryptionKeyPreferenceEditor.java")));
+        assertFalse(Files.exists(ROOT.resolve("preference/encryption/ViewEncryptionKeyPreferenceEditorRequest.java")));
+
+        String application = Files.readString(ROOT.resolve("SDRTrunk.java"));
+        String manager = Files.readString(ROOT.resolve("JavaFxWindowManager.java"));
+        String footer = Files.readString(Path.of("src/main/java/io/github/dsheirer/monitor/StatusBox.java"));
+        String localUi = application + manager + footer;
+        for(String retired: new String[]{"EncryptionKeyPreferenceEditor", "mEncryptionKeysItem",
+            "mEncryptionKeyStage", "encryption.keys", "Encryption Keys", "KEYS_CELL_WIDTH", "addKeysCell"})
+        {
+            assertFalse(localUi.contains(retired), retired);
+        }
+    }
+
+    @Test
     void twoRowStatusFooterFitsTheMinimumShellWidth() throws Exception
     {
         String footer = Files.readString(Path.of("src/main/java/io/github/dsheirer/monitor/StatusBox.java"));
         double secondaryRowWidth = 2 * constant(footer, "STORAGE_CELL_WIDTH") +
             constant(footer, "STATS_CELL_WIDTH") + constant(footer, "WEB_CELL_WIDTH") +
-            constant(footer, "KEYS_CELL_WIDTH") + 4 * 2 + 8;
+            constant(footer, "UPDATE_CELL_WIDTH") + 4 * 2 + 8;
 
         //Main frame is at least 480px wide with 6px of layout inset on each side.
         assertTrue(secondaryRowWidth <= 480 - 12, "Secondary status row must fit the compact shell");

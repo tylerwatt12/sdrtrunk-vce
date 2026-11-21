@@ -142,15 +142,15 @@ playlist, start VCE in a new folder.
 | Radios | Web **Tuners** |
 | Channel auto-start | Web **Channels → Auto-start** |
 | Decoding optimization | Desktop **Settings → CPU → Vector Calibration** |
-| Voice encryption keys | Desktop **View → Encryption Keys** |
+| Voice encryption keys | Web **Admin → Encryption keys** |
 | Release notes | Desktop **Help → What's New** |
 
 On **Web Server**, **Change Password** requires the current password; **Reset Password** provides explicit local
 account recovery. **Use HTTPS** can be changed locally and remains required for **Other devices**.
 
 Voice decryption is included for P25 Phase 1 and Phase 2 (DES-OFB, AES-256 and ADP), DMR (RC4, AES-128 and AES-256),
-and NXDN (scrambler, DES-OFB and AES-256-OFB). Enter known keys in **View → Encryption Keys**; no separate module
-installation or vault password is required. Keys are saved without encryption alongside your other settings.
+and NXDN (scrambler, DES-OFB and AES-256-OFB). Add and manage known keys in **Admin → Encryption keys**.
+Keys are saved without encryption alongside your other settings.
 
 JMBE setup remains local to the desktop application. The desktop statistics panel provides maintenance actions;
 collection and retention choices are in the web interface. The Managed recording folder is shown in Recording

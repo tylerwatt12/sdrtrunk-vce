@@ -24,8 +24,6 @@ import io.github.dsheirer.application.update.UpdateCheckResult;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.gui.preference.UserPreferencesEditor;
 import io.github.dsheirer.gui.preference.ViewUserPreferenceEditorRequest;
-import io.github.dsheirer.gui.preference.encryption.EncryptionKeyPreferenceEditor;
-import io.github.dsheirer.gui.preference.encryption.ViewEncryptionKeyPreferenceEditorRequest;
 import io.github.dsheirer.gui.theme.ThemeManager;
 import io.github.dsheirer.gui.viewer.MessageRecordingViewer;
 import io.github.dsheirer.gui.viewer.ViewRecordingViewerRequest;
@@ -68,19 +66,16 @@ public class JavaFxWindowManager
 
     public static final String STAGE_MONITOR_KEY_RECORDING_VIEWER = "recording.viewer";
     public static final String STAGE_MONITOR_KEY_JMBE_EDITOR = "jmbe.editor";
-    public static final String STAGE_MONITOR_KEY_ENCRYPTION_KEY_EDITOR = "encryption.keys";
     public static final String STAGE_MONITOR_KEY_USER_PREFERENCES_EDITOR = "user.preferences";
 
     private static final AtomicBoolean FX_TOOLKIT_STARTED = new AtomicBoolean();
     private JmbeEditor mJmbeEditor;
     private UserPreferences mUserPreferences;
-    private EncryptionKeyPreferenceEditor mEncryptionKeyPreferenceEditor;
     private UserPreferencesEditor mUserPreferencesEditor;
     private volatile StatsWebServerService mStatsWebServerService;
     private MessageRecordingViewer mMessageRecordingViewer;
 
     private Stage mJmbeEditorStage;
-    private Stage mEncryptionKeyStage;
     private Stage mUserPreferencesStage;
     private Stage mRecordingViewerStage;
     private JFXPanel mStatusPanel;
@@ -424,50 +419,6 @@ public class JavaFxWindowManager
 
     private record LoadingShell(StackPane root, Label statusLabel, String loadingMessage, Color messageColor)
     {
-    }
-
-    /**
-     * Voice encryption key editor.
-     */
-    private EncryptionKeyPreferenceEditor getEncryptionKeyPreferenceEditor()
-    {
-        if(mEncryptionKeyPreferenceEditor == null)
-        {
-            mEncryptionKeyPreferenceEditor = new EncryptionKeyPreferenceEditor(mUserPreferences);
-        }
-
-        return mEncryptionKeyPreferenceEditor;
-    }
-
-    /**
-     * Voice encryption key editor stage.
-     */
-    private Stage getEncryptionKeyStage()
-    {
-        if(mEncryptionKeyStage == null)
-        {
-            Scene scene = new Scene(getEncryptionKeyPreferenceEditor(), 900, 500);
-            ThemeManager.getInstance().register(scene);
-            mEncryptionKeyStage = new Stage();
-            mEncryptionKeyStage.setTitle("VCE - Encryption Keys");
-            mEncryptionKeyStage.setScene(scene);
-            ApplicationIcon.apply(mEncryptionKeyStage);
-            mUserPreferences.getJavaFxPreferences().monitor(mEncryptionKeyStage, STAGE_MONITOR_KEY_ENCRYPTION_KEY_EDITOR);
-        }
-
-        return mEncryptionKeyStage;
-    }
-
-    /**
-     * Processes a voice encryption key editor request.
-     */
-    @Subscribe
-    public void process(final ViewEncryptionKeyPreferenceEditorRequest request)
-    {
-        execute(() -> {
-            restoreStage(getEncryptionKeyStage());
-            getEncryptionKeyPreferenceEditor().activate();
-        });
     }
 
     /**

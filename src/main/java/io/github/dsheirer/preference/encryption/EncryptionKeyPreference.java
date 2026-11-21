@@ -28,11 +28,15 @@ import io.github.dsheirer.preference.PreferenceType;
 import io.github.dsheirer.preference.directory.DirectoryPreference;
 import io.github.dsheirer.sample.Listener;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.List;
+import java.util.HexFormat;
 import java.util.Optional;
 
 /** Ordinary SQLite configuration with a process-local snapshot for receiver callbacks. */
@@ -87,6 +91,57 @@ public class EncryptionKeyPreference extends Preference
         }
         return Optional.empty();
     }
+
+    /** Administration snapshot; receiver callbacks continue to use the lock-free lookup methods above. */
+    public synchronized Snapshot snapshot()
+    {
+        try
+        {
+            String revision = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(
+                EncryptionKeySchema.encode(mKeys).toString().getBytes(StandardCharsets.UTF_8)));
+            return new Snapshot(revision, getKeys());
+        }
+        catch(SQLException | NoSuchAlgorithmException failure)
+        {
+            throw new IllegalStateException("Voice encryption keys could not be read. Reload and try again.");
+        }
+    }
+
+    public synchronized UpdateResult create(String expectedRevision, VoiceEncryptionKey key)
+    {
+        Snapshot current = snapshot();
+        if(!current.revision().equals(expectedRevision)) return new UpdateResult(UpdateStatus.CONFLICT, current);
+        if(mKeys.size() >= EncryptionKeySchema.MAXIMUM_KEYS)
+            throw new IllegalArgumentException("The key list is full. Remove a key before adding another.");
+        if(mKeys.stream().anyMatch(existing -> existing.getId().equals(key.getId())))
+            throw new IllegalArgumentException("A key with that ID already exists. Reload and try again.");
+        addKey(key);
+        return new UpdateResult(UpdateStatus.UPDATED, snapshot());
+    }
+
+    public synchronized UpdateResult update(String expectedRevision, VoiceEncryptionKey key)
+    {
+        Snapshot current = snapshot();
+        if(!current.revision().equals(expectedRevision)) return new UpdateResult(UpdateStatus.CONFLICT, current);
+        if(mKeys.stream().noneMatch(existing -> existing.getId().equals(key.getId())))
+            return new UpdateResult(UpdateStatus.NOT_FOUND, current);
+        updateKey(key);
+        return new UpdateResult(UpdateStatus.UPDATED, snapshot());
+    }
+
+    public synchronized UpdateResult remove(String expectedRevision, String id)
+    {
+        Snapshot current = snapshot();
+        if(!current.revision().equals(expectedRevision)) return new UpdateResult(UpdateStatus.CONFLICT, current);
+        VoiceEncryptionKey key = mKeys.stream().filter(existing -> existing.getId().equals(id)).findFirst().orElse(null);
+        if(key == null) return new UpdateResult(UpdateStatus.NOT_FOUND, current);
+        removeKey(key);
+        return new UpdateResult(UpdateStatus.UPDATED, snapshot());
+    }
+
+    public record Snapshot(String revision, List<VoiceEncryptionKey> keys) {}
+    public enum UpdateStatus { UPDATED, CONFLICT, NOT_FOUND }
+    public record UpdateResult(UpdateStatus status, Snapshot snapshot) {}
 
     public synchronized void addKey(VoiceEncryptionKey key)
     {

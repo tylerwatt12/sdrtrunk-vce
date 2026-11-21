@@ -28,7 +28,6 @@ import io.github.dsheirer.database.upgrade.ApplicationMigrationService;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.gui.diagnostic.BasebandRecordingDialog;
 import io.github.dsheirer.gui.preference.ViewUserPreferenceEditorRequest;
-import io.github.dsheirer.gui.preference.encryption.ViewEncryptionKeyPreferenceEditorRequest;
 import io.github.dsheirer.gui.theme.ThemeManager;
 import io.github.dsheirer.gui.viewer.ViewRecordingViewerRequest;
 import io.github.dsheirer.gui.whatsnew.WhatsNewDialog;
@@ -123,7 +122,6 @@ public class SDRTrunk
     private final AtomicBoolean mNetworkAccessRefreshRequested = new AtomicBoolean();
     private String mDisplayedNetworkAccessUrl;
     private boolean mOpenWebAfterSetup;
-    private JMenuItem mEncryptionKeysItem;
     private boolean mShutdownProcessed;
     private final boolean mStartConfiguredChannels;
 
@@ -257,13 +255,6 @@ public class SDRTrunk
         fileMenu.add(exitMenu);
 
         JMenu viewMenu = new JMenu("View");
-
-        mEncryptionKeysItem = new JMenuItem("Encryption Keys");
-        mEncryptionKeysItem.setIcon(IconFontSwing.buildIcon(FontAwesome.KEY, 12));
-        mEncryptionKeysItem.addActionListener(e -> MyEventBus.getGlobalEventBus().post(new ViewEncryptionKeyPreferenceEditorRequest()));
-        viewMenu.add(mEncryptionKeysItem);
-
-        viewMenu.add(new JSeparator());
 
         JMenuItem viewApplicationLogsMenu = new JMenuItem("Application Log Files");
         viewApplicationLogsMenu.setIcon(IconFontSwing.buildIcon(FontAwesome.FOLDER_OPEN_O, 12));

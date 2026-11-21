@@ -20,8 +20,6 @@
 package io.github.dsheirer.monitor;
 
 import io.github.dsheirer.application.update.UpdateCheckResult;
-import io.github.dsheirer.eventbus.MyEventBus;
-import io.github.dsheirer.gui.preference.encryption.ViewEncryptionKeyPreferenceEditorRequest;
 import io.github.dsheirer.stats.StatsWebNavigationState;
 import java.net.URI;
 import java.util.Objects;
@@ -62,7 +60,6 @@ public class StatusBox extends VBox
     private static final double DATABASE_CELL_WIDTH = 76;
     private static final double STATS_CELL_WIDTH = 62;
     private static final double WEB_CELL_WIDTH = 74;
-    private static final double KEYS_CELL_WIDTH = 70;
     private static final double UPDATE_CELL_WIDTH = 30;
     private static final Color ACTIVE_COLOR = Color.FORESTGREEN;
     private static final Color INACTIVE_COLOR = Color.DIMGRAY;
@@ -108,8 +105,6 @@ public class StatusBox extends VBox
         {
             addNavigationStatusCells();
         }
-
-        addKeysCell();
 
         if(mUpdateResultSupplier != null)
         {
@@ -277,20 +272,6 @@ public class StatusBox extends VBox
         mUpdateStatusSeparator.setManaged(visible);
         mUpdateStatusBox.setVisible(visible);
         mUpdateStatusBox.setManaged(visible);
-    }
-
-    private void addKeysCell()
-    {
-        HBox keysCell = createCell(KEYS_CELL_WIDTH);
-        keysCell.setSpacing(3);
-        IconNode icon = new IconNode(FontAwesome.KEY);
-        icon.setIconSize(14);
-        icon.setFill(INACTIVE_COLOR);
-        keysCell.getChildren().addAll(fixedLabel("Keys", 26, Pos.CENTER_LEFT), icon);
-        Tooltip.install(keysCell, new Tooltip("Manage encryption keys"));
-        keysCell.setOnMouseClicked(event ->
-            MyEventBus.getGlobalEventBus().post(new ViewEncryptionKeyPreferenceEditorRequest()));
-        addCell(mSecondaryRow, keysCell);
     }
 
     private HBox createCell(double width)
