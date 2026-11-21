@@ -26,7 +26,6 @@ import org.apache.commons.math3.util.FastMath;
 
 public class InterpolatingSampleBuffer
 {
-    private static final float MAXIMUM_DEVIATION_SAMPLES_PER_SYMBOL = 0.02f; // +/- 2% deviation
 
     private Complex mCurrentSample = new Complex(0,0);
     private Complex mMiddleSample = new Complex(0,0);
@@ -38,10 +37,9 @@ public class InterpolatingSampleBuffer
 
     private float mSamplingPoint;
     private float mSampleCounterGain = 0.5f;
-    private float mDetectedSamplesPerSymbol;
-    private float mDetectedSamplesPerSymbolGain = 0.1f * mSampleCounterGain * mSampleCounterGain;
-    private float mMaximumSamplesPerSymbol;
-    private float mMinimumSamplesPerSymbol;
+    //Symbol clock error is parts per million, so the symbol period is fixed and only the timing phase is corrected.
+    //A tracked symbol rate could wind up onto its limit and stay there, slipping symbols until the framer lost sync.
+    private final float mSamplesPerSymbol;
 
     private final Interpolator mInterpolator;
 
@@ -60,15 +58,12 @@ public class InterpolatingSampleBuffer
     {
         mInterpolator = Objects.requireNonNull(interpolator, "Interpolator cannot be null");
         mSamplingPoint = samplesPerSymbol;
-        mDetectedSamplesPerSymbol = samplesPerSymbol;
-        mMaximumSamplesPerSymbol = samplesPerSymbol * (1.0f + MAXIMUM_DEVIATION_SAMPLES_PER_SYMBOL);
-        mMinimumSamplesPerSymbol = samplesPerSymbol * (1.0f - MAXIMUM_DEVIATION_SAMPLES_PER_SYMBOL);
+        mSamplesPerSymbol = samplesPerSymbol;
         mTwiceSamplesPerSymbol = (int) FastMath.floor(2.0 * samplesPerSymbol);
         mDelayLineInphase = new float[2 * mTwiceSamplesPerSymbol];
         mDelayLineQuadrature = new float[2 * mTwiceSamplesPerSymbol];
 
         mSampleCounterGain = sampleCounterGain;
-        mDetectedSamplesPerSymbolGain = 0.1f * mSampleCounterGain * mSampleCounterGain;
     }
 
     /**
@@ -100,29 +95,14 @@ public class InterpolatingSampleBuffer
     }
 
     /**
-     * Adjusts samples per symbol and symbol timing counters and increments the sample counter to collect another
-     * symbol.
+     * Adjusts symbol timing and increments the sample counter to collect another symbol.
      *
      * @param symbolTimingError from a symbol timing error detector
      */
     public void resetAndAdjust(float symbolTimingError)
     {
-        //Adjust detected samples per symbol based on timing error
-        mDetectedSamplesPerSymbol = mDetectedSamplesPerSymbol + (symbolTimingError * mDetectedSamplesPerSymbolGain);
-
-        //Constrain detected samples per symbol to min/max values
-        if(mDetectedSamplesPerSymbol > mMaximumSamplesPerSymbol)
-        {
-            mDetectedSamplesPerSymbol = mMaximumSamplesPerSymbol;
-        }
-
-        if(mDetectedSamplesPerSymbol < mMinimumSamplesPerSymbol)
-        {
-            mDetectedSamplesPerSymbol = mMinimumSamplesPerSymbol;
-        }
-
         //Add another symbol's worth of samples to the counter and adjust timing based on gardner error
-        increaseSampleCounter((mDetectedSamplesPerSymbol + (symbolTimingError * mSampleCounterGain)));
+        increaseSampleCounter(mSamplesPerSymbol + (symbolTimingError * mSampleCounterGain));
     }
 
     /**
@@ -152,11 +132,11 @@ public class InterpolatingSampleBuffer
      */
     public Complex getMiddleSample()
     {
-        float halfDetectedSamplesPerSymbol = mDetectedSamplesPerSymbol / 2.0f;
+        float halfSamplesPerSymbol = mSamplesPerSymbol / 2.0f;
 
         //Interpolated sample that is half a symbol away from (occurred before) the current sample.
-        mMiddleSample.setValues(getInphase(halfDetectedSamplesPerSymbol),
-                                getQuadrature(halfDetectedSamplesPerSymbol));
+        mMiddleSample.setValues(getInphase(halfSamplesPerSymbol),
+                                getQuadrature(halfSamplesPerSymbol));
         return mMiddleSample;
     }
 
