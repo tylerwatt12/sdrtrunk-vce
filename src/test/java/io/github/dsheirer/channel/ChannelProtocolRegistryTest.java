@@ -48,11 +48,11 @@ class ChannelProtocolRegistryTest
     }
 
     @Test
-    void creationDefaultsMatchRuntimeBehaviorWithRequestedCqpskPreference()
+    void creationDefaultsMatchConventionalAndTrunkedRuntimeBehavior()
     {
         ChannelProtocolRegistry registry = new ChannelProtocolRegistry();
 
-        assertEquals("CQPSK", registry.require("p25-conventional").defaultSettings().get("modulation"));
+        assertEquals("C4FM", registry.require("p25-conventional").defaultSettings().get("modulation"));
         assertEquals("CQPSK", registry.require("p25-phase1").defaultSettings().get("modulation"));
         assertEquals(true, registry.require("p25-phase1").defaultSettings()
             .get("learn_announced_control_channels"));

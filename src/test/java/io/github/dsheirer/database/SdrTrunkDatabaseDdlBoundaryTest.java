@@ -76,6 +76,7 @@ class SdrTrunkDatabaseDdlBoundaryTest
         "java/io/github/dsheirer/database/upgrade/Format47TopicAlertSchema.java",
         "java/io/github/dsheirer/database/upgrade/Format47To48DatabaseMigration.java",
         "java/io/github/dsheirer/database/upgrade/Format48To49DatabaseMigration.java",
+        "java/io/github/dsheirer/database/upgrade/Format72To73DatabaseMigration.java",
         "java/io/github/dsheirer/database/upgrade/ManagedRecordingCatalogMigrator.java",
         "java/io/github/dsheirer/database/upgrade/Format5SchemaSql.java");
     private static final Set<String> CREATION_ORCHESTRATORS = Set.of(
@@ -113,6 +114,7 @@ class SdrTrunkDatabaseDdlBoundaryTest
         "java/io/github/dsheirer/database/upgrade/Format43To44DatabaseMigration.java",
         "java/io/github/dsheirer/database/upgrade/Format60To61DatabaseMigration.java",
         "java/io/github/dsheirer/database/upgrade/Format62To63DatabaseMigration.java",
+        "java/io/github/dsheirer/database/upgrade/Format72To73DatabaseMigration.java",
         "java/io/github/dsheirer/database/upgrade/ManagedRecordingCatalogMigrator.java");
     // These views live only on the current read connection; their owner still cannot change persisted objects.
     private static final Set<String> TEMP_VIEW_OWNERS = Set.of(
