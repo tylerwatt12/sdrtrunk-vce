@@ -1014,6 +1014,17 @@ runtimeTargets.findAll { !it.windows }.each { target ->
     target.materializeLegalTask = materializeTask
 }
 
+//These packaging tasks are not yet configuration-cache compatible; the capture refactor is
+//tracked in issue #99. If one is included in an invocation, Gradle discards the cache entry for
+//that entire invocation. Normal up-to-date checks still apply; this does not force task actions.
+tasks.matching { task ->
+    task.name.startsWith('downloadLiberica') ||
+        task.name.startsWith('materializeRuntimeLegalLinks') ||
+        task.name.startsWith('runtimeZip')
+}.configureEach {
+    notCompatibleWithConfigurationCache('Packaging tasks capture per-target task state; see issue #99')
+}
+
 tasks.named('startScripts') {
     classpath = files(tasks.named('jar'))
 }
