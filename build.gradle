@@ -1019,6 +1019,16 @@ runtimeTargets.findAll { !it.windows }.each { target ->
     target.materializeLegalTask = materializeTask
 }
 
+//These tasks capture per-target task state and build-script helpers (issue #99). Allow packaging to
+//proceed by discarding the configuration-cache entry for the entire invocation; normal up-to-date checks still apply.
+tasks.matching { task ->
+    task.name.startsWith('downloadLiberica') ||
+            task.name.startsWith('materializeRuntimeLegalLinks') ||
+            task.name.startsWith('runtimeZip')
+}.configureEach {
+    notCompatibleWithConfigurationCache('Packaging tasks capture per-target task state; see issue #99')
+}
+
 tasks.named('startScripts') {
     classpath = files(tasks.named('jar'))
 }
