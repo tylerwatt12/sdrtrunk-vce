@@ -117,7 +117,7 @@ const lockedToggle = JSON.parse(vm.runInContext(`JSON.stringify((() => {
 })())`, context));
 assert.deepEqual(lockedToggle, { checked: false, state: 'Off' },
   'Forcing the effective setting off must update both the checkbox and its rendered state label');
-assert.match(application, /Encrypted calls are processed while voice decryption is loaded/);
+assert.match(application, /Encrypted calls remain available for voice decryption/);
 assert.match(application, /setUiToggle\(dataControl, false\)/);
 assert.match(application, /dataControl\.disabled = true/);
 

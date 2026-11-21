@@ -27088,7 +27088,7 @@ function channelMapEditor(field, values) {
 
 const CHANNEL_ENCRYPTED_SKIP_PATH = 'settings.ignore_encrypted_calls';
 const CHANNEL_ENCRYPTED_SKIP_LOCK_HELP =
-  'Encrypted calls are processed while voice decryption is loaded. Your saved performance preference is preserved.';
+  'Encrypted calls remain available for voice decryption.';
 
 function channelEncryptedCallSkipLocked(field, protocolCatalog) {
   return field?.path === CHANNEL_ENCRYPTED_SKIP_PATH && protocolCatalog?.voice_decryption_module_loaded === true;
