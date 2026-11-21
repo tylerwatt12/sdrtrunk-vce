@@ -189,13 +189,13 @@ for (const [theme, width] of [['light', 1440], ['dark', 390]]) {
   test(`Activity denial reasons retain event filters on ${theme} ${width}`, async ({ page }) => {
     await page.setViewportSize({ width, height: 1000 });
     const requests = await openActivity(page, { theme, rows: [
-      toneActivityRow(17, undefined, { action: 'DENIAL', event_type: 'DENIAL', denial_reason_code: 0x30,
+      toneActivityRow(17, undefined, { action: 'denial', event_type: 'denial', denial_reason_code: 0x30,
         denial_reason_vendor_specific: false, denial_reason_display: 'Target group not valid' }),
-      toneActivityRow(18, undefined, { action: 'DENIAL', event_type: 'DENIAL', denial_reason_code: 0,
+      toneActivityRow(18, undefined, { action: 'denial', event_type: 'denial', denial_reason_code: 0,
         denial_reason_vendor_specific: true, denial_reason_display: 'Secure request on clear supergroup' }),
-      toneActivityRow(19, undefined, { action: 'DENIAL', event_type: 'DENIAL', denial_reason_code: 0x9A,
+      toneActivityRow(19, undefined, { action: 'denial', event_type: 'denial', denial_reason_code: 0x9A,
         denial_reason_vendor_specific: false, denial_reason_display: 'User/system-defined reason (0x9A)' }),
-      toneActivityRow(20, undefined, { action: 'DENIAL', event_type: 'DENIAL' })
+      toneActivityRow(20, undefined, { action: 'denial', event_type: 'denial' })
     ] });
     const row = page.locator('tr[data-id="17"]');
     const event = row.locator('[data-column="event"]');

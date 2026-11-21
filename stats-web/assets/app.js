@@ -25453,7 +25453,8 @@ function activityCellValue(displayValue, row, columnId, context, filters) {
 
 function activityEventValue(row) {
   const label = activityOptionLabel(row?.event_type, 'EVENT');
-  const reason = row?.action === 'DENIAL' && typeof row.denial_reason_display === 'string' ?
+  const reason = String(row?.action || '').trim().toUpperCase() === 'DENIAL' &&
+    typeof row.denial_reason_display === 'string' ?
     row.denial_reason_display.trim() : '';
   if (!reason) return label;
   const value = node('span', 'identity-summary');
