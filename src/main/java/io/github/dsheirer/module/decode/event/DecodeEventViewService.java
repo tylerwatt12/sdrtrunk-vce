@@ -27,6 +27,7 @@ import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.Role;
 import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.IdentifierClass;
+import io.github.dsheirer.identifier.alias.TalkerAliasIdentifier;
 import io.github.dsheirer.identifier.dcs.DCSIdentifier;
 import io.github.dsheirer.identifier.configuration.SiteConfigurationIdentifier;
 import io.github.dsheirer.identifier.tone.ToneIdentifier;
@@ -700,6 +701,12 @@ public class DecodeEventViewService implements AutoCloseable
             if(examined++ >= PARTY_MAXIMUM_IDENTIFIERS)
             {
                 break;
+            }
+
+            //A retained name must still belong to this event's source before either text or typed projection.
+            if(identifier instanceof TalkerAliasIdentifier alias && !alias.matchesContext(collection))
+            {
+                continue;
             }
 
             String text = bounded(identifier.toString());

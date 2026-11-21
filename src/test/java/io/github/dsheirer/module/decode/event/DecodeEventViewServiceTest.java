@@ -21,6 +21,8 @@ import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierClass;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.Role;
+import io.github.dsheirer.identifier.alias.P25TalkerAliasIdentifier;
+import io.github.dsheirer.identifier.configuration.ChannelConfigurationIdentifier;
 import io.github.dsheirer.identifier.patch.PatchGroup;
 import io.github.dsheirer.module.decode.p25.identifier.channel.StandardChannel;
 import io.github.dsheirer.module.decode.p25.identifier.APCO25System;
@@ -53,6 +55,79 @@ class DecodeEventViewServiceTest
 {
     private static final String CONFIGURATION_ID = "00000000-0000-0000-0000-000000000001";
     private static final long FREQUENCY = 851_012_500L;
+
+    @Test
+    void staleOrUnboundTalkerAliasesAreAbsentFromTextAndTypedEventParties() throws Exception
+    {
+        var source = APCO25RadioIdentifier.createFrom(9001);
+        var stale = P25TalkerAliasIdentifier.create("STALE NAME").bindTo(source);
+        var group = APCO25Talkgroup.create(100);
+        try(var service = new DecodeEventViewService(null, null))
+        {
+            for(var identifiers: List.of(
+                new IdentifierCollection(List.of(stale, group)),
+                new IdentifierCollection(List.of(APCO25RadioIdentifier.createFrom(0), stale, group)),
+                new IdentifierCollection(List.of(APCO25RadioIdentifier.createFrom(9002), stale, group)),
+                new IdentifierCollection(List.of(source, P25TalkerAliasIdentifier.create("STALE NAME"), group))))
+            {
+                var view = service.view(CONFIGURATION_ID, DecodeEvent.builder(DecodeEventType.CALL_GROUP, 1000)
+                    .protocol(Protocol.APCO25).identifiers(identifiers).build());
+                assertTrue(view.fromIdentifiers() == null || !view.fromIdentifiers().contains("STALE NAME"));
+                assertTrue(view.fromParty().stream().noneMatch(party -> "TALKER_ALIAS".equals(party.form())));
+                assertNull(view.fromAliases());
+                assertEquals(group.toString(), view.toIdentifiers());
+                assertEquals(List.of("TALKGROUP"), view.toParty().stream().map(party -> party.form()).toList());
+                assertFalse(new ObjectMapper().valueToTree(view).toString().contains("STALE NAME"));
+            }
+        }
+    }
+
+    @Test
+    void talkerAliasesFromAnotherSystemOrChannelAreAbsentFromEventParties() throws Exception
+    {
+        var source = APCO25RadioIdentifier.createFrom(9001);
+        var systemAlias = P25TalkerAliasIdentifier.create("STALE NAME").bindTo(source, "p25:bee00:348");
+        var firstChannel = new ChannelConfigurationIdentifier(CONFIGURATION_ID);
+        var secondChannel = new ChannelConfigurationIdentifier("00000000-0000-0000-0000-000000000002");
+        var channelAlias = P25TalkerAliasIdentifier.create("STALE NAME")
+            .bindTo(new IdentifierCollection(List.of(source, firstChannel)));
+        try(var service = new DecodeEventViewService(null, null))
+        {
+            for(var identifiers: List.of(
+                new IdentifierCollection(List.of(source, systemAlias, APCO25Wacn.create(0xBEE00),
+                    APCO25System.create(0x349))),
+                new IdentifierCollection(List.of(source, channelAlias, secondChannel))))
+            {
+                var view = service.view(CONFIGURATION_ID, DecodeEvent.builder(DecodeEventType.CALL, 1000)
+                    .protocol(Protocol.APCO25).identifiers(identifiers).build());
+                assertEquals(source.toString(), view.fromIdentifiers());
+                assertEquals(List.of("RADIO"), view.fromParty().stream().map(party -> party.form()).toList());
+            }
+        }
+    }
+
+    @Test
+    void validTalkerAliasesRemainVisibleIncludingQualifiedSourcesWithLocalZero() throws Exception
+    {
+        var local = APCO25RadioIdentifier.createFrom(9001);
+        var qualified = APCO25FullyQualifiedRadioIdentifier.createFrom(0, 0xBEE00, 0x348, 9001);
+        try(var service = new DecodeEventViewService(null, null))
+        {
+            for(var source: List.of(local, qualified))
+            {
+                var alias = P25TalkerAliasIdentifier.create("UNIT 9001").bindTo(source, "p25:bee00:349");
+                var identifiers = new IdentifierCollection(List.of(source, alias, APCO25Wacn.create(0xBEE00),
+                    APCO25System.create(0x349)));
+                var view = service.view(CONFIGURATION_ID, DecodeEvent.builder(DecodeEventType.CALL, 1000)
+                    .protocol(Protocol.APCO25).identifiers(identifiers).build());
+                assertTrue(view.fromIdentifiers().contains(source.toString()));
+                assertTrue(view.fromIdentifiers().contains(alias.toString()));
+                assertEquals(List.of("RADIO", "TALKER_ALIAS"),
+                    view.fromParty().stream().map(party -> party.form()).toList());
+                assertEquals(alias.toString(), view.fromParty().get(1).text());
+            }
+        }
+    }
 
     @Test
     void catalogNamesAreDetachedOnObserverForTypedPartiesAndPatchMembers() throws Exception
