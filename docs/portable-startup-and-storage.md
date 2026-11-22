@@ -187,6 +187,50 @@ history; it does not certify the health of that old history or loosen strict cop
 Do not remove the database to get past the error. If the destination already contains data, choose a separate new
 installation or preserve the existing folder before changing its location.
 
+## Adjust the Java heap limit
+
+Packaged launchers default to a maximum Java heap of **2 GB** (`-Xmx2g`). Set `SDRTRUNK_VCE_OPTS` before starting
+VCE to choose a different limit. The launcher applies these options after its defaults, so `-Xmx8g` overrides the
+2 GB maximum. Java also uses memory outside the heap; leave room for the operating system and other applications.
+
+Stop the current VCE instance, then run the appropriate example from the extracted installation folder:
+
+**Linux:**
+
+```sh
+SDRTRUNK_VCE_OPTS='-Xmx8g' './Start VCE.sh'
+```
+
+**macOS:**
+
+```sh
+SDRTRUNK_VCE_OPTS='-Xmx8g' './Start VCE.command'
+```
+
+**Windows PowerShell:**
+
+```powershell
+$env:SDRTRUNK_VCE_OPTS = '-Xmx8g'
+& '.\Start VCE.bat'
+```
+
+Append `--server` to the launcher command to run an already configured profile without the local window.
+Use a size such as `512m`, `4g`, or `8g`; a value too large for the machine can prevent Java from starting.
+
+For an existing systemd service, add this to its service override:
+
+```ini
+[Service]
+Environment="SDRTRUNK_VCE_OPTS=-Xmx8g"
+```
+
+Reload systemd and restart that VCE service after changing the override. Services need their own environment setting;
+they do not inherit variables from an interactive terminal.
+
+The Unix examples affect one launch. The PowerShell assignment affects programs started from that PowerShell session.
+For a persistent setting, configure the environment of the launcher or service that starts VCE. Keep any other
+`SDRTRUNK_VCE_OPTS` options you already use, and apply the setting again when switching launch methods.
+
 <details>
 <summary>Command-line setup and storage reference</summary>
 
