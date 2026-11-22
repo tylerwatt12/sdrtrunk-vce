@@ -319,7 +319,16 @@ configurations.runtimeClasspath {
 }
 
 def compileModules = ['jdk.incubator.vector', 'jdk.httpserver']
-def commonPerformanceJvmArgs = ['-Xmx2g', '-XX:+UseCompactObjectHeaders']
+
+//Packaged launchers default to a 2 GB heap, which is too small for a dedicated multi-channel receiver.
+//Override at package time with -PmaxHeap=8g; the value is baked into the launcher and verified below.
+def maxHeap = providers.gradleProperty('maxHeap').getOrElse('2g')
+if(!(maxHeap ==~ /\d+[mMgG]/))
+{
+    throw new GradleException("maxHeap must be a size such as 2g or 512m, got: ${maxHeap}")
+}
+def maxHeapArgument = "-Xmx${maxHeap}".toString()
+def commonPerformanceJvmArgs = [maxHeapArgument, '-XX:+UseCompactObjectHeaders']
 
 tasks.withType(JavaCompile) {
     options.compilerArgs.add("--add-modules=${compileModules.join(',')}")
@@ -798,7 +807,7 @@ def verifyRuntimePackage = { Map target, File archive ->
                     '--add-modules=jdk.incubator.vector,jdk.httpserver',
                     '--enable-native-access=ALL-UNNAMED',
                     '--enable-native-access=javafx.graphics',
-                    '-Xmx2g',
+                    maxHeapArgument,
                     '-XX:+UseCompactObjectHeaders'
             ].each { requiredArgument ->
                 if(!launcher.contains(requiredArgument)) {
