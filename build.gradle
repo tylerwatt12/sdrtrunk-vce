@@ -18,11 +18,7 @@
  */
 
 import java.text.SimpleDateFormat
-import java.nio.file.Files
-import java.nio.file.StandardCopyOption
-import java.security.MessageDigest
-import java.util.jar.JarInputStream
-import java.util.zip.ZipFile
+import io.github.dsheirer.build.*
 
 
 
@@ -75,120 +71,32 @@ def releaseVersion = version.toString()
 def releaseNotesDirectory = file('src/main/resources/release-notes')
 def releaseNotesMetadataFile = file("${releaseNotesDirectory}/${releaseVersion}.properties")
 def releaseNotesHtmlFile = file("${releaseNotesDirectory}/${releaseVersion}.html")
-def isNumberedPublicRelease = { String candidate ->
-    def normalized = candidate.toLowerCase(Locale.US)
-    !normalized.contains('nightly') && !normalized.contains('snapshot') && !normalized.contains('dev')
-}
-
-tasks.register('verifyUpdateChannelMetadata') {
+tasks.register('verifyUpdateChannelMetadata', VerifyUpdateChannelMetadata) { task ->
     group = 'verification'
     description = 'Checks that packaged version and updater metadata identify the same release channel.'
-    inputs.property('releaseVersion', releaseVersion)
-    inputs.property('updateTrack', updateTrack)
-    inputs.property('updateBuild', updateBuild)
-
-    doLast {
-        long numericBuild
-
-        try {
-            numericBuild = Long.parseLong(updateBuild)
-        } catch(NumberFormatException e) {
-            throw new GradleException('updateBuild exceeds the supported 64-bit integer range', e)
-        }
-
-        if(updateTrack == 'none') {
-            if(isNumberedPublicRelease(releaseVersion)) {
-                throw new GradleException("Numbered release ${releaseVersion} must use the alpha update channel")
-            }
-
-            if(numericBuild != 0L) {
-                throw new GradleException('A build with updateTrack=none must use updateBuild=0')
-            }
-        } else if(updateTrack == 'alpha') {
-            if(!(releaseVersion ==~ /\d+\.\d+\.\d+-alpha-\d+/)) {
-                throw new GradleException("Alpha update metadata requires an Alpha version, not ${releaseVersion}")
-            }
-
-            if(numericBuild <= 0L) {
-                throw new GradleException('An Alpha package must have a positive updateBuild')
-            }
-        } else if(updateTrack == 'nightly') {
-            if(!releaseVersion.toLowerCase(Locale.US).contains('nightly')) {
-                throw new GradleException("Nightly update metadata requires a nightly version, not ${releaseVersion}")
-            }
-
-            if(numericBuild <= 0L) {
-                throw new GradleException('A nightly package must have a positive updateBuild')
-            }
-        }
-    }
+    task.releaseVersion = releaseVersion
+    task.updateTrack = updateTrack
+    task.updateBuild = updateBuild
 }
 
-tasks.register('verifyReleaseNotesContent') {
+tasks.register('verifyReleaseNotesContent', VerifyReleaseNotes) { task ->
     group = 'verification'
     description = 'Checks that the current numbered version has complete rich-text release notes.'
-    inputs.property('releaseVersion', releaseVersion)
-
-    if(isNumberedPublicRelease(releaseVersion)) {
-        inputs.files(releaseNotesMetadataFile, releaseNotesHtmlFile)
-    }
-
-    doLast {
-        if(!isNumberedPublicRelease(releaseVersion)) {
-            return
-        }
-
-        if(!releaseNotesMetadataFile.isFile() || !releaseNotesHtmlFile.isFile()) {
-            throw new GradleException("Public release ${releaseVersion} requires ${releaseNotesMetadataFile} and ${releaseNotesHtmlFile}")
-        }
-
-        def metadata = new Properties()
-        releaseNotesMetadataFile.withReader('UTF-8') { reader -> metadata.load(reader) }
-
-        if(metadata.getProperty('version', '').trim() != releaseVersion) {
-            throw new GradleException("Release-note version must exactly match projectVersion ${releaseVersion}")
-        }
-
-        if(metadata.getProperty('title', '').trim().isEmpty()) {
-            throw new GradleException("Release-note title is missing for ${releaseVersion}")
-        }
-
-        def html = releaseNotesHtmlFile.getText('UTF-8')
-        ['What', 'Added', 'Changed', 'Fixed', 'Removed', 'Before You Upgrade'].each { heading ->
-            if(!html.contains(heading)) {
-                throw new GradleException("Release notes for ${releaseVersion} are missing the '${heading}' section")
-            }
-        }
-
-        def plainWords = html.replaceAll('<[^>]+>', ' ').trim().split('\\s+').findAll { !it.isBlank() }
-        if(plainWords.size() < 150) {
-            throw new GradleException("Release notes for ${releaseVersion} are too brief (${plainWords.size()} words)")
-        }
+    task.releaseVersion = releaseVersion
+    task.requireApproval = false
+    if(VerifyReleaseNotes.numbered(releaseVersion)) {
+        task.metadataFile = releaseNotesMetadataFile
+        task.htmlFile = releaseNotesHtmlFile
     }
 }
 
-tasks.register('verifyApprovedReleaseNotes') {
+tasks.register('verifyApprovedReleaseNotes', VerifyReleaseNotes) { task ->
     group = 'verification'
     description = 'Stops public packaging until the versioned release notes have explicit human approval.'
     dependsOn('verifyReleaseNotesContent')
-    inputs.property('releaseVersion', releaseVersion)
-
-    if(isNumberedPublicRelease(releaseVersion)) {
-        inputs.file(releaseNotesMetadataFile)
-    }
-
-    doLast {
-        if(!isNumberedPublicRelease(releaseVersion)) {
-            return
-        }
-
-        def metadata = new Properties()
-        releaseNotesMetadataFile.withReader('UTF-8') { reader -> metadata.load(reader) }
-
-        if(!metadata.getProperty('status', '').trim().equalsIgnoreCase('approved')) {
-            throw new GradleException("Release notes for ${releaseVersion} are still a draft. Stop, obtain user approval, then set status=approved in ${releaseNotesMetadataFile}.")
-        }
-    }
+    task.releaseVersion = releaseVersion
+    task.requireApproval = true
+    if(VerifyReleaseNotes.numbered(releaseVersion)) task.metadataFile = releaseNotesMetadataFile
 }
 
 def publicPackagingTasks = [
@@ -414,15 +322,12 @@ jar {
     }
 }
 
-tasks.register('verifyBundledApplicationDatabaseMigrator') {
+tasks.register('verifyBundledApplicationDatabaseMigrator', VerifyJarEntries) { task ->
     group = 'verification'
     description = 'Verifies that packaged builds contain the single application database migrator.'
-    dependsOn jar
-    inputs.file(tasks.named('jar', Jar).flatMap { it.archiveFile })
-
-    doLast {
-        def archive = inputs.files.singleFile
-        def helperEntries = [
+    task.archive.set(tasks.named('jar', Jar).flatMap { it.archiveFile })
+    task.componentName = 'Packaged application database migrator'
+    task.requiredEntries = [
             'io/github/dsheirer/database/upgrade/ApplicationDatabaseMigrator.class',
             'io/github/dsheirer/database/upgrade/DatabaseFormatCatalog.class',
             'io/github/dsheirer/database/upgrade/DatabaseMigrationChain.class',
@@ -430,7 +335,7 @@ tasks.register('verifyBundledApplicationDatabaseMigrator') {
             'io/github/dsheirer/database/upgrade/DatabaseMigrationStep.class',
             'io/github/dsheirer/database/upgrade/Format2To3DatabaseMigration.class'
         ]
-        def retiredEntries = [
+    task.retiredEntries = [
             'io/github/dsheirer/database/upgrade/Format1To2DatabaseMigration.class',
             'io/github/dsheirer/database/upgrade/Format2SchemaSql.class',
             'io/github/dsheirer/database/upgrade/Alpha9DatabaseMigration.class',
@@ -438,25 +343,6 @@ tasks.register('verifyBundledApplicationDatabaseMigrator') {
             'io/github/dsheirer/database/upgrade/TrunkedSiteSchemaInstaller.class',
             'io/github/dsheirer/preference/encryption/vault/EncryptionKeyVaultMigrationTool.class'
         ]
-        def zip = new java.util.zip.ZipFile(archive)
-
-        try {
-            helperEntries.each { helperEntry ->
-                if(zip.getEntry(helperEntry) == null) {
-                    throw new GradleException(
-                        "Packaged application database migrator ${helperEntry} is missing from ${archive.name}")
-                }
-            }
-            retiredEntries.each { retiredEntry ->
-                if(zip.getEntry(retiredEntry) != null) {
-                    throw new GradleException(
-                        "Retired standalone migration entry point ${retiredEntry} is still present in ${archive.name}")
-                }
-            }
-        } finally {
-            zip.close()
-        }
-    }
 }
 
 def bundledVoiceDecryptionEntries = [
@@ -480,36 +366,13 @@ def retiredEncryptionEntries = [
 ]
 def retiredEncryptionPrefixes = ['io/github/dsheirer/preference/encryption/vault/',
     'io/github/dsheirer/gui/preference/encryption/']
-def verifyVoiceDecryptionEntries = { Set<String> entries, String archiveName ->
-    Set<String> missing = (bundledVoiceDecryptionEntries as Set) - entries
-    if(!missing.isEmpty()) {
-        throw new GradleException("Bundled voice decryption is missing from ${archiveName}: ${missing}")
-    }
-    Set<String> retired = entries.findAll { entry ->
-        retiredEncryptionEntries.contains(entry) || retiredEncryptionPrefixes.any { entry.startsWith(it) }
-    } as Set
-    if(!retired.isEmpty()) {
-        throw new GradleException("Retired encryption UI, vault or module-installation classes remain in " +
-                "${archiveName}: ${retired}")
-    }
-}
-
-tasks.register('verifyBundledVoiceDecryption') {
+tasks.register('verifyBundledVoiceDecryption', VerifyJarEntries) { task ->
     description = 'Verifies the application JAR includes all bundled voice decryption providers.'
-    dependsOn jar
-    inputs.property('requiredEntries', bundledVoiceDecryptionEntries)
-    inputs.property('retiredEntries', retiredEncryptionEntries)
-    inputs.property('retiredPrefixes', retiredEncryptionPrefixes)
-    inputs.file(tasks.named('jar', Jar).flatMap { it.archiveFile })
-    doLast {
-        def archive = tasks.named('jar', Jar).get().archiveFile.get().asFile
-        def zip = new java.util.zip.ZipFile(archive)
-        try {
-            verifyVoiceDecryptionEntries(zip.entries().toList()*.name as Set, archive.name)
-        } finally {
-            zip.close()
-        }
-    }
+    task.archive.set(tasks.named('jar', Jar).flatMap { it.archiveFile })
+    task.componentName = 'Bundled voice decryption'
+    task.requiredEntries = bundledVoiceDecryptionEntries
+    task.retiredEntries = retiredEncryptionEntries
+    task.retiredPrefixes = retiredEncryptionPrefixes
 }
 
 check.dependsOn tasks.named('verifyBundledVoiceDecryption')
@@ -632,37 +495,17 @@ def runtimeTargets = [
         ]
 ]
 
-runtimeTargets.each { target ->
-    target.archiveFile = new File(runtimeCacheDirectory, target.archiveName as String)
-    target.packageRoot = target.targetName
-}
-
-def fileDigest = { File source, String algorithm ->
-    MessageDigest digest = MessageDigest.getInstance(algorithm)
-    byte[] buffer = new byte[64 * 1024]
-
-    source.withInputStream { input ->
-        int count
-
-        while((count = input.read(buffer)) >= 0) {
-            if(count > 0) {
-                digest.update(buffer, 0, count)
-            }
-        }
+runtimeTargets = runtimeTargets.collect { descriptor ->
+    def values = descriptor.collectEntries { key, value ->
+        [(key): value instanceof GString ? value.toString() : value]
     }
-
-    digest.digest().encodeHex().toString()
+    new RuntimeTarget(values + [archiveFile: new File(runtimeCacheDirectory, values.archiveName),
+            packageRoot: values.targetName])
 }
 
-def cachedRuntimeIsValid = { Map target ->
-    File archive = target.archiveFile as File
-    archive.isFile() && archive.length() == (target.size as long) &&
-            fileDigest(archive, 'SHA-256') == target.sha256
-}
-
-def runtimeArchiveTree = { Map target ->
-    File archive = target.archiveFile as File
-    target.archiveType == 'zip' ? zipTree(archive) : tarTree(resources.gzip(archive))
+//Only evaluated while configuring the task graph; no task action calls back into the project.
+def runtimeArchiveTree = { RuntimeTarget target ->
+    target.archiveType == 'zip' ? zipTree(target.archiveFile) : tarTree(resources.gzip(target.archiveFile))
 }
 
 //Gradle expands TAR symlinks as empty files. Materialize BellSoft's legal-file links so every notice remains readable.
@@ -677,356 +520,33 @@ def legalLinkSourceByName = [
 def expectedMaterializedLegalLinks = 174
 
 
-def archiveEntryBytes = { ZipFile zip, String entryName ->
-    def entry = zip.getEntry(entryName)
-
-    if(entry == null || entry.directory) {
-        throw new GradleException("Required package entry is missing: ${entryName}")
-    }
-
-    zip.getInputStream(entry).withCloseable { input -> input.readAllBytes() }
-}
-
-def archiveEntryText = { ZipFile zip, String entryName ->
-    new String(archiveEntryBytes(zip, entryName), java.nio.charset.StandardCharsets.UTF_8)
-}
-
-def verifyRuntimePackage = { Map target, File archive ->
-    if(!archive.isFile() || archive.length() == 0) {
-        throw new GradleException("Runtime package is missing or empty: ${archive}")
-    }
-
-    String root = target.packageRoot as String
-
-    if(archive.name != "${root}.zip") {
-        throw new GradleException("Package root ${root} does not match archive ${archive.name}")
-    }
-    String runtimeLauncher = "${root}/bin/java${target.windows ? '.exe' : ''}"
-    String applicationJar = "${root}/lib/${packagedApplicationName}-${releaseVersion}.jar"
-    ZipFile zip = new ZipFile(archive)
-
-    try {
-        def entries = zip.entries().toList()
-        def outsideRoot = entries.findAll { entry ->
-            entry.name != "${root}/" && !entry.name.startsWith("${root}/")
-        }
-
-        if(!outsideRoot.isEmpty()) {
-            throw new GradleException("Package contains entries outside ${root}: ${outsideRoot*.name}")
-        }
-
-        def vendorRootEntries = entries.findAll { entry ->
-            entry.name.startsWith("${root}/${target.archiveRoot}/")
-        }
-
-        if(!vendorRootEntries.isEmpty()) {
-            throw new GradleException("Package retains the vendor archive root: ${vendorRootEntries*.name}")
-        }
-
-        def emptyLegalFiles = entries.findAll { entry ->
-            !entry.directory && entry.name.startsWith("${root}/legal/") && entry.size == 0
-        }
-
-        if(!emptyLegalFiles.isEmpty()) {
-            throw new GradleException("Package contains empty vendor legal files: ${emptyLegalFiles*.name}")
-        }
-
-        def packagedFileNames = entries.findAll { !it.directory }*.name
-        def emptyDirectories = entries.findAll { directory ->
-            directory.directory && !packagedFileNames.any { it.startsWith(directory.name) }
-        }
-
-        if(!emptyDirectories.isEmpty()) {
-            throw new GradleException("Package contains empty directories: ${emptyDirectories*.name}")
-        }
-
-        def rootLaunchers = entries.findAll { entry ->
-            !entry.directory && entry.name.startsWith("${root}/Start VCE.")
-        }*.name as Set
-        Set<String> expectedRootLaunchers = ["${root}/${target.rootLauncher}"] as Set
-
-        if(rootLaunchers != expectedRootLaunchers) {
-            throw new GradleException("Package ${archive.name} has unexpected root launchers: ${rootLaunchers}")
-        }
-
-        [
-                runtimeLauncher,
-                "${root}/${target.rootLauncher}",
-                "${root}/bin/${packagedApplicationName}",
-                "${root}/bin/${packagedApplicationName}.bat",
-                applicationJar,
-                "${root}/stats-web/index.html",
-                "${root}/LICENSE",
-                "${root}/RUNTIME-LICENSE",
-                "${root}/NOTICE",
-                "${root}/release"
-        ].each { archiveEntryBytes(zip, it) }
-
-        String rootLauncherText = archiveEntryText(zip, "${root}/${target.rootLauncher}")
-
-        if(target.windows) {
-            if(!rootLauncherText.contains('set "JAVA_HOME=%~dp0"') ||
-                    !rootLauncherText.contains('call "%~dp0bin\\sdrtrunk-vce.bat" %*') ||
-                    !rootLauncherText.contains('if errorlevel 1 pause')) {
-                throw new GradleException("Root launcher does not use the bundled Windows runtime, forward to " +
-                        "the application launcher, and pause when it fails")
-            }
-        }
-        else if(!rootLauncherText.startsWith('#!/bin/sh\n') ||
-                !rootLauncherText.contains('JAVA_HOME="$launcher_root" exec "$launcher_root/bin/sdrtrunk-vce" "$@"')) {
-            throw new GradleException("Root launcher does not use the bundled Unix runtime and forward to the " +
-                    "application launcher")
-        }
-
-        if(zip.getEntry("${root}/bin/javac") != null || zip.getEntry("${root}/bin/javac.exe") != null) {
-            throw new GradleException("Package ${archive.name} contains a JDK instead of the smaller JRE")
-        }
-
-        String releaseText = archiveEntryText(zip, "${root}/release")
-
-        if(!releaseText.contains('IMPLEMENTOR="BellSoft"') ||
-                !releaseText.contains("JAVA_VERSION=\"${libericaJavaVersion}\"") ||
-                !releaseText.contains("JAVA_RUNTIME_VERSION=\"${libericaRuntimeVersion}-LTS\"") ||
-                !releaseText.contains("OS_ARCH=\"${target.releaseArchitecture}\"")) {
-            throw new GradleException("Package ${archive.name} has unexpected Liberica runtime metadata")
-        }
-
-        ["${root}/bin/${packagedApplicationName}", "${root}/bin/${packagedApplicationName}.bat"].each { launcherName ->
-            String launcher = archiveEntryText(zip, launcherName)
-
-            [
-                    '--add-modules=jdk.incubator.vector,jdk.httpserver',
-                    '--enable-native-access=ALL-UNNAMED',
-                    '--enable-native-access=javafx.graphics',
-                    '-Xmx2g',
-                    '-XX:+UseCompactObjectHeaders'
-            ].each { requiredArgument ->
-                if(!launcher.contains(requiredArgument)) {
-                    throw new GradleException("Launcher ${launcherName} is missing ${requiredArgument}")
-                }
-            }
-
-            String applicationJarName = "${packagedApplicationName}-${releaseVersion}.jar"
-            String expectedClasspath = launcherName.endsWith('.bat') ?
-                    "set CLASSPATH=%APP_HOME%\\lib\\${applicationJarName}" :
-                    "CLASSPATH=\$APP_HOME/lib/${applicationJarName}"
-            String classpathPrefix = launcherName.endsWith('.bat') ? 'set CLASSPATH=' : 'CLASSPATH='
-
-            if(launcher.readLines().findAll { it.startsWith(classpathPrefix) } != [expectedClasspath]) {
-                throw new GradleException("Launcher ${launcherName} does not use the application manifest classpath")
-            }
-        }
-
-        byte[] applicationJarBytes = archiveEntryBytes(zip, applicationJar)
-        new JarInputStream(new ByteArrayInputStream(applicationJarBytes)).withCloseable { applicationJarInput ->
-            def manifest = applicationJarInput.manifest
-
-            if(manifest == null ||
-                    manifest.mainAttributes.getValue('Class-Path') != runtimeManifestClassPath.get() ||
-                    manifest.mainAttributes.getValue('Implementation-Version') != releaseVersion ||
-                    manifest.mainAttributes.getValue('Update-Track') != updateTrack ||
-                    manifest.mainAttributes.getValue('Update-Build') != updateBuild) {
-                throw new GradleException("Application metadata does not match package ${archive.name}")
-            }
-
-            Set<String> applicationEntries = [] as Set
-            def applicationEntry
-
-            while((applicationEntry = applicationJarInput.getNextJarEntry()) != null) {
-                applicationEntries.add(applicationEntry.name)
-            }
-
-            verifyVoiceDecryptionEntries(applicationEntries, archive.name)
-
-            Set<String> requiredApplicationIcons = [
-                    'images/app/vce-app-icon.png',
-                    'images/app/vce-app-icon.svg',
-                    'images/app/vce-wordmark.png'
-            ] as Set
-            Set<String> missingApplicationIcons = requiredApplicationIcons - applicationEntries
-
-            if(!missingApplicationIcons.isEmpty()) {
-                throw new GradleException("Application branding is missing from ${archive.name}: " +
-                        "${missingApplicationIcons}")
-            }
-
-            Set<String> retiredApplicationIcons = [
-                    'images/app/sdr-trunk-icon.png',
-                    'images/app/sdr-trunk-icon.svg'
-            ] as Set
-            Set<String> bundledRetiredApplicationIcons = retiredApplicationIcons.intersect(applicationEntries)
-
-            if(!bundledRetiredApplicationIcons.isEmpty()) {
-                throw new GradleException("Retired application branding remains in ${archive.name}: " +
-                        "${bundledRetiredApplicationIcons}")
-            }
-        }
-
-        if(target.id == 'OsxAarch64') {
-            String nativeEntry = 'org/usb4java/darwin-aarch64/libusb4java.dylib'
-            byte[] nativeLibrary
-            def nativeMetadata
-            byte[] nativeJar = archiveEntryBytes(zip, "${root}/lib/usb4java-native-libraries-1.3.3.jar")
-            new JarInputStream(new ByteArrayInputStream(nativeJar)).withCloseable { input ->
-                def entry
-                while((entry = input.getNextJarEntry()) != null) {
-                    if(entry.name == nativeEntry) {
-                        nativeLibrary = input.readAllBytes()
-                    }
-                    if(entry.name == 'META-INF/sdrtrunk-vce-native-usb.json') {
-                        nativeMetadata = new groovy.json.JsonSlurper().parseText(
-                                new String(input.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8))
-                    }
-                }
-            }
-            if(nativeLibrary == null || nativeMetadata?.libusb_version != '1.0.30' ||
-                    nativeMetadata?.jni_version != '1.3.0' || nativeMetadata?.native_entry?.path != nativeEntry ||
-                    MessageDigest.getInstance('SHA-256').digest(nativeLibrary).encodeHex().toString() !=
-                            nativeMetadata?.native_entry?.sha256) {
-                throw new GradleException('macOS ARM package is missing its verified self-contained USB library')
-            }
-            archiveEntryBytes(zip, "${root}/legal/native-usb/provenance.json")
-        }
-
-        logger.lifecycle("Verified ${target.id} bundled runtime ${libericaRuntimeVersion}")
-    }
-    finally {
-        zip.close()
-    }
-}
-
+def runtimeDownloadTasks = [:]
+def runtimeLegalTasks = [:]
+def runtimeLegalDirectories = [:]
 runtimeTargets.each { target ->
-    def downloadTask = tasks.register("downloadLiberica${target.id}") {
+    runtimeDownloadTasks[target.id] = tasks.register("downloadLiberica${target.id}", DownloadVerifiedRuntime) { task ->
         group = 'distribution'
         description = "Downloads the pinned BellSoft JRE for ${target.targetName}."
-        inputs.property('url', target.url)
-        inputs.property('size', target.size)
-        inputs.property('sha256', target.sha256)
-        outputs.file(target.archiveFile)
-        outputs.upToDateWhen { cachedRuntimeIsValid(target) }
-
-        doLast {
-            if(cachedRuntimeIsValid(target)) {
-                return
-            }
-
-            File destination = target.archiveFile as File
-            destination.parentFile.mkdirs()
-            File partial = new File(destination.parentFile,
-                    "${destination.name}.part-${ProcessHandle.current().pid()}-${Thread.currentThread().id}")
-
-            try {
-                Files.deleteIfExists(partial.toPath())
-                def connection = new URI(target.url as String).toURL().openConnection()
-                connection.connectTimeout = 30_000
-                connection.readTimeout = 120_000
-                connection.setRequestProperty('User-Agent', 'sdrtrunk-vce Gradle packager')
-
-                connection.getInputStream().withCloseable { input ->
-                    partial.withOutputStream { output -> input.transferTo(output) }
-                }
-
-                if(partial.length() != (target.size as long) ||
-                        fileDigest(partial, 'SHA-256') != target.sha256) {
-                    throw new GradleException("Downloaded runtime failed size or checksum verification: ${target.url}")
-                }
-
-                try {
-                    Files.move(partial.toPath(), destination.toPath(),
-                            StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
-                }
-                catch(java.nio.file.AtomicMoveNotSupportedException ignored) {
-                    Files.move(partial.toPath(), destination.toPath(), StandardCopyOption.REPLACE_EXISTING)
-                }
-
-                logger.lifecycle("Cached ${target.archiveName} in ${runtimeCacheDirectory}")
-            }
-            finally {
-                Files.deleteIfExists(partial.toPath())
-            }
-        }
+        task.url = target.url
+        task.size = target.size
+        task.sha256 = target.sha256
+        task.archiveFile = target.archiveFile
     }
-
-    target.downloadTask = downloadTask
 }
 
 runtimeTargets.findAll { !it.windows }.each { target ->
-    def materializedDirectory = layout.buildDirectory.dir("generated/runtime-legal/${target.id}")
-    def materializeTask = tasks.register("materializeRuntimeLegalLinks${target.id}") {
-        dependsOn(target.downloadTask)
-        inputs.file(target.archiveFile)
-        inputs.property('archiveRoot', target.archiveRoot)
-        inputs.property('legalLinkSources', legalLinkSourceByName)
-        inputs.property('expectedLegalLinks', expectedMaterializedLegalLinks)
-        outputs.dir(materializedDirectory)
-
-        doLast {
-            File outputDirectory = materializedDirectory.get().asFile
-
-            if(outputDirectory.exists()) {
-                Files.walk(outputDirectory.toPath()).withCloseable { paths ->
-                    paths.sorted(Comparator.reverseOrder()).forEach { Files.delete(it) }
-                }
-            }
-
-            Map<String, byte[]> sourceContents = [:]
-            List<String> linkPaths = []
-
-            runtimeArchiveTree(target).visit { details ->
-                if(details.directory) {
-                    return
-                }
-
-                String[] segments = details.relativePath.segments
-
-                if(segments.length < 2 || segments[0] != target.archiveRoot) {
-                    throw new GradleException("Unexpected top-level entry in ${target.archiveName}: ${details.path}")
-                }
-
-                String relativePath = segments.drop(1).join('/')
-
-                if(legalLinkSourceByName.values().contains(relativePath)) {
-                    sourceContents[relativePath] = Files.readAllBytes(details.file.toPath())
-                }
-
-                if(relativePath.startsWith('legal/') && details.file.length() == 0) {
-                    linkPaths.add(relativePath)
-                }
-            }
-
-            if(linkPaths.size() != expectedMaterializedLegalLinks) {
-                throw new GradleException("Expected ${expectedMaterializedLegalLinks} vendor legal links in " +
-                        "${target.archiveName}, found ${linkPaths.size()}")
-            }
-
-            linkPaths.each { linkPath ->
-                String fileName = linkPath.tokenize('/').last()
-                String sourcePath = legalLinkSourceByName[fileName]
-                byte[] contents = sourceContents[sourcePath]
-
-                if(sourcePath == null || contents == null || contents.length == 0) {
-                    throw new GradleException("Cannot materialize vendor legal link ${linkPath} in ${target.archiveName}")
-                }
-
-                File destination = new File(outputDirectory, linkPath)
-                Files.createDirectories(destination.parentFile.toPath())
-                Files.write(destination.toPath(), contents)
-            }
-        }
+    File materializedDirectory = layout.buildDirectory.dir("generated/runtime-legal/${target.id}").get().asFile
+    runtimeLegalDirectories[target.id] = materializedDirectory
+    runtimeLegalTasks[target.id] = tasks.register("materializeRuntimeLegalLinks${target.id}", MaterializeRuntimeLegalLinks) { task ->
+        dependsOn(runtimeDownloadTasks[target.id])
+        task.archiveFile = target.archiveFile
+        task.archiveContents = runtimeArchiveTree(target)
+        task.archiveRoot = target.archiveRoot
+        task.archiveName = target.archiveName
+        task.legalLinkSources = legalLinkSourceByName
+        task.expectedLegalLinks = expectedMaterializedLegalLinks
+        task.outputDirectory = materializedDirectory
     }
-
-    target.materializedLegalDirectory = materializedDirectory
-    target.materializeLegalTask = materializeTask
-}
-
-//These tasks capture per-target task state and build-script helpers (issue #99). Allow packaging to
-//proceed by discarding the configuration-cache entry for the entire invocation; normal up-to-date checks still apply.
-tasks.matching { task ->
-    task.name.startsWith('downloadLiberica') ||
-            task.name.startsWith('materializeRuntimeLegalLinks') ||
-            task.name.startsWith('runtimeZip')
-}.configureEach {
-    notCompatibleWithConfigurationCache('Packaging tasks capture per-target task state; see issue #99')
 }
 
 tasks.named('startScripts') {
@@ -1038,47 +558,44 @@ def applicationInstallDirectory = layout.buildDirectory.dir("install/${packagedA
 //pinned static libusb, retaining the legacy macOS and Windows resources from the original dependency.
 def macosUsbNativeDirectory = layout.buildDirectory.dir('generated/macos-usb')
 def macosUsbNativeJarName = 'usb4java-native-libraries-1.3.3.jar'
-def upstreamMacosUsbNativeJar = providers.provider {
-    configurations.runtimeClasspath.files.find { it.name == macosUsbNativeJarName }
+def upstreamMacosUsbNativeJar = configurations.runtimeClasspath.elements.map { entries ->
+    entries.find { it.asFile.name == macosUsbNativeJarName }.asFile
 }
-def prepareMacosUsbNatives = tasks.register('prepareMacosUsbNatives', Exec) {
+def macosUsbPrebuiltDirectory = providers.gradleProperty('macosUsbNativeDirectory')
+def prepareMacosUsbNatives = tasks.register('prepareMacosUsbNatives', PrepareMacosUsbNatives) { task ->
     group = 'distribution'
     description = 'Builds a self-contained macOS ARM USB library from pinned sources (requires macOS ARM).'
-    inputs.file('tools/build/build_macos_usb.py')
-    inputs.file(upstreamMacosUsbNativeJar)
-    inputs.property('prebuilt', providers.gradleProperty('macosUsbNativeDirectory').orElse(''))
-    if(providers.gradleProperty('macosUsbNativeDirectory').isPresent()) {
-        inputs.dir(providers.gradleProperty('macosUsbNativeDirectory'))
-    }
-    outputs.dir(macosUsbNativeDirectory)
-
-    doFirst {
-        def arguments = ['python3', file('tools/build/build_macos_usb.py').absolutePath,
-                '--output', macosUsbNativeDirectory.get().asFile.absolutePath,
-                '--native-jar', upstreamMacosUsbNativeJar.get().absolutePath]
-        if(providers.gradleProperty('macosUsbNativeDirectory').isPresent()) {
-            arguments += ['--prebuilt', file(providers.gradleProperty('macosUsbNativeDirectory').get()).absolutePath]
-        }
-        commandLine(arguments)
-    }
+    task.scriptFile = file('tools/build/build_macos_usb.py')
+    task.nativeJar.fileProvider(upstreamMacosUsbNativeJar)
+    task.outputDirectory.set(macosUsbNativeDirectory)
+    if(macosUsbPrebuiltDirectory.isPresent()) task.prebuiltDirectory.set(file(macosUsbPrebuiltDirectory.get()))
 }
+
 def packageTasks = []
 
 runtimeTargets.each { target ->
-    def packageTask = tasks.register("runtimeZip${target.id}", Zip) {
+    def packageTask = tasks.register("runtimeZip${target.id}", VerifiedRuntimeZip) { task ->
         description = "Packages ${target.targetName} with its complete BellSoft JRE."
-        dependsOn(target.downloadTask)
+        dependsOn(runtimeDownloadTasks[target.id])
         dependsOn(tasks.named('installDist'))
         dependsOn('verifyApprovedReleaseNotes')
         dependsOn('verifyBundledApplicationDatabaseMigrator')
         dependsOn('verifyBundledVoiceDecryption')
-        inputs.property('bundledVoiceDecryptionEntries', bundledVoiceDecryptionEntries)
-        inputs.property('retiredEncryptionEntries', retiredEncryptionEntries)
-        inputs.property('retiredEncryptionPrefixes', retiredEncryptionPrefixes)
+        task.target = target
+        task.applicationName = packagedApplicationName
+        task.releaseVersion = releaseVersion
+        task.updateTrack = updateTrack
+        task.updateBuild = updateBuild
+        task.libericaJavaVersion = libericaJavaVersion
+        task.libericaRuntimeVersion = libericaRuntimeVersion
+        task.expectedManifestClassPath.set(runtimeManifestClassPath)
+        task.requiredVoiceEntries = bundledVoiceDecryptionEntries
+        task.retiredVoiceEntries = retiredEncryptionEntries
+        task.retiredVoicePrefixes = retiredEncryptionPrefixes
         dependsOn('verifyUpdateChannelMetadata')
 
         if(!target.windows) {
-            dependsOn(target.materializeLegalTask)
+            dependsOn(runtimeLegalTasks[target.id])
         }
         if(target.id == 'OsxAarch64') {
             dependsOn(prepareMacosUsbNatives)
@@ -1095,49 +612,11 @@ runtimeTargets.each { target ->
         from(runtimeArchiveTree(target)) {
             into(target.packageRoot)
 
-            eachFile { details ->
-                String[] segments = details.relativePath.segments
-
-                if(segments.length < 2 || segments[0] != target.packageRoot ||
-                        segments[1] != target.archiveRoot) {
-                    throw new GradleException("Unexpected top-level entry in ${target.archiveName}: ${details.path}")
-                }
-
-                if(segments.length == 2) {
-                    details.exclude()
-                    return
-                }
-
-                String[] strippedSegments = segments.drop(2) as String[]
-
-                if(!target.windows && strippedSegments[0] == 'legal' && details.file.length() == 0) {
-                    details.exclude()
-                    return
-                }
-
-                //The package root keeps the project GPL; retain the runtime's separate license under a clear name.
-                if(strippedSegments.length == 1 && strippedSegments[0] == 'LICENSE') {
-                    strippedSegments = ['RUNTIME-LICENSE'] as String[]
-                }
-
-                List<String> outputSegments = [target.packageRoot.toString()] + strippedSegments.toList()
-                details.relativePath = new org.gradle.api.file.RelativePath(
-                        details.relativePath.isFile(), outputSegments as String[])
-
-                if(!target.windows) {
-                    String strippedPath = strippedSegments.join('/')
-
-                    if(strippedPath.startsWith('bin/') ||
-                            strippedPath == 'lib/jexec' ||
-                            strippedPath == 'lib/jspawnhelper') {
-                        details.permissions { unix('rwxr-xr-x') }
-                    }
-                }
-            }
+            eachFile(new RuntimeLayoutAction(target))
         }
 
         if(!target.windows) {
-            from(target.materializedLegalDirectory) {
+            from(runtimeLegalDirectories[target.id]) {
                 into(target.packageRoot)
             }
         }
@@ -1156,11 +635,7 @@ runtimeTargets.each { target ->
                 exclude "lib/${macosUsbNativeJarName}"
             }
 
-            eachFile { details ->
-                if(details.relativePath.pathString.endsWith("/bin/${packagedApplicationName}")) {
-                    details.permissions { unix('rwxr-xr-x') }
-                }
-            }
+            eachFile(new ApplicationLauncherPermissionsAction(packagedApplicationName))
         }
 
         if(target.id == 'OsxAarch64') {
@@ -1172,31 +647,18 @@ runtimeTargets.each { target ->
             }
         }
 
-        doLast {
-            verifyRuntimePackage(target, archiveFile.get().asFile)
-        }
     }
 
     packageTasks.add(packageTask)
 }
 
-tasks.register('runtimeZipAll') {
+tasks.register('runtimeZipAll', VerifyRuntimeArchiveSet) { task ->
     group = 'distribution'
     description = 'Builds one application distribution and packages all six supported OS/CPU archives.'
     dependsOn(packageTasks)
-
-    doLast {
-        Set<String> expected = runtimeTargets.collect {
-            "${it.packageRoot}.zip"
-        } as Set
-        Set<String> actual = fileTree(layout.buildDirectory.dir('image')) {
-            include "vce-*-${packageVersion}.zip"
-        }.files.collect { it.name } as Set
-
-        if(actual != expected) {
-            throw new GradleException("Expected exactly six release archives. Expected ${expected}; found ${actual}")
-        }
-
-        logger.lifecycle("Created and verified all six release archives in ${layout.buildDirectory.dir('image').get()}")
-    }
+    task.expectedArchives = runtimeTargets.collect { "${it.packageRoot}.zip".toString() }
+    task.imageDirectory.set(layout.buildDirectory.dir('image'))
+    task.archives.from(fileTree(layout.buildDirectory.dir('image')) {
+        include "vce-*-${packageVersion}.zip"
+    })
 }

@@ -1,0 +1,151 @@
+import groovy.json.JsonSlurper
+import io.github.dsheirer.build.ApplicationLauncherPermissionsAction
+import io.github.dsheirer.build.DownloadVerifiedRuntime
+import io.github.dsheirer.build.MaterializeRuntimeLegalLinks
+import io.github.dsheirer.build.RuntimeLayoutAction
+import io.github.dsheirer.build.RuntimeTarget
+import io.github.dsheirer.build.VerifiedRuntimeZip
+import io.github.dsheirer.build.VerifyPackageRejections
+import io.github.dsheirer.build.VerifyRuntimeArchiveSet
+import io.github.dsheirer.build.VerifyReleaseNotes
+import io.github.dsheirer.build.VerifyUpdateChannelMetadata
+import io.github.dsheirer.build.VerifyJarEntries
+
+//Only task wiring is synthetic. Every executed packaging/validation action is a production type.
+def specification = new JsonSlurper().parse(file('specification.json'))
+def targetValues = new LinkedHashMap(specification.target)
+targetValues.archiveFile = file(targetValues.archiveFile)
+def descriptor = new RuntimeTarget(targetValues)
+def metadata = specification.metadata
+def runtimeContents = tarTree(resources.gzip(descriptor.archiveFile))
+def legalOutput = layout.buildDirectory.dir('runtime-legal')
+
+def download = tasks.register('downloadLibericaLinuxX86_64', DownloadVerifiedRuntime) {
+    url = descriptor.url
+    size = descriptor.size
+    sha256 = descriptor.sha256
+    archiveFile = descriptor.archiveFile
+}
+def legal = tasks.register('materializeRuntimeLegalLinksLinuxX86_64', MaterializeRuntimeLegalLinks) {
+    dependsOn(download)
+    archiveFile = descriptor.archiveFile
+    archiveContents = runtimeContents
+    archiveRoot = descriptor.archiveRoot
+    archiveName = descriptor.archiveName
+    legalLinkSources = ['LICENSE': 'legal/java.base/LICENSE']
+    expectedLegalLinks = 1
+    outputDirectory = legalOutput.get().asFile
+}
+tasks.register('runtimeZipLinuxX86_64', VerifiedRuntimeZip) {
+    dependsOn(download, legal)
+    target = descriptor
+    applicationName = metadata.applicationName
+    releaseVersion = metadata.releaseVersion
+    updateTrack = metadata.updateTrack
+    updateBuild = metadata.updateBuild
+    libericaJavaVersion = metadata.libericaJavaVersion
+    libericaRuntimeVersion = metadata.libericaRuntimeVersion
+    expectedManifestClassPath.set(metadata.expectedManifestClassPath as String)
+    requiredVoiceEntries = metadata.requiredVoiceEntries
+    retiredVoiceEntries = metadata.retiredVoiceEntries
+    retiredVoicePrefixes = metadata.retiredVoicePrefixes
+    archiveFileName = descriptor.packageRoot + '.zip'
+    destinationDirectory = layout.buildDirectory.dir('image')
+    duplicatesStrategy = DuplicatesStrategy.FAIL
+    preserveFileTimestamps = false
+    reproducibleFileOrder = true
+    includeEmptyDirs = false
+    zip64 = true
+    from(runtimeContents) {
+        into(descriptor.packageRoot)
+        eachFile(new RuntimeLayoutAction(descriptor))
+    }
+    from(legalOutput) { into(descriptor.packageRoot) }
+    from(descriptor.rootLauncher) {
+        into(descriptor.packageRoot)
+        filePermissions { unix('rwxr-xr-x') }
+    }
+    from('application') {
+        into(descriptor.packageRoot)
+        eachFile(new ApplicationLauncherPermissionsAction(metadata.applicationName as String))
+    }
+}
+tasks.register('verifyFixtureArchiveSet', VerifyRuntimeArchiveSet) {
+    expectedArchives = (0..<6).collect { "vce-platform${it}-fixture.zip".toString() }
+    archives.from(fileTree('archive-set') { include 'vce-*-fixture.zip' })
+    imageDirectory = layout.projectDirectory.dir('archive-set')
+}
+tasks.register('verifyPackageRejections', VerifyPackageRejections) {
+    specificationFile = file('specification.json')
+    casesDirectory = file('rejections')
+}
+
+def validNotes = tasks.register('verifyCompleteFixtureNotes', VerifyReleaseNotes) {
+    releaseVersion = '0.6.2-alpha-999'
+    requireApproval = false
+    metadataFile = file('gates/approved.properties')
+    htmlFile = file('gates/complete.html')
+}
+def approvedNotes = tasks.register('verifyApprovedFixtureNotes', VerifyReleaseNotes) {
+    releaseVersion = '0.6.2-alpha-999'
+    requireApproval = true
+    metadataFile = file('gates/approved.properties')
+}
+def validJar = tasks.register('verifyFixtureJar', VerifyJarEntries) {
+    archive = layout.projectDirectory.file('gates/valid.jar')
+    requiredEntries = metadata.requiredVoiceEntries
+    retiredEntries = metadata.retiredVoiceEntries
+    retiredPrefixes = metadata.retiredVoicePrefixes
+    componentName = 'fixture voice support'
+}
+def validChannels = [
+        [name: 'verifyFixtureLocalChannel', version: 'fixture-dev', track: 'none', build: '0'],
+        [name: 'verifyFixtureAlphaChannel', version: '0.6.2-alpha-999', track: 'alpha', build: '999'],
+        [name: 'verifyFixtureNightlyChannel', version: 'fixture-nightly', track: 'nightly', build: '999']
+].collect { values ->
+    tasks.register(values.name, VerifyUpdateChannelMetadata) {
+        releaseVersion = values.version
+        updateTrack = values.track
+        updateBuild = values.build
+    }
+}
+tasks.register('verifyFixtureGates') {
+    dependsOn(validNotes, approvedNotes, validJar, validChannels)
+}
+[
+        [name: 'rejectDraftNotes', approval: true, metadata: 'draft.properties', html: null],
+        [name: 'rejectMismatchedNotesVersion', approval: false, metadata: 'wrong-version.properties', html: 'complete.html'],
+        [name: 'rejectMissingNotesSection', approval: false, metadata: 'approved.properties', html: 'missing-section.html'],
+        [name: 'rejectBriefNotes', approval: false, metadata: 'approved.properties', html: 'brief.html']
+].each { values ->
+    tasks.register(values.name, VerifyReleaseNotes) {
+        releaseVersion = '0.6.2-alpha-999'
+        requireApproval = values.approval
+        metadataFile = file('gates/' + values.metadata)
+        if(values.html != null) htmlFile = file('gates/' + values.html)
+    }
+}
+[
+        [name: 'rejectWrongUpdateChannel', version: 'fixture-dev', track: 'alpha', build: '1'],
+        [name: 'rejectWrongUpdateBuild', version: 'fixture-nightly', track: 'nightly', build: '0'],
+        [name: 'rejectOverflowUpdateBuild', version: 'fixture-nightly', track: 'nightly', build: '9223372036854775808']
+].each { values ->
+    tasks.register(values.name, VerifyUpdateChannelMetadata) {
+        releaseVersion = values.version
+        updateTrack = values.track
+        updateBuild = values.build
+    }
+}
+[
+        [name: 'rejectMissingJarEntry', archive: 'missing.jar'],
+        [name: 'rejectRetiredJarEntry', archive: 'retired.jar'],
+        [name: 'rejectRetiredJarPrefix', archive: 'retired-prefix.jar']
+].each { values ->
+    tasks.register(values.name, VerifyJarEntries) {
+        archive = layout.projectDirectory.file('gates/' + values.archive)
+        requiredEntries = metadata.requiredVoiceEntries
+        retiredEntries = metadata.retiredVoiceEntries
+        retiredPrefixes = metadata.retiredVoicePrefixes
+        componentName = 'fixture voice support'
+    }
+}

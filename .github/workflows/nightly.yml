@@ -121,7 +121,7 @@ jobs:
           path: ${{ runner.temp }}/radio-system-catalog
       - name: Build and verify all six packages
         run: >-
-          ./gradlew --no-configuration-cache clean runtimeZipAll
+          ./gradlew --configuration-cache clean runtimeZipAll
           -PprojectVersion=nightly -PupdateTrack=nightly -PupdateBuild=${UPDATE_BUILD}
           -PradioSystemCatalogFile="${{ runner.temp }}/radio-system-catalog/dsdplus.networks"
       - name: Record the exact candidate and file checksums

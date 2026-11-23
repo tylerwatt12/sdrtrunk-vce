@@ -325,6 +325,9 @@ function verifyImmutableRadioSystemCatalogWiring() {
     /name: radio-system-catalog-\$\{\{ github\.run_id \}\}/);
   assert.match(step('Build and verify all six packages'),
     /-PradioSystemCatalogFile="\$\{\{ runner\.temp \}\}\/radio-system-catalog\/dsdplus\.networks"/);
+  assert.match(step('Build and verify all six packages'), /--configuration-cache clean runtimeZipAll/,
+    'Candidate packaging must exercise configuration-cache compatibility.');
+  assert.doesNotMatch(step('Build and verify all six packages'), /--no-configuration-cache/);
   const approvedCatalog = step('Download the approved radio-system catalog without fetching again');
   assert.match(approvedCatalog, /artifact-ids: \$\{\{ steps\.candidate\.outputs\.catalog-artifact-id \}\}/);
   assert.match(approvedCatalog, /run-id: \$\{\{ inputs\.candidate_run_id \}\}/);
