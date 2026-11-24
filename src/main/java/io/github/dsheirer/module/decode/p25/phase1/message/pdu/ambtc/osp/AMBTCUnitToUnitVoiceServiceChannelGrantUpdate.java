@@ -23,6 +23,7 @@ import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.channel.IChannelDescriptor;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.module.decode.p25.IServiceOptionsProvider;
+import io.github.dsheirer.module.decode.p25.P25FrequencyBandValidator;
 import io.github.dsheirer.module.decode.p25.identifier.channel.APCO25Channel;
 import io.github.dsheirer.module.decode.p25.identifier.channel.APCO25ExplicitChannel;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier;
@@ -147,11 +148,16 @@ public class AMBTCUnitToUnitVoiceServiceChannelGrantUpdate extends AMBTCMessage 
         return mIdentifiers;
     }
 
+    /**
+     * TIA-102.AABC-E section 2.3.9: only Channel(R) 0xFFFF requests implicit signaling. A supplied receive channel
+     * remains explicit even when its band or number matches Channel(T).
+     */
     public boolean isExtendedChannel()
     {
-        return hasDataBlock(0) &&
-            (getDataBlock(0).getMessage().getInt(BLOCK_0_DOWNLINK_CHANNEL_NUMBER) !=
-                getDataBlock(0).getMessage().getInt(BLOCK_1_UPLINK_CHANNEL_NUMBER));
+        return hasDataBlock(0) && hasDataBlock(1) &&
+            P25FrequencyBandValidator.hasChannel(
+                getDataBlock(1).getMessage().getInt(BLOCK_1_UPLINK_FREQUENCY_BAND),
+                getDataBlock(1).getMessage().getInt(BLOCK_1_UPLINK_CHANNEL_NUMBER));
     }
 
     public APCO25Channel getChannel()
@@ -162,7 +168,7 @@ public class AMBTCUnitToUnitVoiceServiceChannelGrantUpdate extends AMBTCMessage 
             {
                 UnconfirmedDataBlock block0 = getDataBlock(0);
 
-                if(isExtendedChannel() && hasDataBlock(1))
+                if(isExtendedChannel())
                 {
                     UnconfirmedDataBlock block1 = getDataBlock(1);
 
