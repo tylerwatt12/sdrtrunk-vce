@@ -77,6 +77,7 @@ const contracts = [
   ["Streaming delivery metrics", "streaming.test.js", "stats-web/assets/features/streaming.js"],
   ["support report", "support-report.test.js", "stats-web/assets/app.js"],
   ["tuner idle markers", "tuner-idle-markers.test.js", "stats-web/assets/app.js"],
+  ["tuner recovery status", "tuner-recovery-status.test.js", "stats-web/assets/app.js"],
   ["spectrum display preferences", "spectrum-display-preferences.test.js", "stats-web/assets/core/spectrum-display-preferences.js"],
   ["spectrum automatic range", "spectrum-auto-range.test.js", "stats-web/assets/app.js"],
   ["spectrum FFT smoothing", "spectrum-smoothing.test.js", "stats-web/assets/features/spectrum-smoothing.js"],

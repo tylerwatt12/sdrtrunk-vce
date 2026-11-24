@@ -107,6 +107,26 @@ async function openEditor(page, processingState = 'RUNNING', mode = 'edit') {
     state.pending.shift()(status, code) };
 }
 
+test('reconnecting channel shows its pending state and Stop cancels recovery', async ({ page }, testInfo) => {
+  const app = await openEditor(page, 'RECOVERING');
+  const { state, dialog } = app;
+  await expect(dialog.locator('.channel-editor-hero .ui-pill-warning')).toHaveText('Reconnecting');
+  const stop = dialog.getByRole('button', { name: 'Stop', exact: true });
+  await expect(stop).toBeEnabled();
+  await expect(dialog.getByRole('button', { name: 'Start', exact: true })).toHaveCount(0);
+  await expect(page.locator(`tr[data-id="${state.channel.configuration_id}"] .ui-status-warning`))
+    .toHaveText('Reconnecting');
+  await page.screenshot({ path: testInfo.outputPath('reconnecting-channel-stop.png'),
+    fullPage: true, animations: 'disabled' });
+  await stop.click();
+  await expect.poll(() => state.pending.length).toBe(1);
+  expect(state.writes.at(-1).body).toEqual({ revision: 4, action: 'STOP',
+    configuration_ids: [state.channel.configuration_id] });
+  await app.release();
+  await expect(dialog.locator('.channel-editor-hero .ui-pill-neutral')).toHaveText('Stopped');
+  await expect(dialog.getByRole('button', { name: 'Start', exact: true })).toBeEnabled();
+});
+
 async function fillCreateDraft(dialog) {
   await dialog.getByRole('textbox', { name: 'Name', exact: true }).fill('County South Dispatch');
   await dialog.getByRole('textbox', { name: 'System', exact: true }).fill('County Radio');

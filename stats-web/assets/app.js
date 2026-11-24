@@ -25898,6 +25898,16 @@ function uiSegmentedControl(entries, initialValue, onChange) {
   return group;
 }
 
+function channelProcessingPresentation(row) {
+  if (row?.processing_state === 'RUNNING') {
+    return { label: 'Running', tone: 'success', icon: 'icon-play', canStop: true };
+  }
+  if (row?.processing_state === 'RECOVERING') {
+    return { label: 'Reconnecting', tone: 'warning', icon: 'icon-tuner', canStop: true };
+  }
+  return { label: 'Stopped', tone: 'neutral', icon: 'icon-stop', canStop: false };
+}
+
 function channelSummaryCards(catalog, editable) {
   const channels = catalog.channels || [];
   const cards = [
@@ -26075,9 +26085,10 @@ function channelAdminColumns(selected, state, selectionChanged, renderSelectionH
     }, sortValue: (row) => row.name || '' },
     { id: 'frequency', label: 'Frequency', fullLabel: 'Frequency', render: channelAdminFrequency,
       className: 'channel-frequency-cell', sortValue: (row) => channelAdminDisplayFrequency(row).value || 0 },
-    { id: 'status', label: 'State', render: (row) => uiStatus(
-      row.processing_state === 'RUNNING' ? 'Running' : 'Stopped',
-      row.processing_state === 'RUNNING' ? 'success' : 'neutral') },
+    { id: 'status', label: 'State', render: (row) => {
+      const state = channelProcessingPresentation(row);
+      return uiStatus(state.label, state.tone);
+    } },
     { id: 'auto-start', label: 'Auto start', fullLabel: 'Auto start', className: 'numeric channel-startup-order', render: (row) => {
       const controls = node('div', 'channel-order-controls');
       const restoreControls = () => {
@@ -26302,9 +26313,11 @@ function radioDirectorySiteRow(row, conventional = false, quality = null, now = 
   if (context && context !== String(row.name || '').trim())
     identity.append(node('span', 'ui-muted ui-label', context));
   const running = row.processing_state === 'RUNNING';
+  const recovering = row.processing_state === 'RECOVERING';
+  const processing = channelProcessingPresentation(row);
   const stopped = row.processing_state && !running;
   const operating = node('div', 'ui-muted ui-label radio-directory-row-context');
-  if (!conventional) operating.append(node('span', '', running ? 'Running' : stopped ? 'Stopped' : 'Status unavailable'));
+  if (!conventional) operating.append(node('span', '', row.processing_state ? processing.label : 'Status unavailable'));
   const remote = row.remote_origin?.remote === true || quality?.remote_origin?.remote === true;
   if (remote) {
     const origin = node('span', 'radio-directory-origin');
@@ -26325,8 +26338,7 @@ function radioDirectorySiteRow(row, conventional = false, quality = null, now = 
   frequencyReading.classList.add('radio-directory-frequency');
   site.append(identity, frequencyReading);
   if (conventional) {
-    const status = radioDirectoryField(uiStatus(running ? 'Running' : 'Stopped',
-      running ? 'success' : 'neutral'), 'status');
+    const status = radioDirectoryField(uiStatus(processing.label, processing.tone), 'status');
     status.classList.add('radio-directory-live-state');
     site.append(status);
     return site;
@@ -26340,9 +26352,11 @@ function radioDirectorySiteRow(row, conventional = false, quality = null, now = 
   signalReading.append(node('small', 'ui-muted radio-directory-average', Number.isFinite(average) ?
     `30s avg ${average.toFixed(1)}` : remote ? 'Remote site' : 'No samples'));
   const decode = fresh ? optionalNumber(quality?.decode_health_pct) : null;
-  const state = stopped ? { label: 'Stopped', className: 'offline' } : !fresh ?
+  const state = recovering ? { label: 'Reconnecting', className: 'recovering' } :
+    stopped ? { label: 'Stopped', className: 'offline' } : !fresh ?
     { label: observed ? 'Out of date' : 'No samples', className: 'offline' } : signalChannelState({ ...quality, remote_origin: { remote } }, now);
-  const tone = state.className === 'healthy' ? 'success' : state.className === 'degraded' ? 'warning' :
+  const tone = state.className === 'healthy' ? 'success' :
+    ['degraded', 'recovering'].includes(state.className) ? 'warning' :
     state.className === 'poor' ? 'danger' : 'neutral';
   const decodeReading = radioDirectoryReading('Decode', 'decode', percentNumber(decode));
   const inline = node('div', 'radio-directory-decode-value');
@@ -27492,7 +27506,9 @@ function channelSquelchTuner(profile, channel, entry, advancedFields) {
   headingCopy.append(node('h4', '', 'Squelch tuning'), node('p', 'muted',
     profile.id === 'am' ? 'Higher quality means the AM carrier is more stable.' :
       'Higher quality means the FM audio contains less high-frequency noise.'));
-  const statePill = uiPill(entry?.processing_state === 'RUNNING' ? 'Connecting' : 'Channel stopped', 'neutral');
+  const recovering = entry?.processing_state === 'RECOVERING';
+  const statePill = uiPill(recovering ? 'Reconnecting' :
+    entry?.processing_state === 'RUNNING' ? 'Connecting' : 'Channel stopped', recovering ? 'warning' : 'neutral');
   heading.append(headingCopy, statePill);
 
   const qualityValue = node('strong', 'channel-squelch-quality-value', '—');
@@ -27570,7 +27586,8 @@ function channelSquelchTuner(profile, channel, entry, advancedFields) {
   const previewNote = node('p', 'channel-squelch-save-note',
     entry?.processing_state === 'RUNNING' ?
       'Adjustments preview live. Save & restart makes them permanent; closing restores the saved settings.' :
-      'Save the channel, then start it to see live feedback.');
+      recovering ? 'Live feedback is unavailable while the tuner reconnects.' :
+        'Save the channel, then start it to see live feedback.');
   let previewLeaseId = null;
   let previewTimer = null;
   let previewHeartbeat = null;
@@ -28040,9 +28057,10 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
       identity.append(systemName);
       const learnedSystemNames = [];
       hero.append(iconGlyph('icon-conventional'), identity);
-      if (editing) hero.append(uiPill(entry.processing_state === 'RUNNING' ? 'Running' : 'Stopped',
-        entry.processing_state === 'RUNNING' ? 'success' : 'neutral',
-        entry.processing_state === 'RUNNING' ? 'icon-play' : 'icon-stop'));
+      if (editing) {
+        const state = channelProcessingPresentation(entry);
+        hero.append(uiPill(state.label, state.tone, state.icon));
+      }
       form.append(hero);
       if (editing && entry.processing_state === 'RUNNING') {
         const notice = node('div', 'channel-restart-notice ui-notice ui-notice-warning');
@@ -28230,8 +28248,9 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
         (editing ? 'Save changes' : 'Create channel'), editing ? 'icon-edit' : 'icon-plus', () => {},
         'ui-button ui-button-primary');
       save.type = 'submit';
-      const startStop = editing ? uiActionButton(entry.processing_state === 'RUNNING' ? 'Stop' : 'Start',
-        entry.processing_state === 'RUNNING' ? 'icon-stop' : 'icon-play', async () => {
+      const canStop = channelProcessingPresentation(entry).canStop;
+      const startStop = editing ? uiActionButton(canStop ? 'Stop' : 'Start',
+        canStop ? 'icon-stop' : 'icon-play', async () => {
           if (modal.isDirty() || startStop.disabled || modal.state.isBusy()) return;
           const disabled = [...form.elements].filter(control => typeof control.disabled === 'boolean')
             .map(control => [control, control.disabled]);
@@ -28240,7 +28259,7 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
           form.setAttribute('aria-busy', 'true');
           errors.replaceChildren();
           try {
-            const action = entry.processing_state === 'RUNNING' ? 'STOP' : 'START';
+            const action = channelProcessingPresentation(entry).canStop ? 'STOP' : 'START';
             await requestChannelAction(requestJson, { revision, action, configurationIds: [configurationId] });
             entry = await requestJson(`/api/v1/admin/channels/${encodeURIComponent(configurationId)}`,
               { csrf: false });
@@ -32549,12 +32568,20 @@ function tunerOperatorState(tuner) {
 }
 
 function tunerOperatorStateLabel(tuner) {
+  const state = tunerOperatorState(tuner);
   const transition = String(tuner?.transition || '').toLowerCase();
   const transitions = {
     disabling: 'Stopping', starting_setup: 'Starting', going_live: 'Going live', restoring: 'Restarting channels'
   };
+  if (state !== 'disabled') {
+    const status = String(tuner?.status || '').toLowerCase();
+    if (status === 'error') return { label: 'Tuner error', tone: 'danger', unavailable: true };
+    if (status === 'removed') return { label: 'Disconnected', tone: 'warning', unavailable: true };
+    if (status === 'unsupported' || (tuner?.available === false && !transitions[transition])) {
+      return { label: 'Unavailable', tone: 'warning', unavailable: true };
+    }
+  }
   if (transitions[transition]) return { label: transitions[transition], tone: 'warning' };
-  const state = tunerOperatorState(tuner);
   if (state === 'setup') return { label: 'Setup', tone: 'warning' };
   if (state === 'live') return { label: 'Live', tone: 'success' };
   return { label: 'Disabled', tone: 'neutral' };
@@ -33689,7 +33716,7 @@ async function renderTuners(options = {}) {
     }
     title.append(uiIconTile(String(tuner.tuner_type).toLowerCase() === 'recording' ?
       'icon-recording' : 'icon-tuner'), identity);
-    if (transitioning) title.append(uiPill(status.label, status.tone));
+    if (transitioning || status.unavailable) title.append(uiPill(status.label, status.tone));
     const mode = node('div', 'tuners-mode ui-segmented');
     markGuide(mode, 'modes');
     mode.setAttribute('role', 'group');
@@ -33708,7 +33735,8 @@ async function renderTuners(options = {}) {
       const unavailable = transitioning || liveTune.busy || settingSaves > 0 || (state === 'disabled' && next === 'live');
       button.setAttribute('aria-disabled', String(unavailable));
       button.dataset.uiHint = unavailable ? (transitioning ? 'Wait for the tuner to finish changing state' :
-        liveTune.busy || settingSaves > 0 ? 'Wait for tuner adjustments to finish' : 'Start Setup first') : next === 'live' ? 'Available to channels' :
+        liveTune.busy || settingSaves > 0 ? 'Wait for tuner adjustments to finish' : 'Start Setup first') : next === 'live' ?
+        (status.unavailable ? 'Allow channels when the tuner is available' : 'Available to channels') :
         next === 'setup' ? 'Keep tuner on for adjustments; active channels stop' :
           'Stop channels and turn off tuner hardware';
       button.addEventListener('click', () => {
@@ -33916,6 +33944,11 @@ async function renderTuners(options = {}) {
     if (!isCurrent()) return;
     spectrum = tunerSpectrumPanel(snapPresetDocument, {
       managedSelection: true,
+      emptyState: () => {
+        const status = tunerOperatorStateLabel(selectedTuner());
+        return status.unavailable ? { status: status.label, message: status.label === 'Disconnected' ?
+          'Waiting for the tuner to reconnect' : 'Tuner is unavailable' } : null;
+      },
       inlineDisplayOptions: true,
       basicOperator: true,
       frequencyCursor: true,
@@ -35880,8 +35913,8 @@ async function renderAdminTunerAllocation(renderContext = captureRenderContext()
           choice.dataset.configurationId = String(channel.configuration_id);
           choice.dataset.allocationChannelId = String(channel.configuration_id);
           const frequencies = channelAdminFrequencyList(channel.frequencies_hz);
-          const running = channel.processing_state === 'RUNNING';
-          choice.setAttribute('aria-label', `Inspect ${channel.name || 'Unnamed channel'}${frequencies ? ` · ${frequencies} MHz` : ''} · ${channelProtocolGroup(channel).label} · ${running ? 'Running' : 'Stopped'}`);
+          const state = channelProcessingPresentation(channel);
+          choice.setAttribute('aria-label', `Inspect ${channel.name || 'Unnamed channel'}${frequencies ? ` · ${frequencies} MHz` : ''} · ${channelProtocolGroup(channel).label} · ${state.label}`);
           choice.addEventListener('click', () => selectChannel(channel));
           const label = node('span', 'ui-toggle-copy tuner-allocation-channel-label');
           label.append(node('strong', '', channel.name || 'Unnamed channel'));
@@ -35894,7 +35927,7 @@ async function renderAdminTunerAllocation(renderContext = captureRenderContext()
           const trailing = node('span', 'ui-action-row tuner-allocation-channel-trailing');
           const chevron = node('span', 'ui-record-card-icon');
           chevron.append(iconGlyph('icon-chevron-right'));
-          trailing.append(uiStatus(running ? 'Running' : 'Stopped', running ? 'success' : 'neutral'), chevron);
+          trailing.append(uiStatus(state.label, state.tone), chevron);
           choice.append(label, node('span', 'ui-label muted tuner-allocation-channel-protocol', channelProtocolGroup(channel).label), trailing);
           list.append(choice);
         }
@@ -35967,7 +36000,8 @@ async function renderAdminTunerAllocation(renderContext = captureRenderContext()
     channelDetails.replaceChildren(node('span', 'ui-field-detail',
       [channelProtocolGroup(lastSavedChannel).label, context, frequencies ? `${frequencies} MHz` : '']
         .filter(Boolean).join(' · ')));
-    channelDetails.append(uiPill(!saved ? 'Removed' : saved.processing_state === 'RUNNING' ? 'Running' : 'Stopped'));
+    const state = saved ? channelProcessingPresentation(saved) : { label: 'Removed', tone: 'neutral' };
+    channelDetails.append(uiPill(state.label, state.tone));
     channelSignature = signature;
   };
   drawChannelContext();

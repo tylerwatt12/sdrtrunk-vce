@@ -51,6 +51,7 @@ function checkMainDirectoryQuality(source, functionBinding) {
     DECODE_DEGRADED_MINIMUM_PERCENT: 75
   });
   for (const [name, parameters] of Object.entries({ percentNumber: 'value', elapsedLabel: 'timestamp, now = Date.now()',
+    channelProcessingPresentation: 'row',
     signalChannelState: 'channel, now = Date.now()', radioDirectoryField: 'element, field',
     radioDirectoryReading: "label, field, value, unit = ''", radioDirectorySiteRow: 'row, conventional = false, quality = null, now = Date.now()',
     radioDirectoryLiveLink: 'children', radioDirectoryQualityOnly: 'currentQuality' })) {
@@ -68,6 +69,13 @@ function checkMainDirectoryQuality(source, functionBinding) {
   assert.match(result.querySelector('.radio-directory-frequency').textContent, /851\.01250 MHz/);
   assert.match(result.textContent, /-48\.2 dBFS.*30s avg -49\.1.*99\.3%.*Healthy/);
   assert.equal(result.querySelector('meter').attributes.value, '99.3');
+  result = render({ ...row, processing_state: 'RECOVERING' });
+  assert.match(result.textContent, /Reconnecting/);
+  assert.doesNotMatch(result.textContent, /Running|Healthy|99\.3%|-48\.2/,
+    'Interrupted channels must not show the previous samples as active reception.');
+  assert.equal(result.querySelector('meter').hidden, true);
+  assert.equal(result.querySelector('.radio-directory-quality-state').className,
+    'ui-pill-warning radio-directory-quality-state');
   for (const offset of [-86_400_000, 86_400_000]) {
     context.Date.now = () => now + offset;
     result = context.radioDirectorySiteRow(row, false, quality, now);

@@ -885,6 +885,47 @@ test('tuner without an editable center frequency keeps a read-only value without
     (element) => element.scrollWidth <= element.clientWidth)).toBe(true);
 });
 
+test('disconnected and failed tuners show their condition while preserving the desired Live mode', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  const state = { currentTuner: operatorTuner({ status: 'removed', available: false, channel_count: 0,
+    frequency_hz: null, sample_rate_hz: null, settings: [] }) };
+  await mockTuners(page, [], state);
+  await page.goto('/app.html?view=tuners');
+
+  const receiver = page.locator('.tuners-list-item');
+  const heading = page.locator('.tuners-detail-heading');
+  const mode = page.getByRole('group', { name: 'Tuner mode' });
+  await expect(receiver.locator('.ui-pill-warning')).toHaveText('Disconnected');
+  await expect(heading.locator('.ui-pill-warning')).toHaveText('Disconnected');
+  await expect(mode.getByRole('button', { name: 'Live' })).toHaveAttribute('aria-pressed', 'true');
+  await expect(mode.getByRole('button', { name: 'Live' }))
+    .toHaveAttribute('data-ui-hint', 'Allow channels when the tuner is available');
+  await expect(mode.getByRole('button', { name: 'Disabled' })).toHaveAttribute('aria-disabled', 'false');
+  await expect(receiver.locator('.ui-pill-success')).toHaveCount(0);
+  await expect(page.locator('.tuners-spectrum')).toContainText('Waiting for the tuner to reconnect');
+  await page.screenshot({ path: testInfo.outputPath('disconnected-tuner.png'), fullPage: true, animations: 'disabled' });
+
+  state.currentTuner.status = 'error';
+  await expect(receiver.locator('.ui-pill-danger')).toHaveText('Tuner error', { timeout: 8_000 });
+  await expect(heading.locator('.ui-pill-danger')).toHaveText('Tuner error');
+  await expect(page.locator('.tuners-spectrum')).toContainText('Tuner is unavailable');
+  await page.setViewportSize({ width: 390, height: 900 });
+  await page.locator('html').evaluate((element) => { element.dataset.theme = 'dark'; });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth))
+    .toBeLessThanOrEqual(1);
+  await page.screenshot({ path: testInfo.outputPath('failed-tuner-dark-phone.png'), fullPage: true, animations: 'disabled' });
+
+  state.currentTuner.operator_state = 'disabled';
+  await expect(receiver.locator('.ui-pill-neutral')).toHaveText('Disabled', { timeout: 8_000 });
+  await expect(heading.locator('.ui-pill')).toHaveCount(0);
+  await expect(mode.getByRole('button', { name: 'Disabled' })).toHaveAttribute('aria-pressed', 'true');
+
+  state.currentTuner = operatorTuner();
+  await expect(receiver.locator('.ui-pill-success')).toHaveText('Live', { timeout: 8_000 });
+  await expect(heading.locator('.ui-pill')).toHaveCount(0);
+  await expect(mode.getByRole('button', { name: 'Live' })).toHaveAttribute('aria-pressed', 'true');
+});
+
 test('Setup unlocks setup-only controls and remains unavailable to channels', async ({ page }) => {
   const current = operatorTuner({ operator_state: 'setup', channel_count: 0, spectrum_available: true,
     spectrum_target_id: 'diagnostic-a' });
