@@ -37,8 +37,9 @@ public class AMBTCUnitRegistrationResponse extends AMBTCMessage
     private static final IntField BLOCK_0_WACN = IntField.length4(0);
     private static final IntField BLOCK_0_SYSTEM = IntField.length12(4);
     private static final IntField BLOCK_0_RADIO_ID = IntField.length24(16);
-    private static final IntField BLOCK_0_SOURCE_ADDRESS = IntField.length24(40);
-    private static final IntField BLOCK_0_RESPONSE = IntField.length2(70);
+    private static final IntField BLOCK_0_RESPONSE = IntField.length2(46);
+    private static final IntField LEGACY_BLOCK_0_SOURCE_ADDRESS = IntField.length24(40);
+    private static final IntField LEGACY_BLOCK_0_RESPONSE = IntField.length2(70);
 
     private Response mResponse;
     private APCO25FullyQualifiedRadioIdentifier mRegistrationAddress;
@@ -47,6 +48,11 @@ public class AMBTCUnitRegistrationResponse extends AMBTCMessage
     public AMBTCUnitRegistrationResponse(PDUSequence PDUSequence, int nac, long timestamp)
     {
         super(PDUSequence, nac, timestamp);
+        int blocks = getHeader().getBlocksToFollowCount();
+        if(blocks != 1 && blocks != 2)
+        {
+            setValid(false);
+        }
     }
 
     @Override
@@ -64,9 +70,11 @@ public class AMBTCUnitRegistrationResponse extends AMBTCMessage
 
     public Response getResponse()
     {
-        if(mResponse == null && hasDataBlock(0))
+        if(mResponse == null && hasSupportedLayout())
         {
-            mResponse = Response.fromValue(getDataBlock(0).getMessage().getInt(BLOCK_0_RESPONSE));
+            IntField response = getHeader().getBlocksToFollowCount() == 1 ?
+                BLOCK_0_RESPONSE : LEGACY_BLOCK_0_RESPONSE;
+            mResponse = Response.fromValue(getDataBlock(0).getMessage().getInt(response));
         }
 
         return mResponse;
@@ -74,9 +82,11 @@ public class AMBTCUnitRegistrationResponse extends AMBTCMessage
 
     public Identifier getRegistrationAddress()
     {
-        if(mRegistrationAddress == null && hasDataBlock(0))
+        if(mRegistrationAddress == null && hasSupportedLayout())
         {
-            int localAddress = getDataBlock(0).getMessage().getInt(BLOCK_0_SOURCE_ADDRESS);
+            int localAddress = getHeader().getBlocksToFollowCount() == 1 ?
+                getHeader().getMessage().getInt(HEADER_ADDRESS) :
+                getDataBlock(0).getMessage().getInt(LEGACY_BLOCK_0_SOURCE_ADDRESS);
             int wacn = getHeader().getMessage().getInt(HEADER_WACN);
             wacn <<= 4;
             wacn += getDataBlock(0).getMessage().getInt(BLOCK_0_WACN);
@@ -88,6 +98,18 @@ public class AMBTCUnitRegistrationResponse extends AMBTCMessage
         }
 
         return mRegistrationAddress;
+    }
+
+    /**
+     * TIA-102.AABC-B and AABC-E section 6.2.21.2, Figure 6.2.21-2 specify two and one data blocks respectively.
+     * Use the advertised count, never a partial reception or address plausibility, to select the field layout.
+     * Packet integrity remains the responsibility of PDUMessageFactory admission.
+     */
+    private boolean hasSupportedLayout()
+    {
+        int blocks = getHeader().getBlocksToFollowCount();
+        return (blocks == 1 || blocks == 2) && getPDUSequence().isComplete() && hasDataBlock(0) &&
+            (blocks == 1 || hasDataBlock(1));
     }
 
     @Override

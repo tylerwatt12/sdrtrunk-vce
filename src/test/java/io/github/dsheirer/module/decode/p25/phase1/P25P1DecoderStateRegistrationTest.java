@@ -214,6 +214,7 @@ class P25P1DecoderStateRegistrationTest
     {
         CorrectedBinaryMessage bits = new CorrectedBinaryMessage(96);
         bits.set(2); //Outbound
+        bits.setInt(1, IntField.range(49, 55));
         bits.setInt(Opcode.OSP_UNIT_REGISTRATION_RESPONSE.getCode(), IntField.length6(58));
         return new AMBTCHeader(bits, true);
     }
