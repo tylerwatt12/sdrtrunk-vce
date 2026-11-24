@@ -30,6 +30,9 @@ import io.github.dsheirer.controller.channel.IChannelEventListener;
 import io.github.dsheirer.controller.channel.IChannelEventProvider;
 import io.github.dsheirer.controller.channel.event.ChannelStartProcessingRequest;
 import io.github.dsheirer.controller.channel.event.PostChannelModuleEventRequest;
+import io.github.dsheirer.health.CallOutcome;
+import io.github.dsheirer.health.CallOutcomes;
+import io.github.dsheirer.health.HealthRegistry;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.Role;
@@ -132,6 +135,7 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
     private boolean mIgnoreEncryptedCalls;
     private final BooleanSupplier mVoiceDecryptionModuleLoaded;
     private final boolean mTrunkingEnabled;
+    private final CallOutcomes mCallOutcomes;
     private ChannelActivityModel mChannelActivityModel;
     private volatile boolean mTrunkedActivityObserved;
     private volatile DMRNetworkConfigurationSnapshot mLatestNetworkConfigurationSnapshot;
@@ -168,6 +172,8 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
         mTrunkingEnabled = parentChannel.getDecodeConfiguration() instanceof DecodeConfigDMR config &&
             config.isTrunked();
         mTrunkedActivityObserved = mTrunkingEnabled;
+        //The calls a trunked site announces are counted for node health reports.
+        mCallOutcomes = mTrunkingEnabled ? new CallOutcomes(HealthRegistry.getInstance().calls(parentChannel)) : null;
 
         if(parentChannel.getDecodeConfiguration() instanceof DecodeConfigDMR config)
         {
@@ -1086,6 +1092,7 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
 
         mTrunkedActivityObserved = true;
         ChannelStartProcessingRequest trafficStartRequest = null;
+        String trafficStartKey = null;
         mLock.lock();
 
         try
@@ -1096,6 +1103,9 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
                     channel.getTimeslot(), identifierCollection, decodeEventType, timestamp,
                     mNativeRadioSystemKey);
             TrunkedCallStartEvent callStart = callObservation.callStart();
+            boolean newCall = callStart != null;
+            String callKey = CallOutcomes.key(channel.getDownlinkFrequency() > 0 ? channel.getDownlinkFrequency() :
+                channel.getChannelNumber(), channel.getTimeslot());
 
             if(callStart != null)
             {
@@ -1122,6 +1132,9 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
 
             if(allocated)
             {
+                //A traffic channel runs on the frequency (or it's the control channel's own): followed.
+                tallyCall(callKey, newCall, CallOutcome.RECORDED);
+
                 //Traffic children maintain their own event state.  The parent control frequency is also tracked as
                 //allocated, however, and can carry a call on its other timeslot.  Publish the repeated/current-RF grant
                 //directly so that call remains visible after the parent is promoted out of Conventional activity.
@@ -1194,6 +1207,7 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
                         event.setDetails(event.getDetails() + " - " + NO_FREQUENCY);
                     }
 
+                    tallyCall(callKey, newCall, CallOutcome.NO_FREQUENCY);
                     broadcast(event);
                     return;
                 }
@@ -1209,6 +1223,7 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
                         event.setDetails(event.getDetails() + " - " + DATA_CALL_IGNORED);
                     }
 
+                    tallyCall(callKey, newCall, CallOutcome.DATA);
                     broadcast(event);
                     return;
                 }
@@ -1224,6 +1239,7 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
                         event.setDetails(event.getDetails() + " - " + ENCRYPTED_CALL_IGNORED);
                     }
 
+                    tallyCall(callKey, newCall, CallOutcome.ENCRYPTED);
                     broadcast(event);
                     return;
                 }
@@ -1238,6 +1254,10 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
                         {
                             afterTrafficAllocationClaim.run();
                         }
+
+                        //Counted as recorded before the start request: one no tuner can take is rejected while it's
+                        //posted, and the rejection moves the call to noSource.
+                        tallyCall(callKey, newCall, CallOutcome.RECORDED);
 
                         if(getCurrentControlFrequency() == frequency)
                         {
@@ -1264,6 +1284,7 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
                                     callStart.timeslot()) : systemKeyEvent(radioSystemKey, 0L, null));
                             request.addPreloadDataContent(new DMRChannelGrantPreloadData(event));
                             trafficStartRequest = request;
+                            trafficStartKey = callKey;
                         }
                     }
                     else
@@ -1271,6 +1292,7 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
                         //A concurrent rest-channel handoff or grant claimed this frequency after the initial lookup.
                         //Return the untouched pooled channel instead of overwriting that allocation.
                         mAvailableTrafficChannels.offer(trafficChannel);
+                        tallyCall(callKey, newCall, CallOutcome.RECORDED);
                     }
                 }
                 else
@@ -1283,6 +1305,8 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
                     {
                         event.setDetails(event.getDetails() + " - " + MAX_TRAFFIC_CHANNELS_EXCEEDED);
                     }
+
+                    tallyCall(callKey, newCall, CallOutcome.NO_RECORDER);
                 }
 
                 broadcast(event);
@@ -1317,12 +1341,45 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
                 catch(RuntimeException exception)
                 {
                     mLog.error("Error offering DMR traffic-channel start request", exception);
+                    tallyRejected(trafficStartKey);
                     processTrafficChannelTeardown(trafficStartRequest.getChannel());
                 }
             }
             else
             {
+                tallyRejected(trafficStartKey);
                 processTrafficChannelTeardown(trafficStartRequest.getChannel());
+            }
+        }
+    }
+
+    /**
+     * Counts a call by what has become of it so far, for node health reports (see CallOutcomes).
+     */
+    private void tallyCall(String callKey, boolean newCall, CallOutcome outcome)
+    {
+        if(mCallOutcomes != null)
+        {
+            mCallOutcomes.tally(callKey, newCall, outcome);
+        }
+    }
+
+    /**
+     * No tuner could take the traffic channel started for a call: counted as noSource, not recorded.
+     */
+    private void tallyRejected(String callKey)
+    {
+        if(mCallOutcomes != null && callKey != null)
+        {
+            mLock.lock();
+
+            try
+            {
+                mCallOutcomes.rejected(callKey);
+            }
+            finally
+            {
+                mLock.unlock();
             }
         }
     }
@@ -1657,6 +1714,9 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
 
             try
             {
+                tallyRejected(CallOutcomes.key(frequency, 1));
+                tallyRejected(CallOutcomes.key(frequency, 2));
+
                 IDecodeEvent event = mCallEventsTS1.get(frequency);
 
                 if(event instanceof DecodeEvent decodeEvent1)

@@ -20,6 +20,8 @@
 package io.github.dsheirer.module.decode.event;
 
 import io.github.dsheirer.channel.IChannelDescriptor;
+import io.github.dsheirer.health.CallOutcome;
+import io.github.dsheirer.health.CallTally;
 import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierCollection;
@@ -42,6 +44,7 @@ public abstract class ChannelEventTracker<T extends DecodeEvent>
     private boolean mStarted = false;
     private boolean mComplete = false;
     private final T mEvent;
+    private CallOutcome mCallOutcome;
 
     /**
      * Constructs an instance
@@ -371,5 +374,29 @@ public abstract class ChannelEventTracker<T extends DecodeEvent>
         {
             getEvent().setChannelDescriptor(channelDescriptor);
         }
+    }
+
+    /**
+     * Counts this call in a control channel's call totals (node health reports), as it stands now: the first time as
+     * a call started, and each time after as a change of outcome, so the call is counted once, by what finally became
+     * of it.
+     * @param tally of the control channel, or null to do nothing
+     * @param outcome of the call now
+     */
+    public void tally(CallTally tally, CallOutcome outcome)
+    {
+        if(tally != null && outcome != null && outcome != mCallOutcome)
+        {
+            tally.count(mCallOutcome, outcome);
+            mCallOutcome = outcome;
+        }
+    }
+
+    /**
+     * What became of this call so far, for node health reports, or null when it isn't counted.
+     */
+    public CallOutcome getCallOutcome()
+    {
+        return mCallOutcome;
     }
 }
