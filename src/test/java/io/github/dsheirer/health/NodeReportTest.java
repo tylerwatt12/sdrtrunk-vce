@@ -276,6 +276,47 @@ public class NodeReportTest
         assertEquals(61.9, cc.get("lockedS").getAsDouble(), 0.1, "to 2 s after its last good message");
     }
 
+    /**
+     * A P25 site channel that ran and decoded control messages, with its name and what it heard of its identity.
+     */
+    private static ChannelHealth site(int id, String name, int... wacnSysIdRfssSiteNac)
+    {
+        ChannelHealth site = new ChannelHealth(new ChannelHealth.ChannelInfo(id, ChannelHealthTest.configurationId(id),
+            1, "Channel " + id, "System", name, "List", "p25", 4800));
+        String[] fields = {"wacn", "sysId", "rfss", "site", "nac"};
+
+        for(int i = 0; i < wacnSysIdRfssSiteNac.length; i++)
+        {
+            site.identity(fields[i], wacnSysIdRfssSiteNac[i]);
+        }
+
+        site.started(SINCE);
+        site.setCallsCounted();
+        site.control("p25", true, SINCE + 1000);
+        return site;
+    }
+
+    private static List<String> sites(ChannelHealth... channels)
+    {
+        return NodeReport.sites(null, snapshot(SINCE + 60_000, channels), info -> info.channelId() != 999);
+    }
+
+    @Test
+    void a_node_s_sites_are_told_apart_by_identity_and_a_site_on_two_receivers_is_one()
+    {
+        assertEquals(List.of("Alden", "Ellendale"),
+            sites(site(1, "Alden", 781824, 939, 1, 5, 928), site(2, "Ellendale", 781824, 939, 1, 7, 928)));
+        assertEquals(List.of("Alden"), sites(site(1, "Alden", 781824, 939, 1, 5, 928),
+            site(2, "Alden north antenna", 781824, 939, 1, 5, 928)), "two receivers of one site");
+        ChannelHealth partial = site(2, "Alden north antenna");
+        partial.identity("nac", 928);
+        assertEquals(List.of("Alden"), sites(site(1, "Alden", 781824, 939, 1, 5, 928), partial),
+            "one receiver hasn't heard the whole identity yet");
+        assertEquals(List.of("Alden", "Ellendale"), sites(site(1, "Alden"), site(2, "Ellendale")),
+            "no identity yet: by name");
+        assertEquals(List.of("Alden"), sites(site(1, "Alden"), site(999, "Ellendale")), "only the node's");
+    }
+
     @Test
     void reports_from_the_scheduler_follow_on()
     {

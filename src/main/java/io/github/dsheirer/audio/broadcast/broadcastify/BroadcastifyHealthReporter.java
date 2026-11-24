@@ -69,6 +69,9 @@ public class BroadcastifyHealthReporter
 {
     private static final Logger LOGGER = LoggerFactory.getLogger(BroadcastifyHealthReporter.class);
     private static final long CHECK_INTERVAL_MS = 10_000;
+    /** How often, and over how long, the node's sites are looked at for the several-sites warning. */
+    private static final long SITES_CHECK_MS = 60_000;
+    private static final String APPLY_URL = "https://www.broadcastify.com/apply/calls";
 
     /** The nodes reporting, by health report address and system ID. */
     private static final Map<String,BroadcastifyHealthReporter> NODES = new HashMap<>();
@@ -87,6 +90,9 @@ public class BroadcastifyHealthReporter
     private volatile NodeReporter mReporter;
     private ScheduledFuture<?> mFuture;
     private boolean mToldKeys;
+    private volatile String mWarning;
+    private List<String> mWarnedSites;
+    private long mSitesCheckedAt;
     private boolean mToldNotServing;
     private boolean mToldUnreachable;
     private String mLastMessage;
@@ -199,6 +205,14 @@ public class BroadcastifyHealthReporter
     }
 
     /**
+     * What the user should know about the node, or null: that its system ID uploads several sites.
+     */
+    public String getWarning()
+    {
+        return mWarning;
+    }
+
+    /**
      * The node's schedule.
      */
     NodeReporter getSchedule()
@@ -292,13 +306,23 @@ public class BroadcastifyHealthReporter
         {
             NodeReporter reporter = mReporter;
             List<Destination> destinations = destinations();
+            HealthSnapshot now = history.latest();
 
-            if(reporter.isStopped() || destinations.isEmpty())
+            if(destinations.isEmpty() || now == null)
             {
                 return;
             }
 
-            HealthSnapshot now = history.latest();
+            if(now.timeMs() - mSitesCheckedAt >= SITES_CHECK_MS)
+            {
+                mSitesCheckedAt = now.timeMs();
+                checkSites(history, now);
+            }
+
+            if(reporter.isStopped())
+            {
+                return;
+            }
 
             if(!reporter.isDue(now))
             {
@@ -338,6 +362,37 @@ public class BroadcastifyHealthReporter
         {
             LOGGER.error("Error sending a Broadcastify Calls health report", t);
         }
+    }
+
+    /**
+     * Broadcastify registers each system ID to one site, and labels every call uploaded as it as coming from that
+     * site: one system ID uploading several sites labels the others' calls as the wrong site.  Warns of it, once each
+     * time the sites change, and has the warning shown with the destination.  Uploads carry on.
+     */
+    void checkSites(HealthHistory history, HealthSnapshot now)
+    {
+        HealthSnapshot base = history.atOrAfter(now.timeMs() - SITES_CHECK_MS);
+        List<String> sites = NodeReport.sites(base != now ? base : null, now, this::feeds);
+
+        if(sites.size() < 2)
+        {
+            mWarning = null;
+            mWarnedSites = null;
+            return;
+        }
+
+        String warning = "Broadcastify system " + mSystemId + " is uploading " + sites.size() + " sites: " +
+            String.join(", ", sites) + ". Broadcastify Calls needs a system ID for each site you upload, or calls " +
+            "from the other sites are labeled as the wrong site. Give each site its own Broadcastify system ID. If " +
+            "you need more system IDs, apply at " + APPLY_URL + " (you can use your existing API key).";
+
+        if(!sites.equals(mWarnedSites))
+        {
+            mWarnedSites = sites;
+            LOGGER.warn(warning);
+        }
+
+        mWarning = warning;
     }
 
     private void send(NodeReporter reporter, JsonObject report, HealthSnapshot now)

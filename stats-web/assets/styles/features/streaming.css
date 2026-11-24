@@ -76,11 +76,13 @@
   grid-template-columns: repeat(2, minmax(0, 1fr));
   padding: 0 var(--space-4);
 }
+.streaming-destination-warning,
 .streaming-destination-error {
   display: grid;
   gap: var(--space-1);
   margin: 0 var(--space-4);
 }
+.streaming-destination-warning[hidden],
 .streaming-destination-error[hidden] {
   display: none;
 }

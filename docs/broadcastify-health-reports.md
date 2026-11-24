@@ -17,6 +17,14 @@ takes one report per System ID.
 
 Each site is reported whole: all of its calls, not only those that stream to that destination.
 
+## One site per System ID
+
+Broadcastify registers each System ID to one site, and labels every call uploaded as it as coming from that site. When
+one System ID uploads calls from several sites, the calls from the other sites are labeled as the wrong site. VCE
+warns of this in its log and on the destination's card in **Streaming**, and keeps uploading. Give each site its own
+Broadcastify System ID; you can apply for more at <https://www.broadcastify.com/apply/calls> and use your existing API
+key.
+
 ## What a report contains
 
 Counts of what VCE heard, not scores:

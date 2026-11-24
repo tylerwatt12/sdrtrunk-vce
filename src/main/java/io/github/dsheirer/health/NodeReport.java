@@ -137,6 +137,83 @@ public class NodeReport
     }
 
     /**
+     * The sites a node's channels heard between two snapshots, one name each: a site heard by several receivers is
+     * one site.  Sites are told apart by the identity their control channels give (two whose identities agree on
+     * every field both have heard are the same site), or without one, by name.
+     * @param base snapshot to start at, or null for the start of the totals
+     * @param now snapshot to end at
+     * @param feeds which channels feed the node
+     * @return the sites' names, sorted
+     */
+    public static List<String> sites(HealthSnapshot base, HealthSnapshot now,
+                                     Predicate<ChannelHealth.ChannelInfo> feeds)
+    {
+        List<List<ChannelHealth.Totals>> sites = new ArrayList<>();
+
+        for(ChannelHealth.Totals a: now.channels())
+        {
+            ChannelHealth.Totals b = base != null ? base.channel(a.info().channelId()) : null;
+
+            if(!feeds.test(a.info()) || !a.isSite() || a.calls() == null ||
+                a.runningMs() - (b != null ? b.runningMs() : 0) <= 0)
+            {
+                continue;
+            }
+
+            List<ChannelHealth.Totals> same = null;
+
+            for(List<ChannelHealth.Totals> site: sites)
+            {
+                if(sameSite(site.getFirst(), a))
+                {
+                    same = site;
+                    break;
+                }
+            }
+
+            if(same != null)
+            {
+                same.add(a);
+            }
+            else
+            {
+                sites.add(new ArrayList<>(List.of(a)));
+            }
+        }
+
+        return sites.stream().map(site -> name(site.getFirst().info())).distinct().sorted().toList();
+    }
+
+    /**
+     * Whether two channels hear the same site: the same protocol, and identities that agree on every field both have
+     * heard, or without an identity, the same name.
+     */
+    private static boolean sameSite(ChannelHealth.Totals a, ChannelHealth.Totals b)
+    {
+        if(!a.protocol().equals(b.protocol()))
+        {
+            return false;
+        }
+
+        if(a.identity().isEmpty() || b.identity().isEmpty())
+        {
+            return name(a.info()).equals(name(b.info()));
+        }
+
+        for(Map.Entry<String,Integer> field: a.identity().entrySet())
+        {
+            Integer other = b.identity().get(field.getKey());
+
+            if(other != null && !other.equals(field.getValue()))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
      * A site heard by more than one of the node's channels (receivers) has an entry for each: each says which
      * receiver it is, by its channel's name.  A site heard once doesn't.
      */

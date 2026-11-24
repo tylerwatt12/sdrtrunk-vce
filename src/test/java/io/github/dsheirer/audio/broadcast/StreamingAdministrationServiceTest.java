@@ -351,10 +351,13 @@ class StreamingAdministrationServiceTest
             String site=service.save(null,"BROADCASTIFY_CALL_SITE",Map.of("name","Site calls"),null).configurationId();
             String icecast=service.save(null,"ICECAST_HTTP",Map.of("name","Icecast"),null).configurationId();
             String inactive=service.save(null,"BROADCASTIFY_CALL",Map.of("name","Inactive calls"),null).configurationId();
-            attachCounterFixture(manager,calls,7);
+            attachCounterFixture(manager,calls,7,SEVERAL_SITES);
             attachCounterFixture(manager,site,11);
             attachCounterFixture(manager,icecast,19);
 
+            assertEquals(SEVERAL_SITES,service.get(calls).status().warning(),"A sender's warning is shown with it");
+            assertNull(service.get(site).status().warning());
+            assertNull(service.get(inactive).status().warning(),"A missing sender has nothing to warn of");
             assertEquals(7,service.get(calls).status().duplicateRejected());
             assertEquals(11,service.get(site).status().duplicateRejected());
             assertNull(service.get(icecast).status().duplicateRejected(), "Other providers do not implement this outcome");
@@ -370,6 +373,7 @@ class StreamingAdministrationServiceTest
             var catalog=service.catalog().destinations().stream()
                 .collect(java.util.stream.Collectors.toMap(StreamingAdministrationService.Status::configurationId,item->item));
             assertEquals(7,catalog.get(calls).duplicateRejected());
+            assertEquals(SEVERAL_SITES,catalog.get(calls).warning());
             assertEquals(11,catalog.get(site).duplicateRejected());
             assertNull(catalog.get(icecast).duplicateRejected());
             assertNull(catalog.get(inactive).duplicateRejected());
@@ -382,6 +386,13 @@ class StreamingAdministrationServiceTest
 
     static void attachCounterFixture(ConfigurationManager manager, String id, int duplicates)
     {
+        attachCounterFixture(manager,id,duplicates,null);
+    }
+
+    static final String SEVERAL_SITES="Broadcastify system 42 is uploading 2 sites: Downtown, North.";
+
+    static void attachCounterFixture(ConfigurationManager manager, String id, int duplicates, String warning)
+    {
         ConfiguredBroadcast configured=manager.getBroadcastModel().getConfiguredBroadcasts().stream()
             .filter(item->item.getBroadcastConfiguration().getConfigurationId().equals(id)).findFirst().orElseThrow();
         configured.setAudioBroadcaster(new AbstractAudioBroadcaster<BroadcastConfiguration>(configured.getBroadcastConfiguration())
@@ -393,6 +404,7 @@ class StreamingAdministrationServiceTest
             @Override public void receive(AudioRecording recording) {}
             @Override public int getAudioQueueSize() { return 4; }
             @Override public int getDuplicateRejectedAudioCount() { return duplicates; }
+            @Override public String getWarning() { return warning; }
         });
     }
 

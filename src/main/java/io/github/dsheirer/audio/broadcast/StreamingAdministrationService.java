@@ -30,7 +30,8 @@ public final class StreamingAdministrationService
 
     public record Status(String configurationId, String name, String provider, String providerLabel, boolean enabled,
                          String state, String stateLabel, boolean attention, String lastError,
-                         Integer queued, Integer sent, Integer agedOff, Integer errors, Integer duplicateRejected) {}
+                         Integer queued, Integer sent, Integer agedOff, Integer errors, Integer duplicateRejected,
+                         String warning) {}
     public record Catalog(List<Status> destinations) {}
     public record Entry(String editRevision, StreamingConfigurationCodec.Definition destination, Status status,
                         References references) {}
@@ -263,7 +264,7 @@ public final class StreamingAdministrationService
             sender == null ? null : sender.getAudioErrorCount(), sender != null &&
                 (configuration.getBroadcastServerType() == BroadcastServerType.BROADCASTIFY_CALL ||
                     configuration.getBroadcastServerType() == BroadcastServerType.BROADCASTIFY_CALL_SITE) ?
-                sender.getDuplicateRejectedAudioCount() : null);
+                sender.getDuplicateRejectedAudioCount() : null, sender == null ? null : sender.getWarning());
     }
 
     private BroadcastConfiguration require(String id)

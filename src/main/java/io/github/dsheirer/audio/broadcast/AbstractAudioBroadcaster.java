@@ -159,6 +159,12 @@ public abstract class AbstractAudioBroadcaster<T extends BroadcastConfiguration>
         mStreamedAudioCount++;
     }
 
+    /** Something the user should know about this destination that isn't an error, or null. */
+    public String getWarning()
+    {
+        return null;
+    }
+
     /** Number of recordings the remote service rejected as duplicates during this sender's lifetime. */
     public int getDuplicateRejectedAudioCount()
     {

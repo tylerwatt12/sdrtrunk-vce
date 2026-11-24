@@ -514,4 +514,28 @@ public class BroadcastifyHealthReporterTest
         node.add(configuration(), aliases());
         assertFalse(node.getSchedule().isStopped(), "its settings may have changed");
     }
+
+    @Test
+    void a_system_id_uploading_several_sites_is_warned_of_and_uploads_carry_on()
+    {
+        BroadcastifyHealthReporter node = reporter(schedule(24));
+        HealthHistory history = history();
+        node.checkSites(history, history.latest());
+        assertNull(node.getWarning(), "one site");
+
+        node.add(countyCalls(), aliases());
+        node.checkSites(history, history.latest());
+        assertEquals("Broadcastify system 1234 is uploading 2 sites: Downtown, North. Broadcastify Calls needs a " +
+            "system ID for each site you upload, or calls from the other sites are labeled as the wrong site. Give " +
+            "each site its own Broadcastify system ID. If you need more system IDs, apply at " +
+            "https://www.broadcastify.com/apply/calls (you can use your existing API key).", node.getWarning());
+
+        node.check(history);
+        assertEquals(1, mReceived.size(), "still reported");
+        assertEquals(2, mReceived.getFirst().getAsJsonArray("sites").size());
+
+        node.remove(countyCalls());
+        node.checkSites(history, history.latest());
+        assertNull(node.getWarning(), "one site again");
+    }
 }

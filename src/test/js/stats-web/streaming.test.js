@@ -8,7 +8,7 @@ const { pathToFileURL } = require('node:url');
 async function main() {
   const root = path.resolve(__dirname, '../../../..');
   const modulePath = process.argv[2] || path.join(root, 'stats-web/assets/features/streaming.js');
-  const { streamingDeliveryMetrics } = await import(pathToFileURL(modulePath).href);
+  const { streamingDeliveryMetrics, streamingDestinationWarning } = await import(pathToFileURL(modulePath).href);
   const baseKeys = ['queued', 'sent', 'aged_off', 'errors'];
   for (const provider of ['BROADCASTIFY_CALL', 'BROADCASTIFY_CALL_SITE']) {
     for (const duplicate_rejected of [null, 0, 12345]) {
@@ -25,7 +25,15 @@ async function main() {
     assert.deepEqual(streamingDeliveryMetrics({ provider, duplicate_rejected: 12345 }).map(([key]) => key), baseKeys,
       `${provider || 'Unknown'} destinations retain the four applicable delivery metrics`);
   }
-  console.log('Streaming delivery metric contracts passed.');
+  const severalSites = 'Broadcastify system 6776 is uploading 3 sites: alden, dodgesteele, ellendale.';
+  assert.equal(streamingDestinationWarning({ provider: 'BROADCASTIFY_CALL', warning: ` ${severalSites} ` }),
+    severalSites, 'A destination card shows its warning');
+  for (const warning of [null, undefined, '', '   ', 42]) {
+    assert.equal(streamingDestinationWarning({ provider: 'BROADCASTIFY_CALL', warning }), '',
+      'A destination without a warning shows none');
+  }
+  assert.equal(streamingDestinationWarning(null), '');
+  console.log('Streaming delivery metric and warning contracts passed.');
 }
 
 main().catch(error => { console.error(error); process.exitCode = 1; });

@@ -13,6 +13,11 @@ export function streamingDeliveryMetrics(row) {
   ];
 }
 
+/** What a destination's card warns of (that its Broadcastify system ID uploads several sites), or ''. */
+export function streamingDestinationWarning(row) {
+  return typeof row?.warning === 'string' ? row.warning.trim() : '';
+}
+
 // Reuse map: data-workspace, ui-catalog-toolbar, ui-surface, ui-metric and ui-status
 // compose the destination cards; shared table, feedback, fields, toggles, select frames,
 // segmented tabs, selection bar and modal lifecycle compose the editor. Only feature
@@ -108,13 +113,15 @@ export function createStreamingWorkspace(deps) {
           const counters = metrics(streamingDeliveryMetrics(row).map(([key, label, icon]) => [label, row[key], cell(row, key),
             { icon, tone: key === 'errors' ? errorTone(row) : 'blue' }]), true);
           counters.classList.add('streaming-destination-metrics');
+          const warning = node('div', 'streaming-destination-warning ui-notice ui-notice-warning');
+          warning.append(cell(row, 'warning'));
           const error = node('div', 'streaming-destination-error ui-notice ui-notice-danger');
           error.append(node('strong', '', 'Last error'), cell(row, 'last_error'));
           const footer = node('footer', 'streaming-destination-actions ui-action-row');
           const manage = button('Manage destination', () => perform(() => openEditor(row.configuration_id)));
           if (row === rows[0]) markGuide(manage, 'manage-button');
           footer.append(manage);
-          card.append(header, counters, error, footer);
+          card.append(header, counters, warning, error, footer);
           return card;
         }));
       }
@@ -129,6 +136,9 @@ export function createStreamingWorkspace(deps) {
       ['blue', 'warning', 'danger'].forEach(tone => {
         errorsMetric.classList.toggle(`ui-metric-${tone}`, tone === errorTone(row));
       });
+      const warning = target.warning.closest('.streaming-destination-warning');
+      target.warning.textContent = streamingDestinationWarning(row);
+      warning.hidden = !target.warning.textContent;
       const error = target.last_error.closest('.streaming-destination-error');
       target.last_error.textContent = row.last_error || '';
       error.hidden = !row.last_error;

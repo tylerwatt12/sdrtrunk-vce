@@ -122,7 +122,8 @@ class StreamingAdminHttpTest
             String site=service.save(null,"BROADCASTIFY_CALL_SITE",Map.of("name","Site calls"),null).configurationId();
             String icecast=service.save(null,"ICECAST_HTTP",Map.of("name","Icecast"),null).configurationId();
             String inactive=service.save(null,"BROADCASTIFY_CALL",Map.of("name","Inactive calls"),null).configurationId();
-            StreamingAdministrationServiceTest.attachCounterFixture(manager,calls,7);
+            StreamingAdministrationServiceTest.attachCounterFixture(manager,calls,7,
+                StreamingAdministrationServiceTest.SEVERAL_SITES);
             StreamingAdministrationServiceTest.attachCounterFixture(manager,site,11);
             StreamingAdministrationServiceTest.attachCounterFixture(manager,icecast,19);
             var controller=new StreamingAdminHttpController(service);
@@ -147,6 +148,10 @@ class StreamingAdminHttpTest
                 for(JsonNode status: List.of(catalogStatus,detailStatus))
                 {
                     assertTrue(status.has("duplicate_rejected"),status.toString());
+                    assertTrue(status.has("warning"),status.toString());
+                    if(id.equals(calls))
+                        assertEquals(StreamingAdministrationServiceTest.SEVERAL_SITES,status.get("warning").asText());
+                    else assertTrue(status.get("warning").isNull());
                     assertFalse(status.has("duplicateRejected"));
                     if(id.equals(calls) || id.equals(site))
                     {

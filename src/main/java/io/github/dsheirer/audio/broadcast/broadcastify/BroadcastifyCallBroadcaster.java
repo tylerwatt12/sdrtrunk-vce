@@ -72,7 +72,7 @@ public class BroadcastifyCallBroadcaster extends AbstractAudioBroadcaster<Broadc
     private static final String MULTIPART_FORM_DATA = MULTIPART_TYPE + "/" + DEFAULT_SUBTYPE;
     private static final String USER_AGENT_SDRTRUNK = "sdrtrunk";
     private ScheduledFuture<?> mBroadcastifyTestFuture;
-    private BroadcastifyHealthReporter mHealthReporter;
+    private volatile BroadcastifyHealthReporter mHealthReporter;
     private Queue<AudioRecording> mAudioRecordingQueue = new LinkedTransferQueue<>();
     private ScheduledFuture<?> mAudioRecordingProcessorFuture;
     private HttpClient mHttpClient = HttpClient.newBuilder()
@@ -180,6 +180,16 @@ public class BroadcastifyCallBroadcaster extends AbstractAudioBroadcaster<Broadc
             dispose();
             setBroadcastState(BroadcastState.DISCONNECTED);
         }
+    }
+
+    /**
+     * The node health reporter's warning: that this destination's system ID uploads several sites.
+     */
+    @Override
+    public String getWarning()
+    {
+        BroadcastifyHealthReporter reporter = mHealthReporter;
+        return reporter != null ? reporter.getWarning() : null;
     }
 
     public class BroadcastifyCallTest implements Runnable
