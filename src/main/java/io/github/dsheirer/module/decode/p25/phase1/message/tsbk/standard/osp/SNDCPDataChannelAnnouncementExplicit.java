@@ -63,7 +63,10 @@ public class SNDCPDataChannelAnnouncementExplicit extends OSPMessage implements 
     {
         StringBuilder sb = new StringBuilder();
         sb.append(getMessageStub());
-        sb.append(" CHAN:").append(getChannel());
+        if(hasChannel())
+        {
+            sb.append(" CHAN:").append(getChannel());
+        }
         if(isAutonomousAccess() && isRequestedAccess())
         {
             sb.append(" AUTONOMOUS/REQUESTED-ACCESS");
@@ -76,8 +79,11 @@ public class SNDCPDataChannelAnnouncementExplicit extends OSPMessage implements 
         {
             sb.append(" REQUESTED-ACCESS");
         }
+        else
+        {
+            sb.append(" DATA SERVICE NOT AVAILABLE");
+        }
         sb.append(" DAC:").append(getDataAccessControl());
-        sb.append(" **:").append(getMessage().getInt(DATA_SERVICE_OPTIONS));
         sb.append(" SERVICE OPTIONS:").append(getServiceOptions());
         return sb.toString();
     }
