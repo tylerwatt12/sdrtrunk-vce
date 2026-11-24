@@ -122,3 +122,32 @@ for (const protocolId of ['dmr', 'nxdn']) {
     });
   }
 }
+
+for (const protocolId of ['p25-phase1', 'p25-phase2']) {
+  for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
+    test(`${protocolId} audio preference keeps its draft after a failed save ${theme}`, async ({ page }, testInfo) => {
+      await page.setViewportSize({ width, height: 900 });
+      const { dialog, writes } = await openEditor(page, protocolId, theme);
+      const preference = dialog.getByRole('checkbox', { name: 'Use auto-start order for audio preference', exact: true });
+      await expect(preference).toBeVisible();
+      await expect(preference).not.toBeChecked();
+      await expect(dialog).toContainText('Requires auto start.');
+      await preference.press('Space');
+      await expect(preference).toBeChecked();
+      const bounds = await preference.locator('..').boundingBox();
+      expect(bounds.x).toBeGreaterThanOrEqual(0);
+      expect(bounds.x + bounds.width).toBeLessThanOrEqual(width);
+      await dialog.screenshot({ path: testInfo.outputPath(`audio-preference-${protocolId}-${theme}.png`) });
+      await dialog.getByRole('button', { name: 'Save changes', exact: true }).click();
+      await expect.poll(() => writes.length).toBe(1);
+      expect(writes[0].use_auto_start_order_for_audio).toBe(true);
+      expect(writes[0]).not.toHaveProperty('auto_start_order');
+      await expect(dialog.getByRole('alert')).toContainText('Save failed');
+      await expect(preference).toBeChecked();
+      await dialog.getByRole('button', { name: 'Save changes', exact: true }).click();
+      await expect.poll(() => writes.length).toBe(2);
+      expect(writes[1]).toEqual(writes[0]);
+      await expect(dialog).toHaveCount(0);
+    });
+  }
+}

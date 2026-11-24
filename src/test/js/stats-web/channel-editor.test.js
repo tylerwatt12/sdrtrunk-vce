@@ -602,6 +602,22 @@ for (const profile of protocolCatalog.profiles) {
   }
 }
 
+for (const protocolId of ['p25-phase1', 'p25-phase2']) {
+  const profile = protocolCatalog.profiles.find((entry) => entry.id === protocolId);
+  const field = profile.sections.flatMap((section) => section.fields)
+    .find((entry) => entry.path === 'use_auto_start_order_for_audio');
+  assert.equal(field.type, 'boolean');
+  assert.equal(field.default, false);
+  assert.match(field.help, /Requires auto start/);
+  const form = protocolForm(profile);
+  assert.equal(editorPayload(form, profile).use_auto_start_order_for_audio, false);
+  form.controls.get(field.path).checked = true;
+  assert.equal(editorPayload(form, profile).use_auto_start_order_for_audio, true);
+  const remoteSections = context.channelEditorSections(profile, { source: { source_type: 'REMOTE' } });
+  assert.ok(remoteSections.flatMap((section) => section.fields).some((entry) => entry.path === field.path),
+    'Remote P25 channels retain the same per-channel audio preference');
+}
+
 for (const protocolId of ['dmr', 'nxdn']) {
   const profile = protocolCatalog.profiles.find((entry) => entry.id === protocolId);
   const form = protocolForm(profile, 'TRUNKED');

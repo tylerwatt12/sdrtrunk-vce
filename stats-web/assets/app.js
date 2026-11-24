@@ -34565,6 +34565,7 @@ function callMatchingProof(decision) {
 
 function callMatchingCriterion(value) {
   const labels = {
+    AUTO_START_ORDER: 'Auto-start order',
     MISSING_AND_CONCEALED_RATE: 'Less missing or concealed audio',
     USABLE_FRAME_COUNT: 'More usable voice frames',
     REPEATED_FRAME_RATE: 'Fewer repeated frames',
@@ -34765,6 +34766,8 @@ function callMatchingComparison(decision, signal) {
         `${callMatchingPercent(copy.overlap.shorter_copy_overlap_percent)} of shorter copy · ` +
         `${callMatchingPercent(copy.overlap.selected_copy_coverage_percent)} of selected copy`) :
         callMatchingProof(decision))],
+    ['Audio preference order', (copy) => Number(copy.audio_preference_order) > 0 ?
+      callMatchingCount(copy.audio_preference_order) : 'Automatic quality'],
     ['Usable frames', (copy) => measurement(`${callMatchingCount(copy.usable_frame_count)} / ` +
       callMatchingCount(copy.expected_frame_count), callMatchingPercent(copy.quality_percent))],
     ['Observed / decoded frames', (copy) => `${callMatchingCount(copy.observed_frame_count)} / ` +

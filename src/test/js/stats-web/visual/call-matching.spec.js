@@ -957,3 +957,22 @@ for (const [name, viewport, theme] of [
     expect(overflow).toBe(false);
   });
 }
+
+test('audio preference shows the deciding order and automatic-quality fallback in Compare', async ({ page }, testInfo) => {
+  const selected = duplicate();
+  selected.winner.criterion = 'AUTO_START_ORDER';
+  selected.winner.winner_value = { display: '1', numerator: 1, denominator: null };
+  selected.winner.runner_up_value = { display: 'Automatic quality', numerator: null, denominator: null };
+  selected.legs[0].audio_preference_order = 1;
+  selected.legs[1].audio_preference_order = null;
+  await openApp(page, { matching: async () => ({ data: snapshot([selected]) }) });
+  await expect(page.locator('table[data-table-type="call-matching-duplicates"]')).toContainText('Auto-start order');
+  await page.getByRole('button', { name: 'Compare matched call 71', exact: true }).click();
+  const dialog = page.getByRole('dialog');
+  await expect(dialog).toContainText('Auto-start order');
+  await expandCopyComparison(dialog);
+  const order = dialog.locator('tr').filter({ has: page.getByRole('rowheader', { name: 'Audio preference order', exact: true }) });
+  await expect(order).toContainText('1');
+  await expect(order).toContainText('Automatic quality');
+  await dialog.locator('.call-matching-comparison-table').screenshot({ path: testInfo.outputPath('audio-preference-comparison.png') });
+});
