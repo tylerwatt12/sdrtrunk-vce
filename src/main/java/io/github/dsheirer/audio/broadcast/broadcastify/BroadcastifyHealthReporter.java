@@ -37,6 +37,8 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.concurrent.ScheduledFuture;
@@ -63,7 +65,7 @@ public class BroadcastifyHealthReporter
     private final String mUrl;
     private final NodeReporter mReporter;
     private ScheduledFuture<?> mFuture;
-    private boolean mNotTaken;
+    private boolean mToldNotServing;
     private boolean mToldUnreachable;
     private String mLastMessage;
 
@@ -89,14 +91,6 @@ public class BroadcastifyHealthReporter
         mHttpClient = httpClient;
         mUrl = BroadcastifyCallConfiguration.getHealthUrl(configuration.getHost());
         mReporter = reporter;
-    }
-
-    /**
-     * True once the server has said it doesn't take reports (until streaming starts again).
-     */
-    boolean isNotTaken()
-    {
-        return mNotTaken;
     }
 
     /**
@@ -173,7 +167,7 @@ public class BroadcastifyHealthReporter
     {
         try
         {
-            if(mNotTaken || mReporter.isStopped() || mUrl == null)
+            if(mReporter.isStopped() || mUrl == null)
             {
                 return;
             }
@@ -256,11 +250,12 @@ public class BroadcastifyHealthReporter
 
             if(answer == null)
             {
-                notTaken("it answered [" + said + "]");
+                notServing(now, "it answered [" + said + "]");
                 return;
             }
 
             mToldUnreachable = false;
+            mToldNotServing = false;
             Double nextS = number(answer, "nextS");
             mReporter.delivered(nextS);
             String message = answer.has("message") && answer.get("message").isJsonPrimitive() ?
@@ -272,34 +267,25 @@ public class BroadcastifyHealthReporter
                 mLastMessage = message;
             }
         }
-        else if(status == 404 || status == 405)
+        else if(status == 404 || status == 405 || status == 410)
         {
-            notTaken("HTTP " + status);
+            notServing(now, "HTTP " + status);
         }
         else if(status == 401 || status == 403)
         {
-            LOGGER.warn("Broadcastify Calls refused the health report of system [" + systemId + "] (HTTP " + status +
-                ": " + said + ") - not sending its reports until it starts again");
+            LOGGER.warn("Broadcastify Calls refused the health report of system [" + systemId + "] (HTTP " +
+                status + ": " + said + ") - not sending its reports until its settings change");
             mReporter.failed(now, NodeReporter.Failure.REFUSED, null);
         }
         else if(status == 429 || status == 503)
         {
-            Double retryAfter = response.headers().firstValue("Retry-After").map(v -> {
-                try
-                {
-                    return Double.parseDouble(v.trim());
-                }
-                catch(NumberFormatException nfe)
-                {
-                    return null;
-                }
-            }).orElse(null);
+            Double retryAfter = response.headers().firstValue("Retry-After")
+                .map(value -> retryAfterSeconds(value, System.currentTimeMillis())).orElse(null);
             mReporter.failed(now, NodeReporter.Failure.BUSY, retryAfter);
         }
-        else if(status >= 400 && status < 500)
+        else if(status == 400)
         {
-            LOGGER.warn("Broadcastify Calls turned down the health report of system [" + systemId + "]: HTTP " + status +
-                " " + said);
+            LOGGER.warn("Broadcastify Calls turned down the health report of system [" + systemId + "]: " + said);
             mReporter.failed(now, NodeReporter.Failure.REJECTED, null);
         }
         else
@@ -319,11 +305,51 @@ public class BroadcastifyHealthReporter
         mReporter.failed(now, NodeReporter.Failure.UNREACHABLE, null);
     }
 
-    private void notTaken(String why)
+    /**
+     * The server doesn't take reports (or something else answered, such as a proxy's page): said once, and tried
+     * less and less often, up to hourly, as for a busy server.
+     */
+    private void notServing(HealthSnapshot now, String why)
     {
-        mNotTaken = true;
-        LOGGER.info(mUrl + " doesn't take node health reports (" + why + ") - not sending them until streaming starts " +
-            "again");
+        if(!mToldNotServing)
+        {
+            mToldNotServing = true;
+            LOGGER.info(mUrl + " doesn't take node health reports (" + why + ") - trying again later, up to hourly");
+        }
+
+        mReporter.failed(now, NodeReporter.Failure.BUSY, null);
+    }
+
+    /**
+     * A Retry-After header's wait, seconds: a number of seconds, or an HTTP date.  Null when it's neither.
+     * @param value of the header
+     * @param nowMs the time now, Unix milliseconds, for an HTTP date
+     */
+    static Double retryAfterSeconds(String value, long nowMs)
+    {
+        if(value == null || value.isBlank())
+        {
+            return null;
+        }
+
+        try
+        {
+            return Double.parseDouble(value.trim());
+        }
+        catch(NumberFormatException nfe)
+        {
+            //An HTTP date, next
+        }
+
+        try
+        {
+            long at = ZonedDateTime.parse(value.trim(), DateTimeFormatter.RFC_1123_DATE_TIME).toInstant().toEpochMilli();
+            return Math.max(0, at - nowMs) / 1000.0;
+        }
+        catch(Exception e)
+        {
+            return null;
+        }
     }
 
     private static JsonObject jsonObject(String body)

@@ -142,6 +142,14 @@ public class BroadcastifyHealthReporterTest
      */
     private static HealthHistory history()
     {
+        return history(SINCE + 1_200_000);
+    }
+
+    /**
+     * The same, every 10 s up to a time.
+     */
+    private static HealthHistory history(long untilMs)
+    {
         ChannelHealth node = new ChannelHealth(new ChannelHealth.ChannelInfo(9001, DOWNTOWN_CHANNEL, DOWNTOWN, "CC 1",
             "Metro", "Downtown", "Downtown", "p25", 4800));
         ChannelHealth other = new ChannelHealth(new ChannelHealth.ChannelInfo(9002, NORTH_CHANNEL, COUNTY, "CC 2",
@@ -152,7 +160,7 @@ public class BroadcastifyHealthReporterTest
         other.setCallsCounted();
         HealthHistory history = new HealthHistory();
 
-        for(long t = SINCE; t <= SINCE + 1_200_000; t += 10_000)
+        for(long t = SINCE; t <= untilMs; t += 10_000)
         {
             node.control("p25", true, t);
             other.control("p25", true, t);
@@ -255,26 +263,91 @@ public class BroadcastifyHealthReporterTest
     }
 
     @Test
-    void a_server_that_doesnt_take_reports_is_left_alone()
+    void a_server_that_doesnt_take_reports_is_tried_less_often_not_given_up_on()
     {
-        mStatus.set(404);
-        mAnswer.set("<html>Not Found</html>");
-        BroadcastifyHealthReporter reporter = reporter(new NodeReporter(3));
-        reporter.check(history());
-        assertTrue(reporter.isNotTaken());
+        for(int status: new int[]{404, 405, 410})
+        {
+            mReceived.clear();
+            mStatus.set(status);
+            mAnswer.set("<html>Not Found</html>");
+            NodeReporter schedule = new NodeReporter(3);
+            BroadcastifyHealthReporter reporter = reporter(schedule);
+            HealthHistory history = history();
+            reporter.check(history);
+            assertFalse(schedule.isStopped(), "HTTP " + status);
+            long first = schedule.getNextAt() - history.latest().timeMs();
+            assertTrue(first > 0);
 
-        mStatus.set(200);
-        reporter.check(history());
-        assertEquals(1, mReceived.size(), "not tried again");
+            reporter.check(history);
+            assertEquals(1, mReceived.size(), "not tried again until it's due");
+
+            //Due again: still not taken, and it waits longer.
+            HealthHistory later = history(schedule.getNextAt() + 10_000);
+            reporter.check(later);
+            assertEquals(2, mReceived.size());
+            long second = schedule.getNextAt() - later.latest().timeMs();
+            assertTrue(second > first, "backs off further: " + first + " then " + second);
+            assertTrue(second <= NodeReporter.MAX_INTERVAL_MS + NodeReporter.JITTER_MS + 1000, "up to hourly");
+
+            //Taken at last: delivered.
+            mStatus.set(200);
+            mAnswer.set("{\"ok\":true}");
+            HealthHistory taken = history(schedule.getNextAt() + 10_000);
+            reporter.check(taken);
+            assertEquals(3, mReceived.size());
+            assertEquals(1, schedule.window(taken).seq(), "the next report follows a delivered one");
+        }
     }
 
     @Test
-    void a_page_that_isnt_a_report_answer_counts_as_not_taking_reports()
+    void a_page_that_isnt_a_report_answer_is_backed_off_from()
     {
         mAnswer.set("<html>ok</html>");
-        BroadcastifyHealthReporter reporter = reporter(new NodeReporter(4));
-        reporter.check(history());
-        assertTrue(reporter.isNotTaken());
+        NodeReporter schedule = new NodeReporter(4);
+        HealthHistory history = history();
+        reporter(schedule).check(history);
+        assertFalse(schedule.isStopped());
+        assertTrue(schedule.getNextAt() > history.latest().timeMs());
+        assertEquals(0, schedule.window(history).seq(), "not delivered");
+    }
+
+    @Test
+    void a_report_turned_down_as_wrong_counts_as_sent()
+    {
+        mStatus.set(400);
+        mAnswer.set("{\"error\":\"window.end must be after window.start\"}");
+        NodeReporter schedule = new NodeReporter(14);
+        HealthHistory history = history();
+        reporter(schedule).check(history);
+        assertFalse(schedule.isStopped());
+        assertEquals(1, schedule.window(history).seq(), "not sent again");
+    }
+
+    @Test
+    void any_other_answer_is_not_delivered_and_carried_by_the_next()
+    {
+        for(int status: new int[]{408, 413, 422, 500, 502})
+        {
+            mStatus.set(status);
+            mAnswer.set("{\"error\":\"something\"}");
+            NodeReporter schedule = new NodeReporter(15);
+            HealthHistory history = history();
+            reporter(schedule).check(history);
+            assertFalse(schedule.isStopped(), "HTTP " + status);
+            assertEquals(0, schedule.window(history).seq(), "HTTP " + status + " isn't counted as sent");
+        }
+    }
+
+    @Test
+    void retry_after_is_seconds_or_an_http_date()
+    {
+        long now = 1_445_412_480_000L; //Wed, 21 Oct 2015 07:28:00 GMT
+        assertEquals(120.0, BroadcastifyHealthReporter.retryAfterSeconds("120", now));
+        assertEquals(90.0, BroadcastifyHealthReporter.retryAfterSeconds("Wed, 21 Oct 2015 07:29:30 GMT", now));
+        assertEquals(0.0, BroadcastifyHealthReporter.retryAfterSeconds("Wed, 21 Oct 2015 07:00:00 GMT", now),
+            "a date gone by: now");
+        assertNull(BroadcastifyHealthReporter.retryAfterSeconds("soon", now));
+        assertNull(BroadcastifyHealthReporter.retryAfterSeconds(" ", now));
     }
 
     @Test
@@ -298,7 +371,6 @@ public class BroadcastifyHealthReporterTest
         BroadcastifyHealthReporter reporter = reporter(schedule);
         reporter.check(history);
         assertFalse(schedule.isStopped());
-        assertFalse(reporter.isNotTaken());
         assertEquals(history.latest().timeMs() + 3_600_000, schedule.getNextAt());
     }
 }
