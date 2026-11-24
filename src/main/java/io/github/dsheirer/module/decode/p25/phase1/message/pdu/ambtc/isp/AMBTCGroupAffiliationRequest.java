@@ -75,11 +75,10 @@ public class AMBTCGroupAffiliationRequest extends AMBTCMessage
 
     public Identifier getGroupId()
     {
-        if(mGroupId == null)
+        if(mGroupId == null && hasDataBlock(0))
         {
-            // TODO: Investigate whether BLOCK_0_GROUP_ID is actually part of the AMBTC header for this message,
-            // or whether this legacy read should come from data block 0.
-            mGroupId = APCO25Talkgroup.create(getHeader().getMessage().getInt(BLOCK_0_GROUP_ID));
+            //TIA-102.AABC-E Figure 6.1.9-2: the group is in data block 0, octets 2-3.
+            mGroupId = APCO25Talkgroup.create(getDataBlock(0).getMessage().getInt(BLOCK_0_GROUP_ID));
         }
 
         return mGroupId;
@@ -110,9 +109,9 @@ public class AMBTCGroupAffiliationRequest extends AMBTCMessage
 
     public Identifier getSourceAddress()
     {
-        if(mSourceAddress == null && hasDataBlock(0))
+        if(mSourceAddress == null)
         {
-            mSourceAddress = APCO25RadioIdentifier.createFrom(getDataBlock(0).getMessage().getInt(HEADER_ADDRESS));
+            mSourceAddress = APCO25RadioIdentifier.createFrom(getHeader().getMessage().getInt(HEADER_ADDRESS));
         }
 
         return mSourceAddress;
