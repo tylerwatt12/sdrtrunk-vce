@@ -130,6 +130,88 @@ class DecodeEventViewServiceTest
     }
 
     @Test
+    void unknownPlainP25RadiosCannotAcquireExactOrRangeConfiguredAliases() throws Exception
+    {
+        for(var matcher: List.of(new io.github.dsheirer.alias.id.radio.Radio(Protocol.APCO25, 0),
+            new io.github.dsheirer.alias.id.radio.RadioRange(Protocol.APCO25, 0, 0xFFFFFF)))
+        {
+            var definition = new io.github.dsheirer.alias.AliasListDefinition("P25 radios",
+                io.github.dsheirer.alias.AliasListFamily.P25);
+            definition.setId(1);
+            var aliases = new io.github.dsheirer.alias.AliasList(definition);
+            var configured = new io.github.dsheirer.alias.Alias("UNKNOWN RADIO NAME");
+            configured.setId(77);
+            configured.setMatchIdentifier(matcher);
+            aliases.addAlias(configured);
+            assertEquals(List.of(configured), aliases.getAliases(APCO25RadioIdentifier.createFrom(0)),
+                "The fixture must really match the zero observation before projection eligibility is applied");
+            var model = new AliasModel()
+            {
+                @Override public io.github.dsheirer.alias.AliasList getAliasList(IdentifierCollection ignored) { return aliases; }
+            };
+            try(var service = new DecodeEventViewService(null, model))
+            {
+                for(int value: new int[]{0, 0xFFFFFD, 0xFFFFFE, 0xFFFFFF})
+                {
+                    var source = APCO25RadioIdentifier.createFrom(value);
+                    var view = service.view(CONFIGURATION_ID, DecodeEvent.builder(DecodeEventType.CALL, 1000)
+                        .protocol(Protocol.APCO25).identifiers(new IdentifierCollection(List.of(source))).build());
+                    assertNull(view.fromAliases(), "An unknown/reserved radio cannot borrow an exact or range alias");
+                    assertTrue(view.alertFacts().aliasIds().isEmpty(), "Rejected radio aliases cannot trigger alias alerts");
+                    assertEquals(source.toString(), view.fromIdentifiers(), "The diagnostic identifier remains visible");
+                    assertEquals(source.toString(), view.fromParty().getFirst().text());
+                }
+            }
+        }
+    }
+
+    @Test
+    void qualifiedLocalZeroAndMixedKnownRadiosKeepTheirOwnConfiguredAliases() throws Exception
+    {
+        var definition = new io.github.dsheirer.alias.AliasListDefinition("P25 radios",
+            io.github.dsheirer.alias.AliasListFamily.P25);
+        definition.setId(1);
+        var aliases = new io.github.dsheirer.alias.AliasList(definition);
+        var unknown = new io.github.dsheirer.alias.Alias("UNKNOWN RADIO NAME"); unknown.setId(77);
+        unknown.setMatchIdentifier(new io.github.dsheirer.alias.id.radio.Radio(Protocol.APCO25, 0));
+        aliases.addAlias(unknown);
+        var local = new io.github.dsheirer.alias.Alias("KNOWN LOCAL RADIO"); local.setId(78);
+        local.setMatchIdentifier(new io.github.dsheirer.alias.id.radio.Radio(Protocol.APCO25, 9001));
+        aliases.addAlias(local);
+        var canonical = new io.github.dsheirer.alias.Alias("KNOWN HOME RADIO"); canonical.setId(79);
+        canonical.setMatchIdentifier(new io.github.dsheirer.alias.id.radio.P25Subscriber(0xBEE00, 0x348, 9002));
+        aliases.addAlias(canonical);
+        var model = new AliasModel()
+        {
+            @Override public io.github.dsheirer.alias.AliasList getAliasList(IdentifierCollection ignored) { return aliases; }
+        };
+        try(var service = new DecodeEventViewService(null, model))
+        {
+            for(var qualified: List.of(
+                APCO25FullyQualifiedRadioIdentifier.createFrom(0, 0xBEE00, 0x348, 9002),
+                APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(0, 0xBEE00, 0x348, 9002)))
+            {
+                var event = DecodeEvent.builder(DecodeEventType.CALL, 1000).protocol(Protocol.APCO25)
+                    .identifiers(new IdentifierCollection(List.of(qualified))).build();
+                var view = service.view(CONFIGURATION_ID, event);
+                assertEquals("KNOWN HOME RADIO", view.fromAliases());
+                assertEquals(List.of(79L), view.alertFacts().aliasIds());
+                assertEquals(9002, view.fromParty().getFirst().canonicalIdentity().subscriberId());
+
+                var mixed = new IdentifierCollection(List.of(APCO25RadioIdentifier.createFrom(0),
+                    APCO25RadioIdentifier.createFrom(9001), qualified));
+                view = service.view(CONFIGURATION_ID, DecodeEvent.builder(DecodeEventType.CALL, 1001)
+                    .protocol(Protocol.APCO25).identifiers(mixed).build());
+                assertTrue(view.fromAliases().contains("KNOWN LOCAL RADIO"));
+                assertTrue(view.fromAliases().contains("KNOWN HOME RADIO"));
+                assertFalse(view.fromAliases().contains("UNKNOWN RADIO NAME"));
+                assertEquals(List.of(78L, 79L), view.alertFacts().aliasIds());
+                assertEquals(3, view.fromParty().size(), "Only alias lookup is gated, never the whole party");
+            }
+        }
+    }
+
+    @Test
     void catalogNamesAreDetachedOnObserverForTypedPartiesAndPatchMembers() throws Exception
     {
         var homeRadio = APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(501, 0xABCDE, 0x123, 42);

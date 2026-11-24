@@ -39,6 +39,8 @@ import io.github.dsheirer.identifier.talkgroup.FullyQualifiedTalkgroupIdentifier
 import io.github.dsheirer.module.decode.traffic.P25TalkgroupIdentity;
 import io.github.dsheirer.module.decode.traffic.P25SubscriberIdentity;
 import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
+import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
+import io.github.dsheirer.module.decode.traffic.TrunkedIdentityEligibility;
 import io.github.dsheirer.sample.Broadcaster;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.util.concurrent.BoundedMpscPairQueue;
@@ -736,6 +738,15 @@ public class DecodeEventViewService implements AutoCloseable
     /** A foreign home group number cannot borrow an Alias from the receiving system's local-address namespace. */
     private static List<Alias> scopedAliases(AliasList list, Identifier<?> identifier, String servingKey)
     {
+        //Unknown/reserved local P25 values can match configured ranges, but cannot identify an alias owner.
+        //The shared eligibility check preserves a complete home identity when its separate local field is zero.
+        if(identifier instanceof RadioIdentifier radio &&
+            (radio.getProtocol() == Protocol.APCO25 || radio.getProtocol() == Protocol.APCO25_PHASE2) &&
+            !TrunkedIdentityEligibility.isEligibleDecodedIdentifier(radio.getProtocol(),
+                TrunkedIdentityDomain.STANDARD, radio))
+        {
+            return List.of();
+        }
         if(identifier instanceof FullyQualifiedRadioIdentifier radio)
         {
             List<Alias> canonicalOrWorking = list.getAliases(identifier);
