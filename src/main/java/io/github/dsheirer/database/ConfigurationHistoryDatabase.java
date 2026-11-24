@@ -15,7 +15,8 @@ import org.sqlite.SQLiteConfig;
 public final class ConfigurationHistoryDatabase
 {
     // Exact role signatures; supported historical history layouts remain explicit migration inputs.
-    public static final String CONFIGURATION_FINGERPRINT = "fb1754c8bf00abc163ad8955f6452151d88477768f7848fd8e71f25fdc6d93d1";
+    public static final String FORMAT_63_CONFIGURATION_FINGERPRINT = "fb1754c8bf00abc163ad8955f6452151d88477768f7848fd8e71f25fdc6d93d1";
+    public static final String CONFIGURATION_FINGERPRINT = "d9865528cb5c0d827b1d60245f309134183d89f1c989c8bbb5ef3bdae3c3f568";
     public static final String FORMAT_63_HISTORY_FINGERPRINT = "a359803e101642d77f5ce5591ea2e493bde753696c8ee9e6c0180f5995717d3d";
     public static final String FORMAT_69_HISTORY_FINGERPRINT = "c2443a47e0a9fc529e887076cc5086c75ead2118d52e521027306cc009222ac9";
 
@@ -32,7 +33,7 @@ public final class ConfigurationHistoryDatabase
         if(version >= 69 && version <= 72) return FORMAT_69_HISTORY_FINGERPRINT;
         if(version == 73) return FORMAT_73_HISTORY_FINGERPRINT;
         if(version == 74) return FORMAT_74_HISTORY_FINGERPRINT;
-        if(version == 75 || version == 76) return HISTORY_FINGERPRINT;
+        if(version >= 75 && version <= 77) return HISTORY_FINGERPRINT;
         throw new SQLException("Unsupported activity database format");
     }
 
@@ -138,7 +139,7 @@ public final class ConfigurationHistoryDatabase
             throw new SQLException("The " + role + " database format marker is missing or incompatible");
         }
         String expected = role.equals(ConfigurationHistorySchema.CONFIGURATION_ROLE) ?
-            CONFIGURATION_FINGERPRINT : historyFingerprint(version);
+            (version < 77 ? FORMAT_63_CONFIGURATION_FINGERPRINT : CONFIGURATION_FINGERPRINT) : historyFingerprint(version);
         if(!expected.equals(fingerprint))
             throw new SQLException("The " + role + " database does not have the exact format-" + version + " schema");
     }

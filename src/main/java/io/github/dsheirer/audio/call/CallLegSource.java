@@ -30,13 +30,15 @@ public record CallLegSource(DecoderType decoderType, String channelConfiguration
                             TrunkedIdentityDomain identityDomain,
                             ChannelConfigurationPolicy.ChannelKind channelKind, boolean trafficChannel,
                             String radioSystemKey, long siteEvidenceProcessingIncarnation,
-                            long siteEvidenceTuningGeneration, String servingSiteId)
+                            long siteEvidenceTuningGeneration, String servingSiteId, Integer audioPreferenceOrder)
 {
     public static final CallLegSource UNKNOWN = new CallLegSource(null, null, null, null, 0, null,
         TrunkedIdentityDomain.STANDARD, null, false, null, 0L, 0L);
 
     public CallLegSource
     {
+        audioPreferenceOrder = audioPreferenceOrder != null && audioPreferenceOrder > 0 ?
+            audioPreferenceOrder : null;
         channelConfigurationId = normalize(channelConfigurationId);
         channelName = normalize(channelName);
         radioResolveId = normalize(radioResolveId);
@@ -56,6 +58,27 @@ public record CallLegSource(DecoderType decoderType, String channelConfiguration
                 decoderType != null ? decoderType.getProtocol() : null, identityDomain,
                 channelConfigurationId, radioSystemKey);
         }
+    }
+
+    /** Compatibility for sources captured before optional duplicate-audio preference was added. */
+    public CallLegSource(DecoderType decoderType, String channelConfigurationId, String channelName,
+                         String radioResolveId, long aliasListId, P25SiteIdentity p25SiteIdentity,
+                         TrunkedIdentityDomain identityDomain,
+                         ChannelConfigurationPolicy.ChannelKind channelKind, boolean trafficChannel,
+                         String radioSystemKey, long siteEvidenceProcessingIncarnation,
+                         long siteEvidenceTuningGeneration, String servingSiteId)
+    {
+        this(decoderType, channelConfigurationId, channelName, radioResolveId, aliasListId, p25SiteIdentity,
+            identityDomain, channelKind, trafficChannel, radioSystemKey, siteEvidenceProcessingIncarnation,
+            siteEvidenceTuningGeneration, servingSiteId, null);
+    }
+
+    /** Captured once for new calls; changing a setting must not rewrite an in-progress call's preference. */
+    public CallLegSource withAudioPreferenceOrder(Integer order)
+    {
+        return new CallLegSource(decoderType, channelConfigurationId, channelName, radioResolveId, aliasListId,
+            p25SiteIdentity, identityDomain, channelKind, trafficChannel, radioSystemKey,
+            siteEvidenceProcessingIncarnation, siteEvidenceTuningGeneration, servingSiteId, order);
     }
 
     /** Compatibility constructor for call sources captured before native serving-site evidence was added. */
@@ -130,7 +153,7 @@ public record CallLegSource(DecoderType decoderType, String channelConfiguration
     {
         return trafficChannel ? this : new CallLegSource(decoderType, channelConfigurationId, channelName,
             radioResolveId, aliasListId, p25SiteIdentity, identityDomain, channelKind, true,
-            radioSystemKey, siteEvidenceProcessingIncarnation, siteEvidenceTuningGeneration, servingSiteId);
+            radioSystemKey, siteEvidenceProcessingIncarnation, siteEvidenceTuningGeneration, servingSiteId, audioPreferenceOrder);
     }
 
     /** Returns a new source template for calls created after a processing-chain-local system identity change. */
@@ -139,7 +162,7 @@ public record CallLegSource(DecoderType decoderType, String channelConfiguration
         return new CallLegSource(decoderType, channelConfigurationId, channelName, radioResolveId, aliasListId,
             p25SiteIdentity, identityDomain, channelKind, trafficChannel, radioSystemKey,
             siteEvidenceProcessingIncarnation, siteEvidenceTuningGeneration,
-            java.util.Objects.equals(this.radioSystemKey, radioSystemKey) ? servingSiteId : null);
+            java.util.Objects.equals(this.radioSystemKey, radioSystemKey) ? servingSiteId : null, audioPreferenceOrder);
     }
 
     /** Preserves an already-validated native serving site in this immutable source snapshot. */
@@ -147,7 +170,7 @@ public record CallLegSource(DecoderType decoderType, String channelConfiguration
     {
         return new CallLegSource(decoderType, channelConfigurationId, channelName, radioResolveId, aliasListId,
             p25SiteIdentity, identityDomain, channelKind, trafficChannel, radioSystemKey,
-            siteEvidenceProcessingIncarnation, siteEvidenceTuningGeneration, siteId);
+            siteEvidenceProcessingIncarnation, siteEvidenceTuningGeneration, siteId, audioPreferenceOrder);
     }
 
     /** Returns a source template tied to the exact control-channel processing incarnation that can verify its site. */
@@ -155,7 +178,7 @@ public record CallLegSource(DecoderType decoderType, String channelConfiguration
     {
         return new CallLegSource(decoderType, channelConfigurationId, channelName, radioResolveId, aliasListId,
             p25SiteIdentity, identityDomain, channelKind, trafficChannel, radioSystemKey, processingIncarnation,
-            siteEvidenceTuningGeneration, servingSiteId);
+            siteEvidenceTuningGeneration, servingSiteId, audioPreferenceOrder);
     }
 
     /** Returns a source tied to the exact control-source tuning generation within the processing run. */
@@ -163,7 +186,7 @@ public record CallLegSource(DecoderType decoderType, String channelConfiguration
     {
         return new CallLegSource(decoderType, channelConfigurationId, channelName, radioResolveId, aliasListId,
             p25SiteIdentity, identityDomain, channelKind, trafficChannel, radioSystemKey,
-            siteEvidenceProcessingIncarnation, tuningGeneration, servingSiteId);
+            siteEvidenceProcessingIncarnation, tuningGeneration, servingSiteId, audioPreferenceOrder);
     }
 
     /** Returns a source tied to one exact verified control-channel processing and tuning generation. */
@@ -171,7 +194,7 @@ public record CallLegSource(DecoderType decoderType, String channelConfiguration
     {
         return new CallLegSource(decoderType, channelConfigurationId, channelName, radioResolveId, aliasListId,
             p25SiteIdentity, identityDomain, channelKind, trafficChannel, radioSystemKey, processingIncarnation,
-            tuningGeneration, servingSiteId);
+            tuningGeneration, servingSiteId, audioPreferenceOrder);
     }
 
     private static String normalize(String value)

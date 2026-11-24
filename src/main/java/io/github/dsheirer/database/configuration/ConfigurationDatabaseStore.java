@@ -50,7 +50,7 @@ public class ConfigurationDatabaseStore
      */
     private static final List<String> CHANNEL_ROW_OWNED_JSON_FIELDS = List.of(
         "configurationId", "system", "site", "name", "aliasListId", "aliasListName", "radioResolveId",
-        "radresGuid", "radres_guid", "autoStart", "enabled", "autoStartOrder", "order", "channelType");
+        "radresGuid", "radres_guid", "autoStart", "enabled", "autoStartOrder", "order", "channelType", "useAutoStartOrderForAudio");
     private final Path mDatabasePath;
     private final ObjectMapper mObjectMapper = new ObjectMapper()
         .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
@@ -111,6 +111,36 @@ public class ConfigurationDatabaseStore
     /** Loads the channel portion of a caller-owned consistent database view. */
     public List<Channel> loadChannels(Connection connection) throws SQLException, IOException
     {
+        return loadChannels(connection, true);
+    }
+
+    /** Frozen reader used only by the adjacent format-62 split after exact source admission. */
+    public List<Channel> loadFormat62Channels(Connection connection) throws SQLException, IOException
+    {
+        return loadLegacyChannels(connection, 62);
+    }
+
+    /** Reads the committed format-69 extraction while its attached upgrade is still uncommitted. */
+    ChannelAndBroadcastConfiguration loadFormat69Configuration(Connection connection) throws SQLException, IOException
+    {
+        return new ChannelAndBroadcastConfiguration(loadLegacyChannels(connection, 69),
+            loadBroadcastConfigurations(connection));
+    }
+
+    private List<Channel> loadLegacyChannels(Connection connection, int version) throws SQLException, IOException
+    {
+        if(!Integer.toString(version).equals(io.github.dsheirer.database.ConfigurationHistorySchema.metadata(connection,
+            io.github.dsheirer.database.upgrade.DatabaseFormatCatalog.FORMAT_VERSION_KEY)) ||
+            !io.github.dsheirer.database.upgrade.DatabaseFormatCatalog.formats().stream()
+                .filter(format -> format.version() == version).findFirst().orElseThrow().fingerprint().equals(
+                io.github.dsheirer.database.SqliteSchemaValidator.fingerprint(connection)))
+            throw new SQLException("The legacy channel reader requires exact database format " + version);
+        return loadChannels(connection, false);
+    }
+
+    private List<Channel> loadChannels(Connection connection, boolean hasAudioOrderPreference)
+        throws SQLException, IOException
+    {
         List<Channel> channels = new ArrayList<>();
 
         //Frozen monolithic formats retain their recovery projection while the migrator reads them. Current
@@ -145,9 +175,10 @@ public class ConfigurationDatabaseStore
         try(PreparedStatement statement = connection.prepareStatement("""
             SELECT channel.configuration_id, channel.channel_kind, channel.system_name, channel.site_name,
                    channel.name, channel.alias_list_id, list.name AS alias_list_name, channel.radioresolve_id,
-                   channel.auto_start, channel.auto_start_order, channel.decoder_type,
+                   channel.auto_start, channel.auto_start_order,
+                   %s AS use_auto_start_order_for_audio, channel.decoder_type,
                    channel.address_domain_code, channel.primary_frequency_hz, channel.config_json,
-            """ + recovery + """
+            """.formatted(hasAudioOrderPreference ? "channel.use_auto_start_order_for_audio" : "0") + recovery + """
             FROM configuration_channel channel
             LEFT JOIN alias_list list ON list.id = channel.alias_list_id
             """ + joins + "ORDER BY channel.sort_order, channel.id");
@@ -180,6 +211,8 @@ public class ConfigurationDatabaseStore
                 channel.setAutoStart(ConfigurationChannelProjection.readBooleanFlag(resultSet, "auto_start"));
                 channel.setAutoStartOrder(ConfigurationChannelProjection.readNullableInt(resultSet,
                     "auto_start_order"));
+                channel.setUseAutoStartOrderForAudio(ConfigurationChannelProjection.readBooleanFlag(resultSet,
+                    "use_auto_start_order_for_audio"));
                 channels.add(channel);
             }
         }
@@ -335,6 +368,7 @@ public class ConfigurationDatabaseStore
             ChannelRow row = new ChannelRow(ChannelConfigurationPolicy.requireChannelKind(channel).name(), sortOrder,
                 channel.getSystem(), channel.getSite(), channel.getName(), channel.getAliasListId(),
                 channel.getRadioResolveId(), channel.getAutoStart(), channel.getAutoStartOrder(),
+                channel.getUseAutoStartOrderForAudio(),
                 ConfigurationChannelProjection.from(channel), channelPayload(channel));
             if(desired.put(id, row) != null)
             {
@@ -386,13 +420,14 @@ public class ConfigurationDatabaseStore
                 INSERT INTO configuration_channel (
                     channel_kind, sort_order, system_name, site_name, name, alias_list_id,
                     radioresolve_id, auto_start, auto_start_order, decoder_type, address_domain_code,
-                    primary_frequency_hz, config_json, configuration_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    primary_frequency_hz, config_json, use_auto_start_order_for_audio, configuration_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """);
             PreparedStatement update = connection.prepareStatement("""
                 UPDATE configuration_channel SET channel_kind=?, sort_order=?, system_name=?, site_name=?, name=?,
                     alias_list_id=?, radioresolve_id=?, auto_start=?, auto_start_order=?, decoder_type=?,
-                    address_domain_code=?, primary_frequency_hz=?, config_json=? WHERE configuration_id=?
+                    address_domain_code=?, primary_frequency_hz=?, config_json=?, use_auto_start_order_for_audio=?
+                    WHERE configuration_id=?
                 """))
         {
             for(Map.Entry<String,ChannelRow> entry: desired.entrySet())
@@ -415,7 +450,8 @@ public class ConfigurationDatabaseStore
                 setInteger(statement, 9, row.autoStartOrder());
                 row.projection().bind(statement, 10);
                 statement.setString(13, mObjectMapper.writeValueAsString(row.payload()));
-                statement.setString(14, entry.getKey());
+                statement.setInt(14, row.useAutoStartOrderForAudio() ? 1 : 0);
+                statement.setString(15, entry.getKey());
                 statement.addBatch();
             }
             insert.executeBatch();
@@ -491,6 +527,7 @@ public class ConfigurationDatabaseStore
                     rows.getString("name"), readNullableLong(rows, "alias_list_id"),
                     rows.getString("radioresolve_id"), ConfigurationChannelProjection.readBooleanFlag(rows, "auto_start"),
                     ConfigurationChannelProjection.readNullableInt(rows, "auto_start_order"),
+                    ConfigurationChannelProjection.readBooleanFlag(rows, "use_auto_start_order_for_audio"),
                     ConfigurationChannelProjection.read(rows), mObjectMapper.readTree(rows.getString("config_json"))));
             }
         }
@@ -626,7 +663,7 @@ public class ConfigurationDatabaseStore
 
     private record ChannelRow(String channelKind, int sortOrder, String system, String site, String name,
                               Long aliasListId, String radioResolveId, boolean autoStart, Integer autoStartOrder,
-                              ConfigurationChannelProjection projection, JsonNode payload)
+                              boolean useAutoStartOrderForAudio, ConfigurationChannelProjection projection, JsonNode payload)
     {
         private boolean sameClassification(ChannelRow other)
         {

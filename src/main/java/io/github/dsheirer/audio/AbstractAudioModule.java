@@ -224,6 +224,16 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
         return mTimeslot;
     }
 
+    /** Updates future calls without relabeling audio already received or waiting for a linked continuation. */
+    @Subscribe
+    public void audioPreferenceOrderChanged(io.github.dsheirer.audio.call.AudioPreferenceOrderEvent event)
+    {
+        if(event != null)
+        {
+            mCallLegSourceTemplate.updateAndGet(source -> source.withAudioPreferenceOrder(event.order()));
+        }
+    }
+
     /**
      * Applies a committed processing-chain role change.  Capacity Plus reuses the existing audio modules when its
      * rest channel becomes a traffic channel, so future snapshots must identify calls from that chain as trunked.

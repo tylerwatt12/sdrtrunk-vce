@@ -37,7 +37,7 @@ public final class DatabaseFormatCatalog
 {
     public static final String FORMAT_VERSION_KEY = "database_format_version";
     public static final int MINIMUM_SUPPORTED_VERSION = 2;
-    public static final int CURRENT_VERSION = 76;
+    public static final int CURRENT_VERSION = 77;
     static final String RETIRED_TRUNKED_IDENTITY_BOUNDARY_KEY = "trunked_identity_metrics_started_at_ms";
     static final List<String> RETIRED_SUBSYSTEM_VERSION_KEYS = List.of(
         "alias_schema_version", "configuration_schema_version", "settings_schema_version", "icon_schema_version",
@@ -678,7 +678,7 @@ public final class DatabaseFormatCatalog
 
     private static final FormatDescriptor FORMAT_63 = new FormatDescriptor(63, "configuration-history-pair-v1",
         "Independent configuration and retained receiver activity databases",
-        io.github.dsheirer.database.ConfigurationHistoryDatabase.CONFIGURATION_FINGERPRINT, Map.of(),
+        io.github.dsheirer.database.ConfigurationHistoryDatabase.FORMAT_63_CONFIGURATION_FINGERPRINT, Map.of(),
         List.of("main format 63"), "src/test/java/io/github/dsheirer/database/upgrade/Format63TestDatabase.java", List.of(
             "Preserve every configuration component, historical row, counter, relationship and allocator",
             "Extract configuration before converting the original file into its activity companion",
@@ -782,13 +782,21 @@ public final class DatabaseFormatCatalog
             "Store voice encryption keys unencrypted with application settings",
             "Preserve all other settings, recordings, retained events and table/index b-trees"));
 
+    private static final FormatDescriptor FORMAT_77 = new FormatDescriptor(77, "duplicate-audio-start-order-v1",
+        "Per-channel auto-start-order preference for duplicate audio",
+        io.github.dsheirer.database.ConfigurationHistoryDatabase.CONFIGURATION_FINGERPRINT, Map.of(),
+        List.of("main format 77"), "src/test/java/io/github/dsheirer/database/upgrade/Format77TestDatabase.java", List.of(
+            "Preserve every channel and auto-start position; begin audio-order preference disabled",
+            "Preserve settings, recordings, retained events and table/index b-trees",
+            "Add one explicit channel boolean without scanning or rewriting receiver Activity"));
+
     private static final List<FormatDescriptor> FORMATS =
         List.of(FORMAT_2, FORMAT_3, FORMAT_4, FORMAT_5, FORMAT_6, FORMAT_7, FORMAT_8, FORMAT_9,
             FORMAT_10, FORMAT_11, FORMAT_12, FORMAT_13, FORMAT_14, FORMAT_15, FORMAT_16, FORMAT_17, FORMAT_18,
             FORMAT_19, FORMAT_20, FORMAT_21, FORMAT_22, FORMAT_23, FORMAT_24, FORMAT_25, FORMAT_26, FORMAT_27,
             FORMAT_28, FORMAT_29, FORMAT_30, FORMAT_31, FORMAT_32, FORMAT_33, FORMAT_34, FORMAT_35, FORMAT_36,
             FORMAT_37, FORMAT_38, FORMAT_39, FORMAT_40, FORMAT_41, FORMAT_42, FORMAT_43, FORMAT_44, FORMAT_45, FORMAT_46,
-            FORMAT_47, FORMAT_48, FORMAT_49, FORMAT_50, FORMAT_51, FORMAT_52, FORMAT_53, FORMAT_54, FORMAT_55, FORMAT_56, FORMAT_57, FORMAT_58, FORMAT_59, FORMAT_60, FORMAT_61, FORMAT_62, FORMAT_63, FORMAT_64, FORMAT_65, FORMAT_66, FORMAT_67, FORMAT_68, FORMAT_69, FORMAT_70, FORMAT_71, FORMAT_72, FORMAT_73, FORMAT_74, FORMAT_75, FORMAT_76);
+            FORMAT_47, FORMAT_48, FORMAT_49, FORMAT_50, FORMAT_51, FORMAT_52, FORMAT_53, FORMAT_54, FORMAT_55, FORMAT_56, FORMAT_57, FORMAT_58, FORMAT_59, FORMAT_60, FORMAT_61, FORMAT_62, FORMAT_63, FORMAT_64, FORMAT_65, FORMAT_66, FORMAT_67, FORMAT_68, FORMAT_69, FORMAT_70, FORMAT_71, FORMAT_72, FORMAT_73, FORMAT_74, FORMAT_75, FORMAT_76, FORMAT_77);
 
     private static final Map<Integer,FormatDescriptor> BY_VERSION = FORMATS.stream().collect(
         java.util.stream.Collectors.toUnmodifiableMap(FormatDescriptor::version, descriptor -> descriptor));
@@ -982,7 +990,7 @@ public final class DatabaseFormatCatalog
     /** Current catalog descriptor. */
     public static FormatDescriptor current()
     {
-        return FORMAT_76;
+        return FORMAT_77;
     }
 
     /** Ordered manifest used by completeness tests and migration UX. */
@@ -1352,7 +1360,7 @@ public final class DatabaseFormatCatalog
             case 65 -> 13;
             case 66 -> 14;
             case 67, 68, 69, 70, 71 -> 15;
-            case 72, 73, 74, 75, 76 -> 16;
+            case 72, 73, 74, 75, 76, 77 -> 16;
             default -> throw new IllegalArgumentException("No web preference version for database format " +
                 descriptor.version());
         };

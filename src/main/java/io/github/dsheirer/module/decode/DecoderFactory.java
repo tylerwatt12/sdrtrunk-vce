@@ -423,7 +423,8 @@ public class DecoderFactory
             channel != null ? channel.getSiteEvidenceProcessingIncarnation() : 0L,
             channel != null ? channel.getSiteEvidenceTuningGeneration() : 0L)
             .withServingSiteId(io.github.dsheirer.module.decode.traffic.RadioSystemKeyEvent
-                .verifiedServingSiteId(channel, radioSystemKey));
+                .verifiedServingSiteId(channel, radioSystemKey))
+            .withAudioPreferenceOrder(io.github.dsheirer.audio.call.AudioPreferenceOrderEvent.capture(channel).order());
     }
 
     private static String initialRadioSystemKey(Channel channel, DecodeConfiguration configuration,

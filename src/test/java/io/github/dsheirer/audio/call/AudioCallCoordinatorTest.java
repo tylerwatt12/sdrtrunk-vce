@@ -485,6 +485,162 @@ class AudioCallCoordinatorTest
     }
 
     @Test
+    void optedInAutoStartOrderOverridesQualityForBothP25PhasesAndEveryOutput() throws Exception
+    {
+        for(DecoderType phase : List.of(DecoderType.P25_PHASE1, DecoderType.P25_PHASE2))
+        {
+            List<CompletedAudioCall> resolved = new CopyOnWriteArrayList<>();
+            List<CompletedAudioCall> recorded = new CopyOnWriteArrayList<>();
+            List<CompletedAudioCall> streamed = new CopyOnWriteArrayList<>();
+            List<CompletedAudioCall> web = new CopyOnWriteArrayList<>();
+            List<LogicalCallDiagnosticDecision> decisions = new CopyOnWriteArrayList<>();
+            AudioCallCoordinator coordinator = preferenceCoordinator(resolved, recorded, streamed, web, decisions,
+                CallFilteringSettings.DISABLED);
+            try
+            {
+                AliasList aliases = aliasList(950);
+                Leg preferred = withAudioPreference(withP25Decoder(leg(950, aliases, 2, 2, 1, 1, 9100,
+                    1_000, 2_000, DAMAGED_QUALITY, true, Set.of()), phase), 1);
+                Leg later = withAudioPreference(withP25Decoder(leg(951, aliases, 2, 2, 1, 2, 9100,
+                    1_000, 2_000, GOOD_QUALITY, true, Set.of()), phase), 2);
+                emitLeg(coordinator, later, fingerprints(950));
+                emitLeg(coordinator, preferred, fingerprints(950));
+                await(() -> recorded.size() == 1 && streamed.size() == 1 && web.size() == 1 && decisions.size() == 1);
+                CompletedAudioCall selected = resolved.getFirst();
+                assertEquals(preferred.callId(), selected.snapshot().callId(), phase.toString());
+                assertSame(selected, recorded.getFirst());
+                assertSame(selected, streamed.getFirst());
+                assertSame(selected, web.getFirst());
+                assertEquals(LogicalCallWinnerCriterion.AUTO_START_ORDER, decisions.getFirst().winner().criterion());
+                assertEquals("1", decisions.getFirst().winner().winnerValue().display());
+                assertEquals("2", decisions.getFirst().winner().runnerUpValue().display());
+            }
+            finally { coordinator.dispose(); }
+        }
+    }
+
+    @Test
+    void equalOrAbsentPreferenceUsesQualityAndAnOptedInRankBeatsAutomaticQuality() throws Exception
+    {
+        for(Integer laterOrder : java.util.Arrays.asList(null, 1))
+        {
+            for(Integer preferredOrder : java.util.Arrays.asList(null, 1))
+            {
+                List<CompletedAudioCall> resolved = new CopyOnWriteArrayList<>();
+                AudioCallCoordinator coordinator = coordinator(resolved, null, null, null);
+                try
+                {
+                    AliasList aliases = aliasList(952);
+                    Leg damaged = withAudioPreference(leg(952, aliases, 2, 2, 1, 1, 9100,
+                        1_000, 2_000, DAMAGED_QUALITY, true, Set.of()), preferredOrder);
+                    Leg good = withAudioPreference(leg(953, aliases, 2, 2, 1, 2, 9100,
+                        1_000, 2_000, GOOD_QUALITY, true, Set.of()), laterOrder);
+                    emitLeg(coordinator, damaged, fingerprints(952));
+                    emitLeg(coordinator, good, fingerprints(952));
+                    await(() -> resolved.size() == 1);
+                    assertEquals(preferredOrder != null && laterOrder == null ? damaged.callId() : good.callId(),
+                        resolved.getFirst().snapshot().callId());
+                }
+                finally { coordinator.dispose(); }
+            }
+        }
+    }
+
+    @Test
+    void preferenceCannotSelectNoAudioZeroUsableOrFilterRejectedCopy() throws Exception
+    {
+        for(int unusable = 0; unusable < 3; unusable++)
+        {
+            List<CompletedAudioCall> resolved = new CopyOnWriteArrayList<>();
+            List<CompletedAudioCall> recorded = new CopyOnWriteArrayList<>();
+            List<LogicalCallDiagnosticDecision> decisions = new CopyOnWriteArrayList<>();
+            AudioCallCoordinator coordinator = preferenceCoordinator(resolved, recorded, null, null, decisions,
+                unusable == 2 ? new CallFilteringSettings(true, 50) : CallFilteringSettings.DISABLED);
+            try
+            {
+                AliasList aliases = aliasList(954);
+                VoiceCallQuality damagedQuality = unusable == 1 ? new VoiceCallQuality(0, 0, 50, 0, 0, 1_000) :
+                    DAMAGED_QUALITY;
+                Leg damaged = withAudioPreference(leg(954, aliases, 2, 2, 1, 1, 9100,
+                    1_000, 2_000, damagedQuality, true, Set.of()), 1);
+                Leg good = leg(955, aliases, 2, 2, 1, 2, 9100,
+                    1_000, 2_000, GOOD_QUALITY, true, Set.of());
+                emitLeg(coordinator, damaged, unusable == 0 ? List.of() : fingerprints(954));
+                emitLeg(coordinator, good, fingerprints(954));
+                await(() -> recorded.size() == 1 && decisions.size() == 1);
+                assertEquals(good.callId(), resolved.getFirst().snapshot().callId());
+                assertNull(decisions.getFirst().legs().stream()
+                    .filter(copy -> copy.legId().equals(damaged.callLegId().toString()))
+                    .findFirst().orElseThrow().audioPreferenceOrder());
+                assertEquals(LogicalCallWinnerCriterion.USABLE_FRAME_COUNT, decisions.getFirst().winner().criterion());
+            }
+            finally { coordinator.dispose(); }
+        }
+    }
+
+    @Test
+    void preferenceQualityGuardUsesSharedCallDurationRatherThanTheShortCopiesOwnPercentage() throws Exception
+    {
+        List<CompletedAudioCall> resolved = new CopyOnWriteArrayList<>();
+        List<CompletedAudioCall> recorded = new CopyOnWriteArrayList<>();
+        List<LogicalCallDiagnosticDecision> decisions = new CopyOnWriteArrayList<>();
+        AudioCallCoordinator coordinator = preferenceCoordinator(resolved, recorded, null, null, decisions,
+            new CallFilteringSettings(true, 50));
+        try
+        {
+            AliasList aliases = aliasList(958);
+            Leg shortPreferred = withAudioPreference(leg(958, aliases, 2, 2, 1, 1, 9100,
+                1_000, 1_200, new VoiceCallQuality(10, 0, 0, 0, 0, 1_000), true, Set.of()), 1);
+            Leg complete = leg(959, aliases, 2, 2, 1, 2, 9100,
+                1_000, 3_000, GOOD_QUALITY, true, Set.of());
+            assertEquals(100.0, shortPreferred.quality().qualityPercent());
+            emitLeg(coordinator, shortPreferred, fingerprints(958));
+            emitLeg(coordinator, complete, fingerprints(958));
+            await(() -> recorded.size() == 1 && decisions.size() == 1);
+            assertEquals(complete.callId(), resolved.getFirst().snapshot().callId());
+            assertEquals(50.0, resolved.getFirst().snapshot().voiceCallQuality().qualityPercent());
+        }
+        finally { coordinator.dispose(); }
+    }
+
+    @Test
+    void preferenceNeverOverridesConflictingCallerIdentity() throws Exception
+    {
+        List<CompletedAudioCall> resolved = new CopyOnWriteArrayList<>();
+        AudioCallCoordinator coordinator = coordinator(resolved, null, null, null);
+        try
+        {
+            AliasList aliases = aliasList(956);
+            Leg preferred = withAudioPreference(leg(956, aliases, 2, 2, 1, 1, 9100, 9001,
+                1_000, 2_000, GOOD_QUALITY, true, Set.of()), 1);
+            Leg distinctCaller = leg(957, aliases, 2, 2, 1, 2, 9100, 9002,
+                1_000, 2_000, GOOD_QUALITY, true, Set.of());
+            emitLeg(coordinator, preferred, fingerprints(956));
+            emitLeg(coordinator, distinctCaller, fingerprints(956));
+            await(() -> resolved.size() == 2);
+            assertTrue(resolved.stream().allMatch(call -> call.callLegSummaries().size() == 1));
+        }
+        finally { coordinator.dispose(); }
+    }
+
+    private static AudioCallCoordinator preferenceCoordinator(List<CompletedAudioCall> resolved,
+        List<CompletedAudioCall> recorded, List<CompletedAudioCall> streamed, List<CompletedAudioCall> web,
+        List<LogicalCallDiagnosticDecision> decisions, CallFilteringSettings filtering)
+    {
+        return new AudioCallCoordinator(resolved::add, recorded != null ? recorded::add : null,
+            streamed != null ? streamed::add : null, web != null ? web::add : null,
+            new AudioCallCoordinator.ResolverConfiguration(256, 32, 25, 150, 32, 16, 1_000_000, 4_000_000),
+            decision -> { decisions.add(decision); return true; }, () -> filtering, null);
+    }
+
+    private static Leg withAudioPreference(Leg leg, Integer order)
+    {
+        return new Leg(leg.callId(), leg.callLegId(), leg.aliasList(), leg.source().withAudioPreferenceOrder(order),
+            leg.talkgroup(), leg.radio(), leg.start(), leg.end(), leg.quality(), leg.record(), leg.routes(),
+            leg.encrypted(), leg.callEncryptionEvidence());
+    }
+
+    @Test
     void usableVoiceCoverageWinsBeforeOneExtraConcealedFrame() throws Exception
     {
         AliasList aliasList = aliasList(720);

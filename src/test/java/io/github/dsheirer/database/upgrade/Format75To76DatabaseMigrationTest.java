@@ -64,7 +64,7 @@ class Format75To76DatabaseMigrationTest
                 connection.commit();
                 assertEquals(trees, trees(connection));
             }
-            ConfigurationHistoryDatabase.validatePair(database);
+            ConfigurationHistoryDatabase.validatePairIdentity(database);
         }
     }
 

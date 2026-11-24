@@ -67,6 +67,9 @@ class ConfigurationDatabaseStoreTest
         channel.setAliasListName("County Aliases");
         channel.setAutoStart(true);
         channel.setAutoStartOrder(2);
+        assertFalse(channel.getUseAutoStartOrderForAudio());
+        channel.setUseAutoStartOrderForAudio(true);
+        assertTrue(channel.copyOf().getUseAutoStartOrderForAudio());
         channel.setRadioResolveId("11111111-2222-3333-4444-555555555555");
         channel.setP25SiteIdentity(new P25SiteIdentity(0xBEE00, 0x123, 1, 2));
 
@@ -118,6 +121,7 @@ class ConfigurationDatabaseStoreTest
         assertEquals(new P25SiteIdentity(0xBEE00, 0x123, 1, 2), loadedChannel.getP25SiteIdentity());
         assertTrue(loadedChannel.getAutoStart());
         assertEquals(2, loadedChannel.getAutoStartOrder());
+        assertTrue(loadedChannel.getUseAutoStartOrderForAudio());
         assertInstanceOf(SourceConfigTuner.class, loadedChannel.getSourceConfiguration());
         assertInstanceOf(DecodeConfigP25Phase1.class, loadedChannel.getDecodeConfiguration());
         DecodeConfigP25Phase1 loadedDecodeConfig = (DecodeConfigP25Phase1)loadedChannel.getDecodeConfiguration();
@@ -151,7 +155,9 @@ class ConfigurationDatabaseStoreTest
             try(ResultSet resultSet = statement.executeQuery("""
                 SELECT decoder_type, primary_frequency_hz,
                        json_type(config_json, '$.configurationId') AS configuration_id_json,
-                       json_type(config_json, '$.aliasListName') AS alias_list_name_json
+                       json_type(config_json, '$.aliasListName') AS alias_list_name_json,
+                       use_auto_start_order_for_audio,
+                       json_type(config_json, '$.useAutoStartOrderForAudio') AS audio_order_json
                 FROM configuration_channel
                 """))
             {
@@ -160,6 +166,8 @@ class ConfigurationDatabaseStoreTest
                 assertEquals(853_762_500L, resultSet.getLong("primary_frequency_hz"));
                 assertNull(resultSet.getString("configuration_id_json"));
                 assertNull(resultSet.getString("alias_list_name_json"));
+                assertEquals(1, resultSet.getInt("use_auto_start_order_for_audio"));
+                assertNull(resultSet.getString("audio_order_json"));
             }
 
             try(ResultSet resultSet = statement.executeQuery("""

@@ -274,7 +274,7 @@ ambiguous markerless state instead of guessing which build produced it.
 Migration steps form one ordered chain:
 
 ```text
-format 2 (Alpha 12 family) -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 -> format 11 -> format 12 -> format 13 -> format 14 -> format 15 -> format 16 -> format 17 -> format 18 -> format 19 -> format 20 -> format 21 -> format 22 -> format 23 -> format 24 -> format 25 -> format 26 -> format 27 -> format 28 -> format 29 -> format 30 -> format 31 -> format 32 -> format 33 -> format 34 -> format 35 -> format 36 -> format 37 -> format 38 -> format 39 -> format 40 -> format 41 -> format 42 -> format 43 -> format 44 -> format 45 -> format 46 -> format 47 -> format 48 -> format 49 -> format 50 -> format 51 -> format 52 -> format 53 -> format 54 -> format 55 -> format 56 -> format 57 -> format 58 -> format 59 -> format 60 -> format 61 -> format 62 -> format 63 -> format 64 -> format 65 -> format 66 -> format 67 -> format 68 -> format 69 -> format 70 -> format 71 -> format 72 -> format 73 -> format 74 -> format 75 -> format 76 (current)
+format 2 (Alpha 12 family) -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 -> format 11 -> format 12 -> format 13 -> format 14 -> format 15 -> format 16 -> format 17 -> format 18 -> format 19 -> format 20 -> format 21 -> format 22 -> format 23 -> format 24 -> format 25 -> format 26 -> format 27 -> format 28 -> format 29 -> format 30 -> format 31 -> format 32 -> format 33 -> format 34 -> format 35 -> format 36 -> format 37 -> format 38 -> format 39 -> format 40 -> format 41 -> format 42 -> format 43 -> format 44 -> format 45 -> format 46 -> format 47 -> format 48 -> format 49 -> format 50 -> format 51 -> format 52 -> format 53 -> format 54 -> format 55 -> format 56 -> format 57 -> format 58 -> format 59 -> format 60 -> format 61 -> format 62 -> format 63 -> format 64 -> format 65 -> format 66 -> format 67 -> format 68 -> format 69 -> format 70 -> format 71 -> format 72 -> format 73 -> format 74 -> format 75 -> format 76 -> format 77 (current)
 ```
 
 Each step owns exactly one `N -> N+1` transformation. The runner repeatedly applies the next registered step until it
@@ -453,6 +453,14 @@ covers the small configuration transaction and bounded key settings; the existin
 separate free-space headroom apply. Cost scales with configured keys, rather than retained reception history.
 The populated format-75 fixture remains frozen and supported. Runtime startup validates the required setting;
 only fresh creation and the Application Migrator create it.
+
+The format 76-to-77 step adds an explicit per-channel choice to use auto-start order when choosing duplicate
+P25 audio. It begins disabled on every existing channel; channel identity, startup position and every other setting
+remain unchanged. The native column addition preserves the configuration table and its indexes. SQLite validates
+its boolean check against the bounded saved-channel rows. No retained Activity table or index is scanned, copied,
+rewritten, rebuilt or counted; only the matching format markers advance. Workspace scales with configuration
+inventory and the existing configuration allowance, with free-space headroom separate. Format 76 remains an exact
+populated source. Fresh creation has the same appended field and normal startup validates without migration.
 
 ## Shared Upgrade And Import Boundary
 
@@ -1192,7 +1200,7 @@ availability; measured zero remains distinct from unavailable. The adjacent form
 existing field, row, relationship, transcript, index, counter and allocator. Historical quality remains unknown;
 the update neither reads audio files nor guesses measurements. The populated format-11 fixture remains frozen and
 supported. The main application database is independently at
-format 76; recording-catalog migrations do not change it. Recognized older catalogs are updated in one transaction
+format 77; recording-catalog migrations do not change it. Recognized older catalogs are updated in one transaction
 at the pre-receiver setup boundary under the same manual-backup policy, without an additional automatic upgrade
 backup. Normal catalog startup validates only. A catalog upgrade failure offers retry or continuation with
 Managed Recordings unavailable, so optional catalog trouble does not prevent ordinary receiving.

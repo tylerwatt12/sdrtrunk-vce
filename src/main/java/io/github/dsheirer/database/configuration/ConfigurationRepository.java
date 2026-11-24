@@ -293,6 +293,15 @@ public final class ConfigurationRepository
             channels.channels(), channels.broadcastConfigurations());
     }
 
+    /** Frozen split-stage snapshot, read before the attached post-format-69 transaction commits. */
+    public ConfigurationSnapshot loadFormat69Configuration(Connection connection) throws IOException, SQLException
+    {
+        AliasConfigurationSnapshot aliases = loadAliasConfiguration(connection);
+        ChannelAndBroadcastConfiguration channels = mChannelAndBroadcastStore.loadFormat69Configuration(connection);
+        return new ConfigurationSnapshot(aliases.definitions(), aliases.aliases(), aliases.scanLists(),
+            channels.channels(), channels.broadcastConfigurations());
+    }
+
     private AliasConfigurationSnapshot loadAliasConfiguration(Connection connection) throws SQLException
     {
         List<AliasListDefinition> definitions = mAliasStore.loadAliasListDefinitions(connection);

@@ -549,7 +549,8 @@ public final class ChannelAdminHttpController
                                        Map<String,Object> settings, List<FrequencyMapRequest> frequencyMap,
                                        List<String> eventLogs, List<String> recorders,
                                        List<String> auxiliaryDecoders, String editRevision,
-                                       ChannelDefinition original, Boolean allowRestart, Boolean rejectExistingFrequency)
+                                       ChannelDefinition original, Boolean allowRestart, Boolean rejectExistingFrequency,
+                                       Boolean useAutoStartOrderForAudio)
     {
         private ChannelDefinition definition(String configurationId)
         {
@@ -558,7 +559,7 @@ public final class ChannelAdminHttpController
             return new ChannelDefinition(configurationId, protocolId, system, site, name, radioResolveId, aliasListId,
                 source.definition(), settings, frequencyMap != null ? frequencyMap.stream()
                     .map(FrequencyMapRequest::definition).toList() : List.of(), eventLogs, recorders,
-                auxiliaryDecoders, ChannelDefinition.Observed.EMPTY);
+                auxiliaryDecoders, ChannelDefinition.Observed.EMPTY, Boolean.TRUE.equals(useAutoStartOrderForAudio));
         }
     }
 

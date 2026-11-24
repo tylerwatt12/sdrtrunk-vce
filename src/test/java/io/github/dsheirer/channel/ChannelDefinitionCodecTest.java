@@ -72,6 +72,28 @@ class ChannelDefinitionCodecTest
     }
 
     @Test
+    void bothP25PhasesRoundTripAudioPreferenceWithoutEnablingAutoStart()
+    {
+        AliasListDefinition list = aliasList(21, AliasListFamily.P25);
+        for(String protocol: List.of("p25-phase1", "p25-phase2"))
+        {
+            ChannelDefinition initial = definition(protocol, list.getId(), mRegistry.require(protocol).defaultSettings(),
+                List.of(851_012_500L), true);
+            assertFalse(initial.useAutoStartOrderForAudio());
+            ChannelDefinition enabled = new ChannelDefinition(null, initial.protocolId(), initial.system(),
+                initial.site(), initial.name(), initial.radioResolveId(), initial.aliasListId(), initial.source(),
+                initial.settings(), initial.frequencyMap(), initial.eventLogs(), initial.recorders(),
+                initial.auxiliaryDecoders(), initial.observed(), true);
+            Channel channel = mCodec.toChannel(enabled, list, null);
+            assertTrue(channel.getUseAutoStartOrderForAudio());
+            assertFalse(channel.getAutoStart());
+            assertNull(channel.getAutoStartOrder());
+            assertTrue(mCodec.fromChannel(channel).useAutoStartOrderForAudio());
+            assertTrue(mCodec.cloneChannel(channel, list).getUseAutoStartOrderForAudio());
+        }
+    }
+
+    @Test
     void remoteP25SourceRoundTripsStableRoutingIdentity()
     {
         AliasListDefinition list = aliasList(20, AliasListFamily.P25);

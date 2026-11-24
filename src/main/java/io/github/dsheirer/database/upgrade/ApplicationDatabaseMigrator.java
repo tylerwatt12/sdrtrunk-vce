@@ -1733,7 +1733,11 @@ public final class ApplicationDatabaseMigrator
             Path extracted=io.github.dsheirer.database.ActivityDatabasePath.configurationStage(database);
             try(Connection configuration=io.github.dsheirer.database.ConfigurationHistoryDatabase.openReadOnly(extracted))
             {
-                ConfigurationSnapshotValidator.validateForStartup(new ConfigurationRepository(extracted).load(configuration));
+                // The split extraction is independently committed through exact format 69 before its
+                // native Activity ALTER takes an attached read lock. Later target schema/settings are checked
+                // on the caller's transaction above; this independent connection sees that committed predecessor.
+                ConfigurationSnapshotValidator.validateForStartup(
+                    new ConfigurationRepository(extracted).loadFormat69Configuration(configuration));
             }
             return;
         }

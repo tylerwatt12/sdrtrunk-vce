@@ -325,6 +325,12 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
         mChannelActivityModel = channelActivityModel;
     }
 
+    /** Current parent preference for a traffic chain whose startup may have waited in the lifecycle queue. */
+    public io.github.dsheirer.audio.call.AudioPreferenceOrderEvent captureAudioPreferenceOrder()
+    {
+        return io.github.dsheirer.audio.call.AudioPreferenceOrderEvent.capture(mParentChannel);
+    }
+
     /**
      * Talker alias manager
      * @return manager
@@ -931,6 +937,9 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
         trafficChannel.setSystem(mParentChannel.getSystem());
         trafficChannel.setSite(mParentChannel.getSite());
         trafficChannel.setConfigurationId(mParentChannel.getConfigurationId());
+        trafficChannel.setAutoStart(mParentChannel.isAutoStart());
+        trafficChannel.setAutoStartOrder(mParentChannel.getAutoStartOrder());
+        trafficChannel.setUseAutoStartOrderForAudio(mParentChannel.getUseAutoStartOrderForAudio());
         trafficChannel.setRadioResolveId(mParentChannel.getRadioResolveId());
         trafficChannel.setP25SiteIdentity(mParentChannel.getP25SiteIdentity());
         trafficChannel.setSiteEvidenceProcessingIncarnation(mParentChannel.getProcessingIncarnation());

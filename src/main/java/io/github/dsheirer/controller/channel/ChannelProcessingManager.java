@@ -1665,6 +1665,12 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
 
             if(addProcessingChain(channel, processingChain))
             {
+                //A traffic allocation can wait across a startup-order edit. Publish its current parent preference
+                //after mapping the chain so a concurrent reorder either sees this chain or precedes this capture.
+                processingChain.getEventBus().post(request.getTrafficChannelManager() instanceof
+                    io.github.dsheirer.module.decode.p25.P25TrafficChannelManager p25Manager ?
+                    p25Manager.captureAudioPreferenceOrder() :
+                    io.github.dsheirer.audio.call.AudioPreferenceOrderEvent.capture(channel));
                 long siteEvidenceIncarnation = channel.getSiteEvidenceProcessingIncarnation();
                 long siteEvidenceTuningGeneration = channel.getSiteEvidenceTuningGeneration();
 

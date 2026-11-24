@@ -50,7 +50,7 @@ class Format64To65DatabaseMigrationTest
             assertEquals(before.size(), effects.getFirst().affectedRows());
             assertConverted(before, preferences(connection));
             assertEquals(retained, retainedRows(connection));
-            assertEquals(ConfigurationHistoryDatabase.CONFIGURATION_FINGERPRINT, SqliteSchemaValidator.fingerprint(connection));
+            assertEquals(ConfigurationHistoryDatabase.FORMAT_63_CONFIGURATION_FINGERPRINT, SqliteSchemaValidator.fingerprint(connection));
             assertEquals(65, DatabaseFormatCatalog.inspect(connection).version());
             connection.rollback();
             assertEquals(64, DatabaseFormatCatalog.inspect(connection).version());

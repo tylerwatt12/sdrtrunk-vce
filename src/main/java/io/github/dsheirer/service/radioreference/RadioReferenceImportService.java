@@ -587,7 +587,7 @@ public final class RadioReferenceImportService
         ChannelDefinition replacement = new ChannelDefinition(current.configurationId(), current.protocolId(),
             pending.system(), pending.site(), name, current.radioResolveId(), current.aliasListId(), current.source(),
             current.settings(), current.frequencyMap(), current.eventLogs(), current.recorders(),
-            current.auxiliaryDecoders(), current.observed());
+            current.auxiliaryDecoders(), current.observed(), current.useAutoStartOrderForAudio());
         ChannelAdministrationService.MutationResult mutation = pending.identity() != null ?
             mChannels.updateP25Names(pending.configurationId(), replacement, entry.revision(), pending.identity()) :
             mChannels.update(pending.configurationId(), replacement, entry.revision());
@@ -1010,7 +1010,7 @@ public final class RadioReferenceImportService
         return new ChannelDefinition(existing.configurationId(), existing.protocolId(), existing.system(),
             existing.site(), existing.name(), existing.radioResolveId(), existing.aliasListId(), source,
             existing.settings(), existing.frequencyMap(), existing.eventLogs(), existing.recorders(),
-            existing.auxiliaryDecoders(), existing.observed());
+            existing.auxiliaryDecoders(), existing.observed(), existing.useAutoStartOrderForAudio());
     }
 
     static List<Long> selectSiteFrequencies(TrunkedSiteDetails site, FrequencySet set,

@@ -9,6 +9,7 @@ package io.github.dsheirer.audio.call.diagnostic;
 public enum LogicalCallWinnerCriterion
 {
     SINGLE_LEG,
+    AUTO_START_ORDER,
     MISSING_AND_CONCEALED_RATE,
     USABLE_FRAME_COUNT,
     REPEATED_FRAME_RATE,

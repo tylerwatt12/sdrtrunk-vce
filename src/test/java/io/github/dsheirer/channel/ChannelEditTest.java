@@ -52,6 +52,21 @@ class ChannelEditTest
     }
 
     @Test
+    void audioPreferenceParticipatesInEditVersionsAndIndependentFieldMerges()
+    {
+        ChannelDefinition original = definition("Control", List.of(851_012_500L), null, Map.of());
+        ChannelDefinition preferred = new ChannelDefinition(original.configurationId(), original.protocolId(),
+            original.system(), original.site(), original.name(), original.radioResolveId(), original.aliasListId(),
+            original.source(), original.settings(), original.frequencyMap(), original.eventLogs(),
+            original.recorders(), original.auxiliaryDecoders(), original.observed(), true);
+        assertNotEquals(ChannelEdit.version(original), ChannelEdit.version(preferred));
+        ChannelDefinition rename = definition("Renamed", original.source().frequenciesHz(), null, Map.of());
+        ChannelDefinition merged = ChannelEdit.merge(ID, ChannelEdit.version(original), original, rename, preferred);
+        assertTrue(merged.useAutoStartOrderForAudio());
+        assertEquals("Renamed", merged.name());
+    }
+
+    @Test
     void conflictingNamesFrequenciesAndDecoderSettingsAreRejected()
     {
         ChannelDefinition original = definition("Control", List.of(851_012_500L), null, Map.of("pool", 10));

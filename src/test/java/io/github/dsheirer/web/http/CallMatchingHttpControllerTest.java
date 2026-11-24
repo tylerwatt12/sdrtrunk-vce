@@ -250,6 +250,8 @@ class CallMatchingHttpControllerTest
             assertEquals(2, duplicate.at("/legs/2/configuration_ref").intValue());
             assertEquals(851_012_500L, duplicate.at("/legs/0/frequency_hz").longValue());
             assertEquals(2, duplicate.at("/legs/0/timeslot").intValue());
+            assertEquals(2, duplicate.at("/legs/0/audio_preference_order").intValue());
+            assertTrue(duplicate.at("/legs/1/audio_preference_order").isNull());
             assertTrue(duplicate.at("/legs/2/frequency_hz").isNull());
             assertTrue(duplicate.at("/legs/2/timeslot").isNull());
             assertFalse(exchange.body().contains(sharedConfiguration));
@@ -435,7 +437,7 @@ class CallMatchingHttpControllerTest
             channelName, "radio-resolve-internal-id", 91, 1, 2, 3, 4,
             index == 20 ? 1_500 : 1_000, index == 20 ? 2_500 : 2_000, 1_000,
             50, 50, 48, 47, 1, 1, 1, 2, 100, 96.0, 4.0, 2.0, 2.0,
-            8_000, false, false, selected, frequencyHz, timeslot);
+            8_000, false, false, selected, frequencyHz, timeslot, selected ? 2 : null);
     }
 
     private static void assertNoPathField(JsonNode node)

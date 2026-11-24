@@ -11,10 +11,12 @@ final class CallQualityFilter
 
     static boolean accepts(AudioCallSnapshot snapshot, CallFilteringSettings settings)
     {
-        if(!settings.enabled()) return true;
+        return accepts(snapshot.callLegSource().decoderType(), snapshot.voiceCallQuality(), settings);
+    }
 
-        DecoderType decoder = snapshot.callLegSource().decoderType();
-        VoiceCallQuality quality = snapshot.voiceCallQuality();
+    static boolean accepts(DecoderType decoder, VoiceCallQuality quality, CallFilteringSettings settings)
+    {
+        if(!settings.enabled()) return true;
         //Unmeasured audio is not measured damage. Analog and metadata-only calls retain their existing behavior.
         return decoder == null || !decoder.providesMBEAudioFrames() || !quality.hasMeasurements() ||
             quality.qualityPercent() >= settings.minimumUsableVoicePercent();

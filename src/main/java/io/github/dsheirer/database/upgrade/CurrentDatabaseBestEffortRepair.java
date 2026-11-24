@@ -52,7 +52,7 @@ final class CurrentDatabaseBestEffortRepair
         .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
     private static final List<String> CHANNEL_ROW_OWNED_JSON_FIELDS = List.of(
         "configurationId", "system", "site", "name", "aliasListId", "aliasListName", "radioResolveId",
-        "radresGuid", "radres_guid", "autoStart", "enabled", "autoStartOrder", "order", "channelType");
+        "radresGuid", "radres_guid", "autoStart", "enabled", "autoStartOrder", "order", "channelType", "useAutoStartOrderForAudio");
     private static final Set<String> REPAIRABLE_FOREIGN_KEY_TABLES = Set.of(
         "alias", "alias_broadcast_channel", "alias_list_unmatched_talkgroup_stream", "alias_scan_list_membership",
         "alias_list_unmatched_talkgroup_scan_list_membership", "alias_list_new_alias_stream",
@@ -609,6 +609,7 @@ final class CurrentDatabaseBestEffortRepair
         Map<Long,ChannelRepair> repairs = new LinkedHashMap<>();
         Set<String> reservedConfigurationIds = reservedCanonicalIds(connection, "configuration_channel");
         Set<String> retainedConfigurationIds = new LinkedHashSet<>();
+        boolean hasAudioOrderPreference = hasAudioOrderPreference(connection);
         String sql = """
             SELECT rowid AS physical_rowid, id,
                    typeof(configuration_id) AS configuration_id_type,
@@ -639,6 +640,7 @@ final class CurrentDatabaseBestEffortRepair
                         THEN radioresolve_id END AS radioresolve_id,
                    typeof(auto_start) AS auto_start_type,
                    CASE WHEN typeof(auto_start)='integer' THEN auto_start END AS auto_start,
+                   %2$s AS use_auto_start_order_for_audio,
                    typeof(auto_start_order) AS auto_start_order_type,
                    CASE WHEN typeof(auto_start_order)='integer' THEN auto_start_order END AS auto_start_order,
                    typeof(decoder_type) AS decoder_type_type,
@@ -654,7 +656,8 @@ final class CurrentDatabaseBestEffortRepair
                    CASE WHEN typeof(config_json)='text' AND length(CAST(config_json AS BLOB)) <= %1$d
                         THEN config_json END AS config_json
             FROM configuration_channel ORDER BY rowid
-            """.formatted(MAXIMUM_CONFIGURATION_JSON_BYTES);
+            """.formatted(MAXIMUM_CONFIGURATION_JSON_BYTES,
+                hasAudioOrderPreference ? "use_auto_start_order_for_audio" : "0");
         try(Statement statement = connection.createStatement(); ResultSet rows = statement.executeQuery(sql))
         {
             int sourceOrder = 0;
@@ -755,6 +758,8 @@ final class CurrentDatabaseBestEffortRepair
         String radioResolveId = tryCanonicalUuid(storedRadioResolveId);
         boolean autoStart = booleanInteger(row.getObject("auto_start")) &&
             ((Number)row.getObject("auto_start")).intValue() == 1;
+        boolean useAudioOrder = booleanInteger(row.getObject("use_auto_start_order_for_audio")) &&
+            ((Number)row.getObject("use_auto_start_order_for_audio")).intValue() == 1;
         Integer autoStartOrder = nullableInt(row.getObject("auto_start_order")) ?
             (row.getObject("auto_start_order") == null ? null :
                 ((Number)row.getObject("auto_start_order")).intValue()) : null;
@@ -771,7 +776,9 @@ final class CurrentDatabaseBestEffortRepair
             !boundedNullableText(row, "name", MAXIMUM_CONFIGURATION_JSON_BYTES) ||
             !boundedNullableText(row, "radioresolve_id", 128) ||
             !Objects.equals(storedRadioResolveId, radioResolveId) ||
-            !booleanInteger(row.getObject("auto_start")) || !validAutoStartOrder || !validPrimaryFrequency ||
+            !booleanInteger(row.getObject("auto_start")) ||
+            !booleanInteger(row.getObject("use_auto_start_order_for_audio")) ||
+            !validAutoStartOrder || !validPrimaryFrequency ||
             !Objects.equals(channelKind, row.getObject("channel_kind")) ||
             !Objects.equals(projection.decoderType(), row.getObject("decoder_type")) ||
             !Objects.equals(projection.addressDomainCode(), integerValue(row.getObject("address_domain_code"))) ||
@@ -783,7 +790,7 @@ final class CurrentDatabaseBestEffortRepair
             return null;
         }
         return new ChannelRepair(configurationId, sortOrder, systemName, siteName, name, radioResolveId, autoStart,
-            autoStartOrder, channelKind, projection, MAPPER.writeValueAsString(parsed));
+            autoStartOrder, useAudioOrder, channelKind, projection, MAPPER.writeValueAsString(parsed));
     }
 
     private static ProviderInspection inspectProviders(Connection connection) throws SQLException
@@ -1336,19 +1343,27 @@ final class CurrentDatabaseBestEffortRepair
         };
     }
 
+    private static boolean hasAudioOrderPreference(Connection connection) throws SQLException
+    {
+        String version = io.github.dsheirer.database.ConfigurationHistorySchema.metadata(connection,
+            DatabaseFormatCatalog.FORMAT_VERSION_KEY);
+        return version != null && Integer.parseInt(version) >= 77;
+    }
+
     private static void applyChannelRepairs(Connection connection, Map<Long,ChannelRepair> repairs)
         throws SQLException
     {
         Map<Long,String> targetConfigurationIds = new LinkedHashMap<>();
         repairs.forEach((rowId, repair) -> targetConfigurationIds.put(rowId, repair.configurationId()));
         applyTemporaryConfigurationIds(connection, "configuration_channel", targetConfigurationIds);
+        boolean hasAudioOrderPreference = hasAudioOrderPreference(connection);
         try(PreparedStatement statement = connection.prepareStatement("""
             UPDATE configuration_channel
             SET configuration_id=?, sort_order=?, system_name=?, site_name=?, name=?, radioresolve_id=?,
                 auto_start=?, auto_start_order=?,
                 channel_kind=?, decoder_type=?, address_domain_code=?, primary_frequency_hz=?, config_json=?
-            WHERE rowid=?
-            """))
+                %s WHERE rowid=?
+            """.formatted(hasAudioOrderPreference ? ", use_auto_start_order_for_audio=?" : "")))
         {
             for(Map.Entry<Long,ChannelRepair> entry: repairs.entrySet())
             {
@@ -1371,7 +1386,8 @@ final class CurrentDatabaseBestEffortRepair
                 statement.setString(9, repair.channelKind());
                 repair.projection().bind(statement, 10);
                 statement.setString(13, repair.payload());
-                statement.setLong(14, entry.getKey());
+                if(hasAudioOrderPreference) statement.setInt(14, repair.useAudioOrder() ? 1 : 0);
+                statement.setLong(hasAudioOrderPreference ? 15 : 14, entry.getKey());
                 if(statement.executeUpdate() != 1)
                 {
                     throw new SQLException("Accepted saved channel changed during current-format repair");
@@ -2085,7 +2101,7 @@ final class CurrentDatabaseBestEffortRepair
     }
 
     private record ChannelRepair(String configurationId, int sortOrder, String systemName, String siteName, String name,
-                                 String radioResolveId, boolean autoStart, Integer autoStartOrder,
+                                 String radioResolveId, boolean autoStart, Integer autoStartOrder, boolean useAudioOrder,
                                  String channelKind, ConfigurationChannelProjection projection, String payload)
     {
     }

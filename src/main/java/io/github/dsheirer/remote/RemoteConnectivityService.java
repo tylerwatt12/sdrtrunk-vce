@@ -1001,7 +1001,7 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
             ChannelDefinition updated = new ChannelDefinition(current.configurationId(), current.protocolId(),
                 current.system(), current.site(), name, current.radioResolveId(), aliasListId, current.source(),
                 current.settings(), current.frequencyMap(), current.eventLogs(), current.recorders(),
-                current.auxiliaryDecoders(), current.observed());
+                current.auxiliaryDecoders(), current.observed(), current.useAutoStartOrderForAudio());
             mChannels.update(channel.getConfigurationId(), updated, entry.revision());
         });
         retryChannelMutation(() -> mChannels.setAutoStart(List.of(channel.getConfigurationId()), enabled,

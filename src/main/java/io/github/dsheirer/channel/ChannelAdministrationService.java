@@ -721,7 +721,8 @@ public final class ChannelAdministrationService
         ChannelDefinition source = request.definition();
         ChannelDefinition definition = new ChannelDefinition(source.configurationId(), source.protocolId(), source.system(),
             source.site(), source.name(), source.radioResolveId(), aliasListId, source.source(), source.settings(),
-            source.frequencyMap(), source.eventLogs(), source.recorders(), source.auxiliaryDecoders(), source.observed());
+            source.frequencyMap(), source.eventLogs(), source.recorders(), source.auxiliaryDecoders(), source.observed(),
+            source.useAutoStartOrderForAudio());
         return new DiscoveryRequest(definition, request.p25Identity(), request.evidence(), null, request.autoStart());
     }
 
@@ -783,7 +784,8 @@ public final class ChannelAdministrationService
         ChannelDefinition normalized = new ChannelDefinition(null, definition.protocolId(), definition.system(),
             definition.site(), definition.name(), null, selected.getId(), definition.source(),
             evidence != null ? discoveryTrunkedSettings(profile, definition.settings(), evidence) : definition.settings(),
-            evidence != null ? evidence.frequencyMap() : List.of(), List.of(), List.of(), List.of(), ChannelDefinition.Observed.EMPTY);
+            evidence != null ? evidence.frequencyMap() : List.of(), List.of(), List.of(), List.of(),
+            ChannelDefinition.Observed.EMPTY, definition.useAutoStartOrderForAudio());
         Channel created = mCodec.toChannel(normalized, selected, null);
         if(created.getDecodeConfiguration() instanceof DecodeConfigP25 p25)
         {
@@ -949,7 +951,7 @@ public final class ChannelAdministrationService
             ChannelDefinition normalized = new ChannelDefinition(id, merged.protocolId(), merged.system(),
                 merged.site(), merged.name(), merged.radioResolveId(), merged.aliasListId(),
                 merged.source(), merged.settings(), merged.frequencyMap(), merged.eventLogs(),
-                merged.recorders(), merged.auxiliaryDecoders(), merged.observed());
+                merged.recorders(), merged.auxiliaryDecoders(), merged.observed(), merged.useAutoStartOrderForAudio());
             Channel replacement = mCodec.toChannel(normalized, requireAliasList(merged.aliasListId()), existing);
             channels.set(index, replacement);
             requireUniqueRadioResolveIds(channels);

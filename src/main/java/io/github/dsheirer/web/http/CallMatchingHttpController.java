@@ -476,7 +476,7 @@ public final class CallMatchingHttpController
                 overlap.overlapMilliseconds(), overlap.shorterCopyOverlapPercent(),
                 overlap.selectedCopyCoveragePercent(), overlap.startOffsetFromSelectedMilliseconds(),
                 overlap.endOffsetFromSelectedMilliseconds()) : null,
-            configurationRef, leg.frequencyHz(), leg.timeslot());
+            configurationRef, leg.frequencyHz(), leg.timeslot(), leg.audioPreferenceOrder());
     }
 
     private static EvidenceView evidence(LogicalCallDiagnosticEvidence evidence)
@@ -611,7 +611,7 @@ public final class CallMatchingHttpController
                             double missingAndConcealedRate, double repeatedFrameRate,
                             double normalizedFecErrorRate, long retainedAudioSampleCount,
                             boolean ingressLoss, boolean audioTruncated, OverlapView overlap,
-                            Integer configurationRef, Long frequencyHz, Integer timeslot)
+                            Integer configurationRef, Long frequencyHz, Integer timeslot, Integer audioPreferenceOrder)
     {
     }
 

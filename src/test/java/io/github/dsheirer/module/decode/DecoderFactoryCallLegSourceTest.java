@@ -36,6 +36,41 @@ import org.junit.jupiter.api.Test;
 class DecoderFactoryCallLegSourceTest
 {
     @Test
+    void capturesOnlyAnOptedInPositiveAutoStartOrderForEitherP25Phase()
+    {
+        for(DecodeConfiguration configuration: List.of(
+            new io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1(),
+            new DecodeConfigP25Phase2()))
+        {
+            Channel channel = new Channel("Ordered site");
+            channel.setDecodeConfiguration(configuration);
+            channel.setAutoStart(true);
+            channel.setAutoStartOrder(3);
+            assertNull(DecoderFactory.createCallLegSource(channel, AliasList.empty("test")).audioPreferenceOrder());
+
+            channel.setUseAutoStartOrderForAudio(true);
+            CallLegSource captured = DecoderFactory.createCallLegSource(channel, AliasList.empty("test"));
+            assertEquals(3, captured.audioPreferenceOrder());
+            assertEquals(3, captured.asTrafficChannel().withRadioSystemKey(null).withServingSiteId(null)
+                .withSiteEvidenceProcessingIncarnation(2L).withSiteEvidenceTuningGeneration(3L)
+                .withSiteEvidenceGeneration(4L, 5L).audioPreferenceOrder(),
+                "Identity and lifecycle updates must preserve the captured preference");
+            channel.setAutoStartOrder(1);
+            assertEquals(3, captured.audioPreferenceOrder(), "An existing call keeps its captured rank");
+            assertEquals(1, DecoderFactory.createCallLegSource(channel, AliasList.empty("test")).audioPreferenceOrder());
+
+            channel.setAutoStart(false);
+            assertNull(DecoderFactory.createCallLegSource(channel, AliasList.empty("test")).audioPreferenceOrder());
+            channel.setAutoStart(true);
+            for(Integer unranked: new Integer[] {null, 0, -1})
+            {
+                channel.setAutoStartOrder(unranked);
+                assertNull(DecoderFactory.createCallLegSource(channel, AliasList.empty("test")).audioPreferenceOrder());
+            }
+        }
+    }
+
+    @Test
     void capturesDurableConfigurationAliasAndLearnedSiteIdentity()
     {
         Channel channel = new Channel("MARCS Site");

@@ -19,7 +19,7 @@ public record LogicalCallDiagnosticLeg(String legId, String decoder, String chan
                                        double missingAndConcealedRate, double repeatedFrameRate,
                                        double normalizedFecErrorRate, long retainedAudioSampleCount,
                                        boolean ingressLoss, boolean audioTruncated, boolean winner,
-                                       Long frequencyHz, Integer timeslot)
+                                       Long frequencyHz, Integer timeslot, Integer audioPreferenceOrder)
 {
     public LogicalCallDiagnosticLeg
     {
@@ -43,6 +43,28 @@ public record LogicalCallDiagnosticLeg(String legId, String decoder, String chan
         retainedAudioSampleCount = Math.max(0L, retainedAudioSampleCount);
         frequencyHz = frequencyHz != null && frequencyHz > 0L ? frequencyHz : null;
         timeslot = timeslot != null && timeslot > 0 ? timeslot : null;
+        audioPreferenceOrder = audioPreferenceOrder != null && audioPreferenceOrder > 0 ? audioPreferenceOrder : null;
+    }
+
+    /** Compatibility for diagnostics captured without an audio preference order. */
+    public LogicalCallDiagnosticLeg(String legId, String decoder, String channelConfigurationId,
+                                    String channelName, String radioResolveId, long durableAliasListId, Integer wacn,
+                                    Integer system, Integer rfss, Integer site, long startTimestamp, long endTimestamp,
+                                    long durationMilliseconds, long expectedFrameCount, long observedFrameCount,
+                                    long usableFrameCount, long decodedFrameCount, long repeatedFrameCount,
+                                    long concealedFrameCount, long missingFrameCount, long fecErrorCount,
+                                    long fecProtectedBitCount, double qualityPercent,
+                                    double missingAndConcealedRate, double repeatedFrameRate,
+                                    double normalizedFecErrorRate, long retainedAudioSampleCount,
+                                    boolean ingressLoss, boolean audioTruncated, boolean winner,
+                                    Long frequencyHz, Integer timeslot)
+    {
+        this(legId, decoder, channelConfigurationId, channelName, radioResolveId, durableAliasListId, wacn,
+            system, rfss, site, startTimestamp, endTimestamp, durationMilliseconds, expectedFrameCount,
+            observedFrameCount, usableFrameCount, decodedFrameCount, repeatedFrameCount, concealedFrameCount,
+            missingFrameCount, fecErrorCount, fecProtectedBitCount, qualityPercent, missingAndConcealedRate,
+            repeatedFrameRate, normalizedFecErrorRate, retainedAudioSampleCount, ingressLoss, audioTruncated,
+            winner, frequencyHz, timeslot, null);
     }
 
     /** Keeps callers that do not yet supply RF channel details compatible. */

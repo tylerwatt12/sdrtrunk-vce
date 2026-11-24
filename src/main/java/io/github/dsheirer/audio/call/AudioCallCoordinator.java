@@ -129,7 +129,7 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
     private final LogicalCallDiagnosticSink mDiagnosticSink;
     private final Map<CallLegId, ReceiverLeg> mActiveLegs = new HashMap<>();
     private final Map<Long, ResolutionCohort> mCohorts = new HashMap<>();
-    private final List<CompletedAudioCall> mPendingFanouts = new ArrayList<>();
+    private final List<PendingFanout> mPendingFanouts = new ArrayList<>();
     private final int[] mSharedFrameDeltaCounts = new int[SHARED_FRAME_DELTA_BUCKETS];
     private final int[] mSharedFrameDeltaMarks = new int[SHARED_FRAME_DELTA_BUCKETS];
     private final AtomicBoolean mCohortSweepRequested = new AtomicBoolean();
@@ -1110,7 +1110,8 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
         long decidedAtNanos = System.nanoTime();
         List<CompletedReceiverLeg> ranked = new ArrayList<>(cohort.legs);
         long cohortExpectedFrames = cohortExpectedFrames(cohort.legs);
-        ranked.sort((first, second) -> compareQuality(first, second, cohortExpectedFrames));
+        CallFilteringSettings filtering = mCallFilteringSettings.get();
+        ranked.sort((first, second) -> compareQuality(first, second, cohortExpectedFrames, filtering));
         CompletedReceiverLeg winner = ranked.getFirst();
         CompletedAudioCall resolvedCall = buildResolvedCall(cohort.legs, winner, cohortExpectedFrames);
         LogicalCallDecisionOutcome outcome;
@@ -1138,8 +1139,8 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
         }
 
         recordResolvedDecision(resolvedCall, cohort.legs, ranked, outcome, decisionReasons, evidence,
-            decidedAtNanos, cohort.createdNanos, cohortExpectedFrames);
-        queueResolvedCall(resolvedCall);
+            decidedAtNanos, cohort.createdNanos, cohortExpectedFrames, filtering);
+        queueResolvedCall(resolvedCall, filtering);
         releaseCoordinatorAudio(cohort.legs);
         markDiagnosticSnapshotDirty();
     }
@@ -1149,28 +1150,38 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
                                     LogicalCallDiagnosticEvidence evidence, long enteredResolverNanos)
     {
         long cohortExpectedFrames = cohortExpectedFrames(List.of(leg));
+        CallFilteringSettings filtering = mCallFilteringSettings.get();
         CompletedAudioCall resolvedCall = buildResolvedCall(List.of(leg), leg, cohortExpectedFrames);
         long decidedAtNanos = System.nanoTime();
         recordResolvedDecision(resolvedCall, List.of(leg), List.of(leg), outcome, reasons, evidence, decidedAtNanos,
-            enteredResolverNanos, cohortExpectedFrames);
-        queueResolvedCall(resolvedCall);
+            enteredResolverNanos, cohortExpectedFrames, filtering);
+        queueResolvedCall(resolvedCall, filtering);
         releaseCoordinatorAudio(List.of(leg));
         markDiagnosticSnapshotDirty();
     }
 
     private int compareQuality(CompletedReceiverLeg first, CompletedReceiverLeg second,
-                               long cohortExpectedFrames)
+                               long cohortExpectedFrames, CallFilteringSettings filtering)
     {
-        return qualityComparison(first, second, cohortExpectedFrames).comparison;
+        return qualityComparison(first, second, cohortExpectedFrames, filtering).comparison;
     }
 
     private QualityComparison qualityComparison(CompletedReceiverLeg first, CompletedReceiverLeg second,
-                                                long cohortExpectedFrames)
+                                                long cohortExpectedFrames, CallFilteringSettings filtering)
     {
         QualityScore firstScore = qualityScore(first, cohortExpectedFrames);
         QualityScore secondScore = qualityScore(second, cohortExpectedFrames);
-        int comparison = Long.compare(secondScore.usableFrameCount, firstScore.usableFrameCount);
-        LogicalCallWinnerCriterion criterion = LogicalCallWinnerCriterion.USABLE_FRAME_COUNT;
+        Integer firstOrder = audioPreferenceOrder(first, firstScore, cohortExpectedFrames, filtering);
+        Integer secondOrder = audioPreferenceOrder(second, secondScore, cohortExpectedFrames, filtering);
+        int comparison = firstOrder != null ? (secondOrder != null ? Integer.compare(firstOrder, secondOrder) : -1) :
+            (secondOrder != null ? 1 : 0);
+        LogicalCallWinnerCriterion criterion = LogicalCallWinnerCriterion.AUTO_START_ORDER;
+
+        if(comparison == 0)
+        {
+            comparison = Long.compare(secondScore.usableFrameCount, firstScore.usableFrameCount);
+            criterion = LogicalCallWinnerCriterion.USABLE_FRAME_COUNT;
+        }
 
         if(comparison == 0)
         {
@@ -1218,6 +1229,18 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
         }
 
         return new QualityComparison(comparison, criterion, firstScore, secondScore);
+    }
+
+    private Integer audioPreferenceOrder(CompletedReceiverLeg leg, QualityScore score,
+                                         long expectedFrames, CallFilteringSettings filtering)
+    {
+        Integer order = leg.snapshot.callLegSource().audioPreferenceOrder();
+        if(order == null || leg.audioSampleCount == 0 || score.usableFrameCount == 0)
+        {
+            return null;
+        }
+        return CallQualityFilter.accepts(leg.snapshot.callLegSource().decoderType(),
+            withCohortExpectedFrames(leg, expectedFrames), filtering) ? order : null;
     }
 
     private QualityScore qualityScore(CompletedReceiverLeg leg, long cohortExpectedFrames)
@@ -1332,7 +1355,7 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
                                         List<LogicalCallSeparationReason> decisionReasons,
                                         LogicalCallDiagnosticEvidence evidence,
                                         long decidedAtNanos, long enteredResolverNanos,
-                                        long cohortExpectedFrames)
+                                        long cohortExpectedFrames, CallFilteringSettings filtering)
     {
         if(resolvedCall == null || legs == null || legs.isEmpty() || ranked == null || ranked.isEmpty())
         {
@@ -1363,14 +1386,14 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
                 List<LogicalCallDiagnosticLeg> diagnosticLegs = legs.stream()
                     .sorted((first, second) -> compareCallLegIds(first.snapshot.callLegId(),
                         second.snapshot.callLegId()))
-                    .map(leg -> diagnosticLeg(leg, cohortExpectedFrames, leg == winner)).toList();
+                    .map(leg -> diagnosticLeg(leg, cohortExpectedFrames, leg == winner, filtering)).toList();
                 List<LogicalCallSeparationReason> exactReasons = decisionReasons != null ?
                     List.copyOf(new LinkedHashSet<>(decisionReasons)) : List.of();
                 LogicalCallDiagnosticDecision decision = new LogicalCallDiagnosticDecision(
                     mNextDiagnosticDecisionSequence++, decidedAtMs, resolvedCall.logicalCallId(), outcome,
                     diagnosticCallIdentity(resolvedCall, legs, winner, decidedAtMs, decidedAtNanos,
                         enteredResolverNanos), diagnosticOutputPolicy(resolvedCall),
-                    diagnosticWinner(ranked, cohortExpectedFrames), diagnosticLegs,
+                    diagnosticWinner(ranked, cohortExpectedFrames, filtering), diagnosticLegs,
                     evidence != null ? evidence : LogicalCallDiagnosticEvidence.EMPTY, exactReasons);
                 offerDiagnosticDecision(decision);
             }
@@ -1441,7 +1464,7 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
     }
 
     private LogicalCallDiagnosticWinner diagnosticWinner(List<CompletedReceiverLeg> ranked,
-                                                          long cohortExpectedFrames)
+                                                          long cohortExpectedFrames, CallFilteringSettings filtering)
     {
         CompletedReceiverLeg winner = ranked.getFirst();
 
@@ -1453,18 +1476,23 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
         }
 
         CompletedReceiverLeg runnerUp = ranked.get(1);
-        QualityComparison comparison = qualityComparison(winner, runnerUp, cohortExpectedFrames);
+        QualityComparison comparison = qualityComparison(winner, runnerUp, cohortExpectedFrames, filtering);
         return new LogicalCallDiagnosticWinner(legId(winner), legId(runnerUp), comparison.criterion,
-            criterionValue(winner, comparison.firstScore, comparison.criterion),
-            criterionValue(runnerUp, comparison.secondScore, comparison.criterion));
+            criterionValue(winner, comparison.firstScore, comparison.criterion, cohortExpectedFrames, filtering),
+            criterionValue(runnerUp, comparison.secondScore, comparison.criterion, cohortExpectedFrames, filtering));
     }
 
     private LogicalCallDiagnosticWinner.CriterionValue criterionValue(CompletedReceiverLeg leg,
                                                                        QualityScore score,
-                                                                       LogicalCallWinnerCriterion criterion)
+                                                                       LogicalCallWinnerCriterion criterion,
+                                                                       long expectedFrames, CallFilteringSettings filtering)
     {
         return switch(criterion)
         {
+            case AUTO_START_ORDER -> {
+                Integer order = audioPreferenceOrder(leg, score, expectedFrames, filtering);
+                yield order != null ? wholeValue(order) : textValue("automatic quality");
+            }
             case MISSING_AND_CONCEALED_RATE -> rateValue(score.missingAndConcealedCount,
                 score.expectedFrameCount, score.missingAndConcealedRate);
             case USABLE_FRAME_COUNT -> rateValue(score.usableFrameCount, score.expectedFrameCount,
@@ -1500,7 +1528,8 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
         return new LogicalCallDiagnosticWinner.CriterionValue(value != null ? value : "(missing)", null, null);
     }
 
-    private LogicalCallDiagnosticLeg diagnosticLeg(CompletedReceiverLeg leg, long expectedFrames, boolean winner)
+    private LogicalCallDiagnosticLeg diagnosticLeg(CompletedReceiverLeg leg, long expectedFrames, boolean winner,
+                                                     CallFilteringSettings filtering)
     {
         CallLegSource source = leg.snapshot.callLegSource();
         P25SiteIdentity site = source != null ? source.p25SiteIdentity() : null;
@@ -1522,7 +1551,8 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
             quality.fecErrorCount(), quality.fecProtectedBitCount(), qualityPercent,
             score.missingAndConcealedRate, score.repeatedRate, score.normalizedFecRate,
             leg.audioSampleCount, leg.ingressLoss, leg.audioTruncated, winner,
-            frequency(leg.snapshot.identifierCollection()), positiveTimeslot(leg.snapshot.timeslot()));
+            frequency(leg.snapshot.identifierCollection()), positiveTimeslot(leg.snapshot.timeslot()),
+            audioPreferenceOrder(leg, score, expectedFrames, filtering));
     }
 
     private LogicalCallDiagnosticLeg diagnosticLeg(ReceiverLeg leg)
@@ -1537,7 +1567,7 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
             start, end, 0, quality, leg.audioSampleCount, leg.ingressLoss, leg.audioTruncated,
             destinationIdentity(snapshot), sourceIdentity(snapshot), snapshot != null ?
                 snapshot.callEncryptionEvidence() : null);
-        return diagnosticLeg(projection, qualityBaselineFrames(projection), false);
+        return diagnosticLeg(projection, qualityBaselineFrames(projection), false, CallFilteringSettings.DISABLED);
     }
 
     private static boolean hasFailOpenReason(Collection<LogicalCallSeparationReason> reasons)
@@ -1928,18 +1958,21 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
         }
     }
 
-    private void queueResolvedCall(CompletedAudioCall call)
+    private record PendingFanout(CompletedAudioCall call, CallFilteringSettings filtering) {}
+
+    private void queueResolvedCall(CompletedAudioCall call, CallFilteringSettings filtering)
     {
         if(call != null && !mForcedDiscard.get())
         {
-            mPendingFanouts.add(call);
+            mPendingFanouts.add(new PendingFanout(call, filtering));
         }
     }
 
     private void drainPendingFanouts()
     {
-        for(CompletedAudioCall completedAudioCall : mPendingFanouts)
+        for(PendingFanout pending : mPendingFanouts)
         {
+            CompletedAudioCall completedAudioCall = pending.call();
             if(mForcedDiscard.get())
             {
                 break;
@@ -1947,9 +1980,9 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
 
             deliver("resolved-call statistics", mResolvedCallConsumer, completedAudioCall);
 
-            //Select one final logical call before applying its output policy; physical copies can contribute
+            //Use the same policy snapshot that guarded preference selection. Physical copies can contribute
             //complementary identity evidence even when their audio would fall below the configured minimum.
-            if(!CallQualityFilter.accepts(completedAudioCall.snapshot(), mCallFilteringSettings.get()))
+            if(!CallQualityFilter.accepts(completedAudioCall.snapshot(), pending.filtering()))
             {
                 continue;
             }
@@ -2234,7 +2267,7 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
         long expectedFrames = cohortExpectedFrames(cohort.legs);
         List<LogicalCallDiagnosticLeg> legs = cohort.legs.stream()
             .sorted((first, second) -> compareCallLegIds(first.snapshot.callLegId(), second.snapshot.callLegId()))
-            .map(leg -> diagnosticLeg(leg, expectedFrames, false)).toList();
+            .map(leg -> diagnosticLeg(leg, expectedFrames, false, CallFilteringSettings.DISABLED)).toList();
         List<String> awaited = cohort.awaitedLegIds.stream().map(CallLegId::toString).sorted().toList();
         return new LogicalCallDiagnosticCohort(cohort.cohortId,
             TimeUnit.NANOSECONDS.toMillis(Math.max(0L, nowNanos - cohort.createdNanos)),

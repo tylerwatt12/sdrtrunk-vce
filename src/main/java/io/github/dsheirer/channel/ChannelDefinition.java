@@ -24,8 +24,18 @@ import java.util.Collections;
 public record ChannelDefinition(String configurationId, String protocolId, String system, String site, String name,
                                 String radioResolveId, long aliasListId, Source source, Map<String,Object> settings,
                                 List<FrequencyMapEntry> frequencyMap, List<String> eventLogs, List<String> recorders,
-                                List<String> auxiliaryDecoders, Observed observed)
+                                List<String> auxiliaryDecoders, Observed observed, boolean useAutoStartOrderForAudio)
 {
+    /** Compatibility for channel documents created before duplicate-audio preference was available. */
+    public ChannelDefinition(String configurationId, String protocolId, String system, String site, String name,
+        String radioResolveId, long aliasListId, Source source, Map<String,Object> settings,
+        List<FrequencyMapEntry> frequencyMap, List<String> eventLogs, List<String> recorders,
+        List<String> auxiliaryDecoders, Observed observed)
+    {
+        this(configurationId, protocolId, system, site, name, radioResolveId, aliasListId, source, settings,
+            frequencyMap, eventLogs, recorders, auxiliaryDecoders, observed, false);
+    }
+
     public ChannelDefinition
     {
         protocolId = Objects.requireNonNull(protocolId, "Protocol ID cannot be null");

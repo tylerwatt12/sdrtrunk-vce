@@ -750,6 +750,7 @@ public final class ApplicationMigrationService
             case 73 -> "p25-denial-reasons-v1".equals(step.id());
             case 74 -> "p25-regroup-types-v1".equals(step.id());
             case 75 -> "database-voice-keys-v1".equals(step.id());
+            case 76 -> "duplicate-audio-start-order-v1".equals(step.id());
             default -> false;
         };
     }

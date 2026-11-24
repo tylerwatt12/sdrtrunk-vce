@@ -48,7 +48,7 @@ class Format67To68DatabaseMigrationTest
                 DatabaseFormatCatalog.stamp(connection, 68);
                 assertEquals(1, effects.getFirst().affectedRows());
                 assertEquals(68, DatabaseFormatCatalog.inspect(connection).version());
-                assertEquals(ConfigurationHistoryDatabase.CONFIGURATION_FINGERPRINT,
+                assertEquals(ConfigurationHistoryDatabase.FORMAT_63_CONFIGURATION_FINGERPRINT,
                     SqliteSchemaValidator.fingerprint(connection));
                 assertEquals(expected, settings(connection));
                 assertEquals(RemoteLinkSettingsStore.LEGACY_DESTINATION_ID, settings(connection).destinations().getFirst().id());

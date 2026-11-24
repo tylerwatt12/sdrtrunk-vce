@@ -22,7 +22,7 @@ final class ChannelEdit
         return ConfigurationEditVersion.of(new ChannelDefinition(channel.configurationId(), channel.protocolId(),
             channel.system(), channel.site(), channel.name(), channel.radioResolveId(), channel.aliasListId(),
             channel.source(), channel.settings(), channel.frequencyMap(), channel.eventLogs(), channel.recorders(),
-            channel.auxiliaryDecoders(), ChannelDefinition.Observed.EMPTY));
+            channel.auxiliaryDecoders(), ChannelDefinition.Observed.EMPTY, channel.useAutoStartOrderForAudio()));
     }
 
     static ChannelDefinition merge(String id, String expectedVersion, ChannelDefinition original,
@@ -51,7 +51,8 @@ final class ChannelEdit
             field(original.eventLogs(), submitted.eventLogs(), current.eventLogs()),
             field(original.recorders(), submitted.recorders(), current.recorders()),
             field(original.auxiliaryDecoders(), submitted.auxiliaryDecoders(), current.auxiliaryDecoders()),
-            current.observed());
+            current.observed(), field(original.useAutoStartOrderForAudio(), submitted.useAutoStartOrderForAudio(),
+                current.useAutoStartOrderForAudio()));
     }
 
     private static ChannelDefinition.Source source(ChannelDefinition.Source original,

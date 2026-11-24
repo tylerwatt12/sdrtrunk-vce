@@ -92,6 +92,7 @@ public class Channel extends Configuration
     private final transient AtomicLong mSiteEvidenceTuningGeneration = new AtomicLong();
     private volatile boolean mAutoStart;
     private volatile Integer mAutoStartOrder;
+    private volatile boolean mUseAutoStartOrderForAudio;
     private List<TunerChannel> mTunerChannels = null;
 
     private ChannelType mChannelType = ChannelType.STANDARD;
@@ -155,6 +156,7 @@ public class Channel extends Configuration
         channel.setAliasListId(mAliasListId);
         channel.setAutoStart(mAutoStart);
         channel.setAutoStartOrder(mAutoStartOrder);
+        channel.setUseAutoStartOrderForAudio(mUseAutoStartOrderForAudio);
 
         AuxDecodeConfiguration auxCopy = new AuxDecodeConfiguration();
 
@@ -730,6 +732,18 @@ public class Channel extends Configuration
     public void setAutoStartOrder(Integer order)
     {
         mAutoStartOrder = order;
+    }
+
+    /** Uses this channel's auto-start position when choosing between duplicate audio copies. */
+    @JsonInclude(JsonInclude.Include.NON_DEFAULT)
+    public boolean getUseAutoStartOrderForAudio()
+    {
+        return mUseAutoStartOrderForAudio;
+    }
+
+    public void setUseAutoStartOrderForAudio(boolean enabled)
+    {
+        mUseAutoStartOrderForAudio = enabled;
     }
 
     /**

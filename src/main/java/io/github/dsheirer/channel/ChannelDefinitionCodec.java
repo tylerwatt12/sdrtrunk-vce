@@ -140,7 +140,8 @@ public final class ChannelDefinitionCodec
             applicableOutputs(enumNames(channel.getRecordConfiguration() != null ?
                 channel.getRecordConfiguration().getRecorders() : List.of()), conventional),
             enumNames(channel.getAuxDecodeConfiguration() != null ?
-                channel.getAuxDecodeConfiguration().getAuxDecoders() : List.of()), observedFrom(channel));
+                channel.getAuxDecodeConfiguration().getAuxDecoders() : List.of()), observedFrom(channel),
+            channel.getUseAutoStartOrderForAudio());
     }
 
     /** Builds a detached runtime candidate. Existing learned state is retained only for an in-place edit. */
@@ -153,6 +154,9 @@ public final class ChannelDefinitionCodec
             throw new IllegalArgumentException("Channel protocol cannot be changed; clone a new channel instead");
         }
         validateCommon(submitted, aliasList, profile);
+        if(submitted.useAutoStartOrderForAudio() && profile.decoderType() != DecoderType.P25_PHASE1 &&
+            profile.decoderType() != DecoderType.P25_PHASE2)
+            throw new IllegalArgumentException("Audio preference is available for P25 Phase 1 and Phase 2 channels");
         Map<String,Object> settings = mRegistry.validateSettings(profile, submitted.settings(),
             existing != null ? fromChannel(existing).settings() : Map.of());
         SourceConfiguration source = sourceTo(submitted.source(), profile);
@@ -190,6 +194,7 @@ public final class ChannelDefinitionCodec
         channel.setSystem(optionalText(submitted.system(), "System"));
         channel.setSite(optionalText(submitted.site(), "Site"));
         channel.setName(requiredName(submitted.name()));
+        channel.setUseAutoStartOrderForAudio(submitted.useAutoStartOrderForAudio());
         channel.setRadioResolveId(validRadioResolveId(submitted.radioResolveId()));
         channel.setAliasListDefinition(aliasList);
         channel.setSourceConfiguration(source);
@@ -227,7 +232,7 @@ public final class ChannelDefinitionCodec
         ChannelDefinition clone = new ChannelDefinition(null, definition.protocolId(), definition.system(),
             definition.site(), definition.name(), null, definition.aliasListId(), definition.source(),
             definition.settings(), definition.frequencyMap(), definition.eventLogs(), definition.recorders(),
-            definition.auxiliaryDecoders(), ChannelDefinition.Observed.EMPTY);
+            definition.auxiliaryDecoders(), ChannelDefinition.Observed.EMPTY, definition.useAutoStartOrderForAudio());
         Channel result = toChannel(clone, aliasList, null);
         result.setAutoStart(false);
         result.setAutoStartOrder(null);

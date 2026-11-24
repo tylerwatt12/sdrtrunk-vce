@@ -169,7 +169,7 @@ class ChannelAdminHttpControllerTest
             String feedId = "11111111-2222-4333-8444-555555555555";
             String remoteCreate = """
                 {"protocol_id":"p25-phase1","system":"County","site":"Remote",
-                 "name":"Remote Control","alias_list_id":%d,
+                 "name":"Remote Control","alias_list_id":%d,"use_auto_start_order_for_audio":true,
                  "source":{"frequencies_hz":[851012500],"source_type":"REMOTE",
                            "sender_id":"%s","feed_id":"%s"},
                  "settings":{},"frequency_map":[],"event_logs":[],
@@ -182,6 +182,10 @@ class ChannelAdminHttpControllerTest
             String remoteId = remoteCreatedData.path("configuration_ids").get(0).textValue();
             long remoteRevision = remoteCreatedData.path("revision").longValue();
             URI remoteUri = origin.resolve(ChannelAdminHttpController.PATH + "/" + remoteId);
+            HttpResponse<String> preferredRemoteEntry = client.send(HttpRequest.newBuilder(remoteUri).GET().build(),
+                HttpResponse.BodyHandlers.ofString());
+            assertTrue(MAPPER.readTree(preferredRemoteEntry.body()).at("/data/channel/use_auto_start_order_for_audio").booleanValue());
+            assertNull(channels.get(remoteId).autoStartOrder(), "Audio preference does not enable auto start");
             String remoteSource = """
                 {"frequencies_hz":[851012500],"source_type":"REMOTE",
                  "sender_id":"%s","feed_id":"%s"}

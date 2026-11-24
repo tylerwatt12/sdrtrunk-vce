@@ -644,6 +644,21 @@ public class ConfigurationManager implements AutoCloseable
                         //Reordering autostart never requires a receiver restart and must retain the map key.
                         live.setAutoStart(replacement.getAutoStart());
                         live.setAutoStartOrder(replacement.getAutoStartOrder());
+                        //Publish only the future-call preference. A startup reorder must not run channel-role
+                        //transition handlers or change the immutable source attached to an ongoing physical call.
+                        var audioPreference = io.github.dsheirer.audio.call.AudioPreferenceOrderEvent.capture(live);
+                        for(ProcessingChain chain: mChannelProcessingManager.getProcessingChainsByConfiguration(
+                            configurationId, null))
+                        {
+                            Channel active = chain.getCurrentChannel();
+                            if(active != null)
+                            {
+                                active.setAutoStart(live.isAutoStart());
+                                active.setAutoStartOrder(live.getAutoStartOrder());
+                                active.setUseAutoStartOrderForAudio(live.getUseAutoStartOrderForAudio());
+                            }
+                            chain.getEventBus().post(audioPreference);
+                        }
                         mChannelModel.receive(new ChannelEvent(live,
                             ChannelEvent.Event.NOTIFICATION_CONFIGURATION_CHANGE));
                     }

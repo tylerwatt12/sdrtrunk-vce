@@ -50,6 +50,82 @@ import org.junit.jupiter.api.Test;
 class AbstractAudioModuleTest
 {
     @Test
+    void changedAudioOrderAppliesOnlyToNewPhysicalCallsInBothP25Phases()
+    {
+        for(DecoderType decoder: new DecoderType[] {DecoderType.P25_PHASE1, DecoderType.P25_PHASE2})
+        {
+            CallLegSource initial = new CallLegSource(decoder, "configuration-id", "Ordered site", null, 0,
+                null, io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain.STANDARD,
+                io.github.dsheirer.configuration.ChannelConfigurationPolicy.ChannelKind.TRUNKED, true)
+                .withAudioPreferenceOrder(5);
+            TestAudioModule module = new TestAudioModule(AliasList.empty("Test"), 60_000L, initial);
+            EventBus bus = new EventBus("audio-order-test");
+            module.setInterModuleEventBus(bus);
+            List<AudioCallEvent> events = new ArrayList<>();
+            module.setAudioCallEventListener(events::add);
+
+            module.appendFrame();
+            Channel channel = audioPreferenceChannel(5);
+            var delayedNotification = io.github.dsheirer.audio.call.AudioPreferenceOrderEvent.capture(channel);
+            channel.setAutoStartOrder(1);
+            bus.post(io.github.dsheirer.audio.call.AudioPreferenceOrderEvent.capture(channel));
+            bus.post(delayedNotification); //A queued startup notification must not restore the former rank.
+            module.stop();
+            module.appendFrame();
+            module.stop();
+            channel.setAutoStart(false);
+            bus.post(io.github.dsheirer.audio.call.AudioPreferenceOrderEvent.capture(channel));
+            module.appendFrame();
+            module.stop();
+
+            var completed = events.stream().filter(event -> event.eventType() ==
+                AudioCallEventType.CALL_COMPLETED).toList();
+            assertEquals(3, completed.size());
+            assertEquals(5, completed.get(0).snapshot().callLegSource().audioPreferenceOrder());
+            assertEquals(1, completed.get(1).snapshot().callLegSource().audioPreferenceOrder());
+            assertNull(completed.get(2).snapshot().callLegSource().audioPreferenceOrder());
+        }
+    }
+
+    @Test
+    void changedAudioOrderDoesNotRelabelALinkedContinuation()
+    {
+        CallLegSource initial = new CallLegSource(DecoderType.P25_PHASE2, "configuration-id", "Ordered site",
+            null, 0, null, io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain.STANDARD,
+            io.github.dsheirer.configuration.ChannelConfigurationPolicy.ChannelKind.TRUNKED, true)
+            .withAudioPreferenceOrder(5);
+        TestAudioModule module = new TestAudioModule(AliasList.empty("Test"), 20L, initial);
+        EventBus bus = new EventBus("audio-order-continuation-test");
+        module.setInterModuleEventBus(bus);
+        List<AudioCallEvent> events = new ArrayList<>();
+        module.setAudioCallEventListener(events::add);
+
+        module.appendFrame();
+        module.appendFrame();
+        bus.post(io.github.dsheirer.audio.call.AudioPreferenceOrderEvent.capture(audioPreferenceChannel(1)));
+        module.stop();
+        module.appendFrame();
+        module.stop();
+
+        var completed = events.stream().filter(event -> event.eventType() ==
+            AudioCallEventType.CALL_COMPLETED).toList();
+        assertEquals(3, completed.size());
+        assertEquals(5, completed.get(0).snapshot().callLegSource().audioPreferenceOrder());
+        assertEquals(5, completed.get(1).snapshot().callLegSource().audioPreferenceOrder());
+        assertEquals(completed.get(0).snapshot().callLegId(), completed.get(1).snapshot().callLegId());
+        assertEquals(1, completed.get(2).snapshot().callLegSource().audioPreferenceOrder());
+    }
+
+    private static Channel audioPreferenceChannel(int order)
+    {
+        Channel channel = new Channel("Ordered site");
+        channel.setAutoStart(true);
+        channel.setAutoStartOrder(order);
+        channel.setUseAutoStartOrderForAudio(true);
+        return channel;
+    }
+
+    @Test
     void defaultRolloverLengthIsOneMinuteInMilliseconds()
     {
         assertEquals(60_000L, AbstractAudioModule.DEFAULT_SEGMENT_AUDIO_LENGTH_MILLISECONDS);

@@ -112,7 +112,7 @@ final class Format62To63DatabaseMigration implements DatabaseMigrationStep
                     statement.execute("PRAGMA foreign_keys=OFF");
                 }
                 target.setAutoCommit(false);
-                ConfigurationHistorySchema.createConfiguration(target);
+                ConfigurationHistorySchema.createFormat63Configuration(target);
                 ConfigurationHistorySchema.copyConfiguration(connection, target);
                 ConfigurationHistorySchema.setIdentity(target, ConfigurationHistorySchema.CONFIGURATION_ROLE, pairId);
                 SdrTrunkDatabaseStartup.setMetadata(target, DatabaseFormatCatalog.FORMAT_VERSION_KEY, "63");
@@ -152,7 +152,7 @@ final class Format62To63DatabaseMigration implements DatabaseMigrationStep
     {
         // The old loader can recover an interrupted delayed P25 save only from a verified complete site projection.
         // Persist that same result once before removing the history join from ordinary configuration loads.
-        var channels = new io.github.dsheirer.database.configuration.ConfigurationDatabaseStore(source).loadChannels(connection);
+        var channels = new io.github.dsheirer.database.configuration.ConfigurationDatabaseStore(source).loadFormat62Channels(connection);
         var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
         try(PreparedStatement update = connection.prepareStatement("""
             UPDATE configuration_channel SET config_json=json_set(config_json,'$.p25SiteIdentity',json(?))

@@ -382,6 +382,41 @@ class P25TrafficChannelManagerTest
     }
 
     @Test
+    void bothTrafficPhasePoolsInheritAndRefreshTheParentAudioPreference() throws Exception
+    {
+        Channel parent = new Channel("Ordered control");
+        parent.setDecodeConfiguration(new DecodeConfigP25Phase1());
+        parent.setAutoStart(true);
+        parent.setAutoStartOrder(5);
+        parent.setUseAutoStartOrderForAudio(true);
+        P25TrafficChannelManager manager = new P25TrafficChannelManager(parent);
+        Method sync = P25TrafficChannelManager.class.getDeclaredMethod("syncTrafficChannelIdentity", Channel.class);
+        sync.setAccessible(true);
+        for(String poolName: List.of("mManagedPhase1TrafficChannels", "mManagedPhase2TrafficChannels"))
+        {
+            Field pool = P25TrafficChannelManager.class.getDeclaredField(poolName);
+            pool.setAccessible(true);
+            @SuppressWarnings("unchecked") List<Channel> channels = (List<Channel>)pool.get(manager);
+            assertFalse(channels.isEmpty());
+            Channel traffic = channels.getFirst();
+            assertTrue(traffic.isAutoStart());
+            assertTrue(traffic.getUseAutoStartOrderForAudio());
+            assertEquals(5, io.github.dsheirer.audio.call.AudioPreferenceOrderEvent.capture(traffic).order());
+
+            parent.setAutoStartOrder(1);
+            assertEquals(1, manager.captureAudioPreferenceOrder().order(),
+                "A queued startup must read the current parent rank, even before its child is refreshed");
+            sync.invoke(manager, traffic);
+            assertEquals(1, io.github.dsheirer.audio.call.AudioPreferenceOrderEvent.capture(traffic).order());
+            parent.setAutoStart(false);
+            sync.invoke(manager, traffic);
+            assertNull(io.github.dsheirer.audio.call.AudioPreferenceOrderEvent.capture(traffic).order());
+            parent.setAutoStart(true);
+            parent.setAutoStartOrder(5);
+        }
+    }
+
+    @Test
     void displaysEncryptionKeyIdAsHexadecimalInEventDetails() throws Exception
     {
         long frequency = 851_012_500L;

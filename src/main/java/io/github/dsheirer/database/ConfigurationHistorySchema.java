@@ -43,6 +43,13 @@ public final class ConfigurationHistorySchema
     /** A fresh tiny configuration store contains no receiver-activity descendants. */
     public static void createConfiguration(Connection connection) throws SQLException
     {
+        createFormat63Configuration(connection);
+        addAudioOrderPreference(connection, "main");
+    }
+
+    /** Frozen pre-77 configuration creator used by the adjacent configuration/history split. */
+    public static void createFormat63Configuration(Connection connection) throws SQLException
+    {
         SdrTrunkDatabaseSchema.create(connection);
         addAliasActivityIdentity(connection);
         removeLegacyConfigurationReset(connection);
@@ -62,6 +69,20 @@ public final class ConfigurationHistorySchema
                 """);
         }
         TopicAlertSchema.create(connection);
+    }
+
+    /** Adds only a bounded configuration field; no receiver-history table or index is visited. */
+    public static void addAudioOrderPreference(Connection connection, String schema) throws SQLException
+    {
+        if(!Set.of("main", "configuration").contains(schema)) throw new SQLException("Unknown configuration schema");
+        try(Statement statement = connection.createStatement())
+        {
+            statement.execute("ALTER TABLE " + schema + ".configuration_channel ADD COLUMN " +
+                "use_auto_start_order_for_audio INTEGER NOT NULL DEFAULT 0 " +
+                "CHECK(typeof(use_auto_start_order_for_audio)='integer' " +
+                "AND use_auto_start_order_for_audio IN (0,1) " +
+                "AND json_type(config_json,'$.useAutoStartOrderForAudio') IS NULL)");
+        }
     }
 
     /** Fresh creation uses the same receiver schema and exact owner transformation as the adjacent migration. */
