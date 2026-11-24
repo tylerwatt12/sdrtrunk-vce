@@ -251,6 +251,32 @@ public class NodeReportTest
     }
 
     @Test
+    void a_site_hunting_for_its_control_channel_says_no_frequency()
+    {
+        ChannelHealth site = new ChannelHealth(ChannelHealthTest.info(101, "p25"));
+        site.started(SINCE);
+        site.setFrequency(854_787_500);
+        site.setCallsCounted();
+        HealthSnapshot base = snapshot(SINCE + 100_000, site);
+
+        for(int i = 0; i < 600; i++)
+        {
+            site.control("p25", true, SINCE + 100_000 + i * 100L); //To 160 s, then nothing
+        }
+
+        HealthSnapshot locked = snapshot(SINCE + 160_000, site);
+        HealthSnapshot hunting = snapshot(SINCE + 200_000, site);
+        JsonObject cc = NodeReport.build(new NodeReporter.Window(base, locked, false, 0), node(), "1.0.0", info -> true)
+            .getAsJsonArray("sites").get(0).getAsJsonObject().getAsJsonObject("cc");
+        assertEquals(854_787_500, cc.get("hz").getAsLong(), "on its control channel at the end");
+
+        cc = NodeReport.build(new NodeReporter.Window(base, hunting, false, 0), node(), "1.0.0", info -> true)
+            .getAsJsonArray("sites").get(0).getAsJsonObject().getAsJsonObject("cc");
+        assertFalse(cc.has("hz"), "no good message in the last 2 s: hunting");
+        assertEquals(61.9, cc.get("lockedS").getAsDouble(), 0.1, "to 2 s after its last good message");
+    }
+
+    @Test
     void reports_from_the_scheduler_follow_on()
     {
         HealthSnapshot[] s = twoSnapshots();

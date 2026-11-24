@@ -193,7 +193,8 @@ public class NodeReport
 
         JsonObject cc = new JsonObject();
 
-        if(a.frequency() > 0)
+        //The control channel it's on at the end of the window: none while it hunts for one.
+        if(a.frequency() > 0 && a.locked())
         {
             cc.addProperty("hz", a.frequency());
         }

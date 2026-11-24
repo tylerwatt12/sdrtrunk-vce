@@ -213,12 +213,13 @@ public class ChannelHealth
             locked += Math.min(now - mLastGood, LOCK_HOLD_MS);
         }
 
+        boolean lockedNow = mRunning && mLastGood > 0 && now - mLastGood <= LOCK_HOLD_MS;
         long running = mRunningMs + (mRunning ? Math.max(0, now - mRunningSince) : 0);
         long open = mOpenMs + (mOpenedAt > 0 ? Math.max(0, now - mOpenedAt) : 0);
 
         return new Totals(mInfo, mProtocol, mFrequency, Collections.unmodifiableMap(new TreeMap<>(mIdentity)), mGood,
-            mBad, mSyncLossMeasured ? mSyncLossSym : null, locked, mCallsCounted ? mCalls.totals() : null, running,
-            mOpens, mCloses, open);
+            mBad, mSyncLossMeasured ? mSyncLossSym : null, locked, lockedNow, mCallsCounted ? mCalls.totals() : null,
+            running, mOpens, mCloses, open);
     }
 
     /**
@@ -249,6 +250,8 @@ public class ChannelHealth
      * @param syncLossSym symbols the control channel's decoder went through without frame sync, or null when its
      *                    decoder doesn't say
      * @param lockedMs milliseconds with a good control message within the last 2 s
+     * @param locked true when there was a good control message within the last 2 s at this moment: false while the
+     *               channel hunts for its control channel
      * @param calls announced, and their outcomes, or null when nothing counts them
      * @param runningMs milliseconds the channel was processing
      * @param opens squelch openings
@@ -256,7 +259,8 @@ public class ChannelHealth
      * @param openMs milliseconds open
      */
     public record Totals(ChannelInfo info, String protocol, long frequency, Map<String,Integer> identity, long good,
-                         long bad, Long syncLossSym, long lockedMs, CallTally.Totals calls, long runningMs,
+                         long bad, Long syncLossSym, long lockedMs, boolean locked, CallTally.Totals calls,
+                         long runningMs,
                          long opens, long closes, long openMs)
     {
         /**
