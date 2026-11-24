@@ -21,7 +21,9 @@ package io.github.dsheirer.audio.broadcast.broadcastify;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.google.gson.JsonObject;
@@ -187,7 +189,22 @@ public class BroadcastifyHealthReporterTest
 
     private BroadcastifyHealthReporter reporter(BroadcastifyCallConfiguration configuration, NodeReporter schedule)
     {
-        return new BroadcastifyHealthReporter(configuration, aliases(), HttpClient.newHttpClient(), schedule);
+        BroadcastifyHealthReporter node = new BroadcastifyHealthReporter(
+            BroadcastifyCallConfiguration.getHealthUrl(configuration.getHost()), configuration.getSystemID(),
+            HttpClient.newHttpClient(), schedule);
+        node.add(configuration, aliases());
+        return node;
+    }
+
+    /**
+     * Another destination uploading as the same system: the County alias list's.
+     */
+    private BroadcastifyCallConfiguration countyCalls()
+    {
+        BroadcastifyCallConfiguration county = configure(new BroadcastifyCallConfiguration());
+        county.setConfigurationId(OTHER_STREAM);
+        county.setName("County Calls");
+        return county;
     }
 
     @Test
@@ -385,5 +402,116 @@ public class BroadcastifyHealthReporterTest
         reporter.check(history);
         assertFalse(schedule.isStopped());
         assertEquals(history.latest().timeMs() + 3_600_000, schedule.getNextAt());
+    }
+
+    @Test
+    void destinations_uploading_as_one_system_send_one_report_with_all_their_sites()
+    {
+        BroadcastifyHealthReporter node = reporter(schedule(20));
+        BroadcastifyCallConfiguration county = countyCalls();
+        county.setApiKey("another");
+        node.add(county, aliases());
+        node.check(history());
+
+        assertEquals(1, mReceived.size(), "one report for the system, not one per destination");
+        JsonObject report = mReceived.getFirst();
+        assertEquals(1234, report.getAsJsonObject("node").get("systemId").getAsInt());
+        assertEquals("secret", report.getAsJsonObject("node").get("apiKey").getAsString(), "the first one's key");
+        List<String> sites = new ArrayList<>();
+        report.getAsJsonArray("sites").forEach(site -> sites.add(site.getAsJsonObject().get("name").getAsString()));
+        assertEquals(List.of("Downtown", "North"), sites.stream().sorted().toList());
+    }
+
+    @Test
+    void a_trunked_site_destination_and_another_on_one_system_send_one_report()
+    {
+        BroadcastifyCallSiteConfiguration site = configure(new BroadcastifyCallSiteConfiguration());
+        site.setConfigurationId("6f1d0c52-0000-4000-8000-000000000003");
+        site.setAliasListId(COUNTY);
+        site.setChannelConfigurationId(NORTH_CHANNEL);
+        BroadcastifyHealthReporter node = reporter(schedule(21));
+        node.add(site, aliases());
+        node.check(history());
+
+        assertEquals(1, mReceived.size());
+        assertEquals(2, mReceived.getFirst().getAsJsonArray("sites").size());
+    }
+
+    @Test
+    void a_node_reports_without_a_destination_that_left_and_keeps_its_schedule()
+    {
+        BroadcastifyHealthReporter node = reporter(schedule(22));
+        BroadcastifyCallConfiguration county = countyCalls();
+        node.add(county, aliases());
+        NodeReporter schedule = node.getSchedule();
+        assertFalse(node.remove(configuration()), "the County destination still uploads as the system");
+        node.check(history());
+
+        assertEquals(1, mReceived.size());
+        assertEquals(1, mReceived.getFirst().getAsJsonArray("sites").size());
+        assertEquals("North", mReceived.getFirst().getAsJsonArray("sites").get(0).getAsJsonObject().get("name")
+            .getAsString());
+        assertSame(schedule, node.getSchedule());
+        assertTrue(node.remove(county), "none left");
+    }
+
+    @Test
+    void destinations_share_their_systems_reporter_while_any_of_them_runs()
+    {
+        BroadcastifyCallConfiguration downtown = configuration();
+        BroadcastifyCallConfiguration county = countyCalls();
+        BroadcastifyCallConfiguration elsewhere = configuration();
+        elsewhere.setConfigurationId("6f1d0c52-0000-4000-8000-000000000004");
+        elsewhere.setSystemID(5678);
+        BroadcastifyHealthReporter first = BroadcastifyHealthReporter.join(downtown, aliases());
+        BroadcastifyHealthReporter second = BroadcastifyHealthReporter.join(county, aliases());
+        BroadcastifyHealthReporter other = BroadcastifyHealthReporter.join(elsewhere, aliases());
+
+        try
+        {
+            assertSame(first, second, "one system: one reporter");
+            assertNotSame(first, other, "another system: its own");
+            NodeReporter schedule = first.getSchedule();
+
+            //The Downtown destination restarts while the County one goes on: the same reporter and schedule.
+            first.leave(downtown);
+            assertSame(first, BroadcastifyHealthReporter.join(downtown, aliases()));
+            assertSame(schedule, first.getSchedule(), "the same phase and seq");
+
+            //Both stop: the next start is a new reporter.
+            first.leave(downtown);
+            first.leave(county);
+            BroadcastifyHealthReporter again = BroadcastifyHealthReporter.join(downtown, aliases());
+            assertNotSame(first, again);
+            again.leave(downtown);
+        }
+        finally
+        {
+            first.leave(downtown);
+            first.leave(county);
+            other.leave(elsewhere);
+        }
+    }
+
+    @Test
+    void a_destination_whose_server_takes_no_reports_joins_no_node()
+    {
+        BroadcastifyCallConfiguration configuration = configuration();
+        configuration.setHost("https://api.broadcastify.com/call-upload-dev");
+        assertNull(BroadcastifyHealthReporter.join(configuration, aliases()));
+    }
+
+    @Test
+    void refused_credentials_start_over_when_a_destination_starts_again()
+    {
+        mStatus.set(403);
+        mAnswer.set("{\"error\":\"Invalid-API-Key\"}");
+        BroadcastifyHealthReporter node = reporter(schedule(23));
+        node.check(history());
+        assertTrue(node.getSchedule().isStopped());
+
+        node.remove(configuration());
+        node.add(configuration(), aliases());
+        assertFalse(node.getSchedule().isStopped(), "its settings may have changed");
     }
 }

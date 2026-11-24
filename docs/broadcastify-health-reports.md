@@ -12,6 +12,9 @@ destination whose server address doesn't end in `call-upload` sends none.
 - A **Broadcastify Calls (Trunked Site)** destination reports the one saved site channel you chose for it.
 - A **Broadcastify Call** destination reports every saved channel whose Alias List has an alias that streams to it.
 
+Destinations that upload as the same System ID send one report between them, with all of their sites: Broadcastify
+takes one report per System ID.
+
 Each site is reported whole: all of its calls, not only those that stream to that destination.
 
 ## What a report contains

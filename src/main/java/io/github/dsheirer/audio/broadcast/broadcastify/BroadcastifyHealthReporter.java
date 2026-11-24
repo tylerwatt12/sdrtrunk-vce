@@ -39,7 +39,13 @@ import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
@@ -51,72 +57,170 @@ import org.slf4j.LoggerFactory;
  * node's own, how well this recorder hears the sites and channels whose calls go to the node.  Broadcastify uses
  * them to choose between nodes that upload the same system, and to tell a node's owner about outages and problems.
  *
- * The node's sites and channels: a trunked-site node's one saved channel; otherwise those whose alias list has an
- * alias streaming to this configuration.  The report covers each whole (all its calls, not only those streamed here).
+ * One reporter per node, shared by every destination that uploads as its system ID (to the same server): Broadcastify
+ * takes one report per system ID, with all of its sites, never one per site or destination.  It reports while any of
+ * those destinations runs, keeping its schedule while one restarts and another goes on.
+ *
+ * The node's sites and channels, from each of its destinations: a trunked-site destination's one saved channel;
+ * otherwise those whose alias list has an alias streaming to the destination.  The report covers each whole (all its
+ * calls, not only those streamed here).
  */
 public class BroadcastifyHealthReporter
 {
     private static final Logger LOGGER = LoggerFactory.getLogger(BroadcastifyHealthReporter.class);
     private static final long CHECK_INTERVAL_MS = 10_000;
 
-    private final BroadcastifyCallConfiguration mConfiguration;
-    private final AliasModel mAliasModel;
-    private final HttpClient mHttpClient;
+    /** The nodes reporting, by health report address and system ID. */
+    private static final Map<String,BroadcastifyHealthReporter> NODES = new HashMap<>();
+
+    /**
+     * A destination uploading as the node.
+     */
+    private record Destination(BroadcastifyCallConfiguration configuration, AliasModel aliasModel)
+    {
+    }
+
     private final String mUrl;
-    private final NodeReporter mReporter;
+    private final int mSystemId;
+    private final HttpClient mHttpClient;
+    private final Map<String,Destination> mDestinations = new LinkedHashMap<>();
+    private volatile NodeReporter mReporter;
     private ScheduledFuture<?> mFuture;
+    private boolean mToldKeys;
     private boolean mToldNotServing;
     private boolean mToldUnreachable;
     private String mLastMessage;
 
     /**
-     * @param configuration of the node
-     * @param aliasModel to find the node's channels
+     * @param url to send the node's reports to
+     * @param systemId of the node
      * @param httpClient to send with
+     * @param reporter the node's schedule
      */
-    public BroadcastifyHealthReporter(BroadcastifyCallConfiguration configuration, AliasModel aliasModel,
-                                      HttpClient httpClient)
+    BroadcastifyHealthReporter(String url, int systemId, HttpClient httpClient, NodeReporter reporter)
     {
-        this(configuration, aliasModel, httpClient, new NodeReporter(String.valueOf(configuration.getSystemID())));
+        mUrl = url;
+        mSystemId = systemId;
+        mHttpClient = httpClient;
+        mReporter = reporter;
     }
 
     /**
-     * For tests: a given schedule.
+     * A destination starts: its node reports, with the destination's sites and channels among its own.
+     * @param configuration of the destination
+     * @param aliasModel to find the destination's channels
+     * @return the node's reporter, to leave when the destination stops, or null when it sends no reports
      */
-    BroadcastifyHealthReporter(BroadcastifyCallConfiguration configuration, AliasModel aliasModel,
-                               HttpClient httpClient, NodeReporter reporter)
+    public static BroadcastifyHealthReporter join(BroadcastifyCallConfiguration configuration, AliasModel aliasModel)
     {
-        mConfiguration = configuration;
-        mAliasModel = aliasModel;
-        mHttpClient = httpClient;
-        mUrl = BroadcastifyCallConfiguration.getHealthUrl(configuration.getHost());
-        mReporter = reporter;
+        String url = BroadcastifyCallConfiguration.getHealthUrl(configuration.getHost());
+
+        if(url == null)
+        {
+            LOGGER.info("Broadcastify Calls system [" + configuration.getSystemID() + "] - not sending health " +
+                "reports: the upload server [" + configuration.getHost() + "] doesn't end in call-upload");
+            return null;
+        }
+
+        synchronized(NODES)
+        {
+            int systemId = configuration.getSystemID();
+            BroadcastifyHealthReporter node = NODES.computeIfAbsent(key(url, systemId), key ->
+                new BroadcastifyHealthReporter(url, systemId, HttpClient.newBuilder()
+                    .version(HttpClient.Version.HTTP_2)
+                    .followRedirects(HttpClient.Redirect.NORMAL)
+                    .connectTimeout(Duration.ofSeconds(20))
+                    .build(), new NodeReporter(String.valueOf(systemId))));
+            node.add(configuration, aliasModel);
+            node.start();
+            return node;
+        }
+    }
+
+    /**
+     * A destination stops: the node reports without it, and stops reporting once none of its destinations runs.
+     */
+    public void leave(BroadcastifyCallConfiguration configuration)
+    {
+        synchronized(NODES)
+        {
+            if(remove(configuration))
+            {
+                stop();
+                NODES.remove(key(mUrl, mSystemId), this);
+            }
+        }
+    }
+
+    private static String key(String url, int systemId)
+    {
+        return url + "#" + systemId;
+    }
+
+    /**
+     * Adds a destination uploading as the node (again, after it restarts).  Its API key is the node's when it's the
+     * first; another destination's differing key is said once.  A node whose credentials were refused starts its
+     * reports over: the destination's settings may have changed.
+     */
+    synchronized void add(BroadcastifyCallConfiguration configuration, AliasModel aliasModel)
+    {
+        mDestinations.put(configuration.getConfigurationId(), new Destination(configuration, aliasModel));
+        Destination first = mDestinations.values().iterator().next();
+
+        if(!mToldKeys && !Objects.equals(first.configuration().getApiKey(), configuration.getApiKey()))
+        {
+            mToldKeys = true;
+            LOGGER.warn("Broadcastify Calls destinations [" + first.configuration().getName() + "] and [" +
+                configuration.getName() + "] upload as system [" + mSystemId + "] with different API keys - its " +
+                "node health reports use the key of [" + first.configuration().getName() + "]");
+        }
+
+        if(mReporter.isStopped())
+        {
+            NodeReporter reporter = new NodeReporter(String.valueOf(mSystemId));
+            reporter.begin(HealthRegistry.getInstance().getHistory().latest());
+            mReporter = reporter;
+        }
+    }
+
+    /**
+     * Removes a destination.
+     * @return true when the node has none left
+     */
+    synchronized boolean remove(BroadcastifyCallConfiguration configuration)
+    {
+        mDestinations.remove(configuration.getConfigurationId());
+        return mDestinations.isEmpty();
+    }
+
+    private synchronized List<Destination> destinations()
+    {
+        return new ArrayList<>(mDestinations.values());
+    }
+
+    /**
+     * The node's schedule.
+     */
+    NodeReporter getSchedule()
+    {
+        return mReporter;
     }
 
     /**
      * Starts checking, every 10 seconds, whether the node's next report is due.
      */
-    public synchronized void start()
+    private synchronized void start()
     {
-        if(mFuture != null)
+        if(mFuture == null)
         {
-            return;
+            //Starts the snapshots, if they haven't: the node's reports start at the latest.
+            mReporter.begin(HealthRegistry.getInstance().getHistory().latest());
+            mFuture = ThreadPool.SCHEDULED.scheduleAtFixedRate(this::check, CHECK_INTERVAL_MS, CHECK_INTERVAL_MS,
+                TimeUnit.MILLISECONDS);
         }
-
-        if(mUrl == null)
-        {
-            LOGGER.info("Broadcastify Calls system [" + mConfiguration.getSystemID() + "] - not sending health " +
-                "reports: the upload server [" + mConfiguration.getHost() + "] doesn't end in call-upload");
-            return;
-        }
-
-        //Starts the snapshots, if they haven't: the node's reports start at the latest.
-        mReporter.begin(HealthRegistry.getInstance().getHistory().latest());
-        mFuture = ThreadPool.SCHEDULED.scheduleAtFixedRate(this::check, CHECK_INTERVAL_MS, CHECK_INTERVAL_MS,
-            TimeUnit.MILLISECONDS);
     }
 
-    public synchronized void stop()
+    private synchronized void stop()
     {
         if(mFuture != null)
         {
@@ -126,26 +230,44 @@ public class BroadcastifyHealthReporter
     }
 
     /**
-     * True when a channel's calls can stream to this node.  A trunked-site node takes the calls of its one saved
-     * channel, while its alias list still exists; any other takes those of the channels whose alias list has an alias
-     * streaming to it.
+     * True when a channel's calls can stream to the node: to any of its destinations.
      */
     boolean feeds(ChannelHealth.ChannelInfo info)
     {
-        if(mConfiguration instanceof BroadcastifyCallSiteConfiguration site)
+        for(Destination destination: destinations())
         {
-            return info.configurationId() != null && info.configurationId().equals(site.getChannelConfigurationId()) &&
-                site.resolveAliasList(mAliasModel).isPresent();
+            if(feeds(destination.configuration(), destination.aliasModel(), info))
+            {
+                return true;
+            }
         }
 
-        String stream = mConfiguration.getConfigurationId();
+        return false;
+    }
+
+    /**
+     * True when a channel's calls can stream to a destination.  A trunked-site destination takes the calls of its one
+     * saved channel, while its alias list still exists; any other takes those of the channels whose alias list has an
+     * alias streaming to it.
+     */
+    static boolean feeds(BroadcastifyCallConfiguration configuration, AliasModel aliasModel,
+                         ChannelHealth.ChannelInfo info)
+    {
+        if(configuration instanceof BroadcastifyCallSiteConfiguration site)
+        {
+            return info.configurationId() != null &&
+                info.configurationId().equals(site.getChannelConfigurationId()) &&
+                site.resolveAliasList(aliasModel).isPresent();
+        }
+
+        String stream = configuration.getConfigurationId();
 
         if(stream == null || stream.isBlank() || info.aliasListId() <= Alias.UNASSIGNED_ID)
         {
             return false;
         }
 
-        for(Alias alias: mAliasModel.getAliases())
+        for(Alias alias: aliasModel.getAliases())
         {
             if(alias.getAliasListId() == info.aliasListId() && alias.hasBroadcastConfiguration(stream))
             {
@@ -168,19 +290,22 @@ public class BroadcastifyHealthReporter
     {
         try
         {
-            if(mReporter.isStopped() || mUrl == null)
+            NodeReporter reporter = mReporter;
+            List<Destination> destinations = destinations();
+
+            if(reporter.isStopped() || destinations.isEmpty())
             {
                 return;
             }
 
             HealthSnapshot now = history.latest();
 
-            if(!mReporter.isDue(now))
+            if(!reporter.isDue(now))
             {
                 return;
             }
 
-            NodeReporter.Window window = mReporter.window(history);
+            NodeReporter.Window window = reporter.window(history);
 
             if(window == null)
             {
@@ -199,14 +324,14 @@ public class BroadcastifyHealthReporter
             }
 
             JsonObject node = new JsonObject();
-            node.addProperty("systemId", mConfiguration.getSystemID());
-            node.addProperty("apiKey", mConfiguration.getApiKey());
+            node.addProperty("systemId", mSystemId);
+            node.addProperty("apiKey", destinations.getFirst().configuration().getApiKey());
             JsonObject report = NodeReport.build(window, node, ApplicationInfo.getVersion(),
                 info -> feeding.contains(info.channelId()));
 
             if(report != null)
             {
-                send(report, window.now());
+                send(reporter, report, window.now());
             }
         }
         catch(Throwable t)
@@ -215,9 +340,9 @@ public class BroadcastifyHealthReporter
         }
     }
 
-    private void send(JsonObject report, HealthSnapshot now)
+    private void send(NodeReporter reporter, JsonObject report, HealthSnapshot now)
     {
-        int systemId = mConfiguration.getSystemID();
+        int systemId = mSystemId;
         HttpResponse<String> response;
 
         try
@@ -237,7 +362,7 @@ public class BroadcastifyHealthReporter
         }
         catch(Exception e)
         {
-            unreachable(now, systemId, e.getMessage());
+            unreachable(reporter, now, e.getMessage());
             return;
         }
 
@@ -251,14 +376,14 @@ public class BroadcastifyHealthReporter
 
             if(answer == null)
             {
-                notServing(now, "it answered [" + said + "]");
+                notServing(reporter, now, "it answered [" + said + "]");
                 return;
             }
 
             mToldUnreachable = false;
             mToldNotServing = false;
             Double nextS = number(answer, "nextS");
-            mReporter.delivered(nextS);
+            reporter.delivered(nextS);
             String message = answer.has("message") && answer.get("message").isJsonPrimitive() ?
                 answer.get("message").getAsString() : null;
 
@@ -270,47 +395,47 @@ public class BroadcastifyHealthReporter
         }
         else if(status == 404 || status == 405 || status == 410)
         {
-            notServing(now, "HTTP " + status);
+            notServing(reporter, now, "HTTP " + status);
         }
         else if(status == 401 || status == 403)
         {
             LOGGER.warn("Broadcastify Calls refused the health report of system [" + systemId + "] (HTTP " +
                 status + ": " + said + ") - not sending its reports until its settings change");
-            mReporter.failed(now, NodeReporter.Failure.REFUSED, null);
+            reporter.failed(now, NodeReporter.Failure.REFUSED, null);
         }
         else if(status == 429 || status == 503)
         {
             Double retryAfter = response.headers().firstValue("Retry-After")
                 .map(value -> retryAfterSeconds(value, System.currentTimeMillis())).orElse(null);
-            mReporter.failed(now, NodeReporter.Failure.BUSY, retryAfter);
+            reporter.failed(now, NodeReporter.Failure.BUSY, retryAfter);
         }
         else if(status == 400)
         {
             LOGGER.warn("Broadcastify Calls turned down the health report of system [" + systemId + "]: " + said);
-            mReporter.failed(now, NodeReporter.Failure.REJECTED, null);
+            reporter.failed(now, NodeReporter.Failure.REJECTED, null);
         }
         else
         {
-            unreachable(now, systemId, "HTTP " + status);
+            unreachable(reporter, now, "HTTP " + status);
         }
     }
 
-    private void unreachable(HealthSnapshot now, int systemId, String why)
+    private void unreachable(NodeReporter reporter, HealthSnapshot now, String why)
     {
         if(!mToldUnreachable)
         {
             mToldUnreachable = true;
-            LOGGER.info("Broadcastify Calls health report of system [" + systemId + "] not sent: " + why);
+            LOGGER.info("Broadcastify Calls health report of system [" + mSystemId + "] not sent: " + why);
         }
 
-        mReporter.failed(now, NodeReporter.Failure.UNREACHABLE, null);
+        reporter.failed(now, NodeReporter.Failure.UNREACHABLE, null);
     }
 
     /**
      * The server doesn't take reports (or something else answered, such as a proxy's page): said once, and tried
      * less and less often, up to hourly, as for a busy server.
      */
-    private void notServing(HealthSnapshot now, String why)
+    private void notServing(NodeReporter reporter, HealthSnapshot now, String why)
     {
         if(!mToldNotServing)
         {
@@ -318,7 +443,7 @@ public class BroadcastifyHealthReporter
             LOGGER.info(mUrl + " doesn't take node health reports (" + why + ") - trying again later, up to hourly");
         }
 
-        mReporter.failed(now, NodeReporter.Failure.BUSY, null);
+        reporter.failed(now, NodeReporter.Failure.BUSY, null);
     }
 
     /**

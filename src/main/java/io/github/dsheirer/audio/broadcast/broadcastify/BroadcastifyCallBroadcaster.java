@@ -148,10 +148,10 @@ public class BroadcastifyCallBroadcaster extends AbstractAudioBroadcaster<Broadc
                 0, 500, TimeUnit.MILLISECONDS);
         }
 
+        //Node health reports: one reporter per system ID, shared with any other destination that uploads as it.
         if(mHealthReporter == null && getBroadcastConfiguration().isHealthReports() && mAliasModel != null)
         {
-            mHealthReporter = new BroadcastifyHealthReporter(getBroadcastConfiguration(), mAliasModel, mHttpClient);
-            mHealthReporter.start();
+            mHealthReporter = BroadcastifyHealthReporter.join(getBroadcastConfiguration(), mAliasModel);
         }
     }
 
@@ -169,9 +169,10 @@ public class BroadcastifyCallBroadcaster extends AbstractAudioBroadcaster<Broadc
 
         if(mHealthReporter != null)
         {
-            mHealthReporter.stop();
+            mHealthReporter.leave(getBroadcastConfiguration());
             mHealthReporter = null;
         }
+
         if(mAudioRecordingProcessorFuture != null)
         {
             mAudioRecordingProcessorFuture.cancel(true);
