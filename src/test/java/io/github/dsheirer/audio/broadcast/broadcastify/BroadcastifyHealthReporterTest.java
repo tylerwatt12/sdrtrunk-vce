@@ -170,6 +170,16 @@ public class BroadcastifyHealthReporterTest
         return history;
     }
 
+    /**
+     * A node's schedule, its reports started when recording did.
+     */
+    private static NodeReporter schedule(long seed)
+    {
+        NodeReporter schedule = new NodeReporter(seed);
+        schedule.begin(new HealthSnapshot(SINCE, SINCE, List.of(), List.of()));
+        return schedule;
+    }
+
     private BroadcastifyHealthReporter reporter(NodeReporter schedule)
     {
         return reporter(configuration(), schedule);
@@ -201,7 +211,7 @@ public class BroadcastifyHealthReporterTest
     @Test
     void a_node_reports_the_sites_whose_calls_can_stream_to_it()
     {
-        BroadcastifyHealthReporter reporter = reporter(new NodeReporter(1));
+        BroadcastifyHealthReporter reporter = reporter(schedule(1));
         HealthHistory history = history();
         reporter.check(history);
 
@@ -221,7 +231,7 @@ public class BroadcastifyHealthReporterTest
         BroadcastifyCallSiteConfiguration site = configure(new BroadcastifyCallSiteConfiguration());
         site.setAliasListId(COUNTY);
         site.setChannelConfigurationId(NORTH_CHANNEL);
-        reporter(site, new NodeReporter(12)).check(history());
+        reporter(site, schedule(12)).check(history());
 
         assertEquals(1, mReceived.size());
         JsonObject report = mReceived.getFirst();
@@ -236,7 +246,7 @@ public class BroadcastifyHealthReporterTest
         BroadcastifyCallSiteConfiguration site = configure(new BroadcastifyCallSiteConfiguration());
         site.setAliasListId(99);
         site.setChannelConfigurationId(NORTH_CHANNEL);
-        reporter(site, new NodeReporter(13)).check(history());
+        reporter(site, schedule(13)).check(history());
         assertTrue(mReceived.isEmpty());
     }
 
@@ -251,7 +261,7 @@ public class BroadcastifyHealthReporterTest
     @Test
     void a_delivered_report_is_followed_by_the_next_window()
     {
-        NodeReporter schedule = new NodeReporter(2);
+        NodeReporter schedule = schedule(2);
         BroadcastifyHealthReporter reporter = reporter(schedule);
         HealthHistory history = history();
         reporter.check(history);
@@ -270,7 +280,7 @@ public class BroadcastifyHealthReporterTest
             mReceived.clear();
             mStatus.set(status);
             mAnswer.set("<html>Not Found</html>");
-            NodeReporter schedule = new NodeReporter(3);
+            NodeReporter schedule = schedule(3);
             BroadcastifyHealthReporter reporter = reporter(schedule);
             HealthHistory history = history();
             reporter.check(history);
@@ -295,7 +305,8 @@ public class BroadcastifyHealthReporterTest
             HealthHistory taken = history(schedule.getNextAt() + 10_000);
             reporter.check(taken);
             assertEquals(3, mReceived.size());
-            assertEquals(1, schedule.window(taken).seq(), "the next report follows a delivered one");
+            HealthHistory next = history(taken.latest().timeMs() + 10_000);
+            assertEquals(1, schedule.window(next).seq(), "the next report follows a delivered one");
         }
     }
 
@@ -303,7 +314,7 @@ public class BroadcastifyHealthReporterTest
     void a_page_that_isnt_a_report_answer_is_backed_off_from()
     {
         mAnswer.set("<html>ok</html>");
-        NodeReporter schedule = new NodeReporter(4);
+        NodeReporter schedule = schedule(4);
         HealthHistory history = history();
         reporter(schedule).check(history);
         assertFalse(schedule.isStopped());
@@ -316,11 +327,13 @@ public class BroadcastifyHealthReporterTest
     {
         mStatus.set(400);
         mAnswer.set("{\"error\":\"window.end must be after window.start\"}");
-        NodeReporter schedule = new NodeReporter(14);
+        NodeReporter schedule = schedule(14);
         HealthHistory history = history();
         reporter(schedule).check(history);
         assertFalse(schedule.isStopped());
-        assertEquals(1, schedule.window(history).seq(), "not sent again");
+        NodeReporter.Window next = schedule.window(history(history.latest().timeMs() + 10_000));
+        assertEquals(1, next.seq());
+        assertEquals(history.latest().timeMs(), next.startMs(), "not sent again");
     }
 
     @Test
@@ -330,7 +343,7 @@ public class BroadcastifyHealthReporterTest
         {
             mStatus.set(status);
             mAnswer.set("{\"error\":\"something\"}");
-            NodeReporter schedule = new NodeReporter(15);
+            NodeReporter schedule = schedule(15);
             HealthHistory history = history();
             reporter(schedule).check(history);
             assertFalse(schedule.isStopped(), "HTTP " + status);
@@ -355,7 +368,7 @@ public class BroadcastifyHealthReporterTest
     {
         mStatus.set(401);
         mAnswer.set("{\"error\":\"Invalid-API-Key\"}");
-        NodeReporter schedule = new NodeReporter(5);
+        NodeReporter schedule = schedule(5);
         reporter(schedule).check(history());
         assertTrue(schedule.isStopped());
     }
@@ -366,7 +379,7 @@ public class BroadcastifyHealthReporterTest
         mStatus.set(503);
         mRetryAfter.set("3600");
         mAnswer.set("{\"error\":\"not taking node health reports now\"}");
-        NodeReporter schedule = new NodeReporter(6);
+        NodeReporter schedule = schedule(6);
         HealthHistory history = history();
         BroadcastifyHealthReporter reporter = reporter(schedule);
         reporter.check(history);

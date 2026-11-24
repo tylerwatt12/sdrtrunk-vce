@@ -25,7 +25,7 @@ import java.util.Random;
  * When one node's health reports go, and what window each covers, as the node health report format sets it:
  *
  * - every 300 seconds (or what the service asks for), at a random point of the interval drawn once per node, each
- *   send moved by up to 15 seconds either way, the first at least 60 seconds after the start;
+ *   send moved by up to 15 seconds either way, the first at least 60 seconds after the node's reports start;
  * - no retry: a report that fails is carried by the next (its window starts where the last delivered one ended), up
  *   to 900 seconds, after which the window starts later and says so (gap);
  * - busy (429 or 503): wait Retry-After, or double the interval up to an hour, as for a server that doesn't take
@@ -33,7 +33,10 @@ import java.util.Random;
  * - credentials refused (401 or 403): no more reports;
  * - a report turned down as wrong (400): counted as sent, so the next doesn't repeat it.
  *
- * Windows start and end at snapshot times exactly, so consecutive windows follow on without loss or overlap.
+ * Windows start and end at snapshot times exactly, so consecutive windows follow on without loss or overlap, and
+ * every window has time in it.  A node whose reports start while recording goes on (its destination restarted, say)
+ * can't say what was reported before: its first window starts at its own first snapshot, with gap, so it never
+ * covers time another window already did.
  * Not thread safe: one reporting thread per node.
  */
 public class NodeReporter
@@ -76,6 +79,7 @@ public class NodeReporter
     }
 
     private final Random mRandom;
+    private HealthSnapshot mFirst;
     private long mInterval = INTERVAL_MS;
     private Long mSlot;
     private Long mNextAt;
@@ -112,6 +116,18 @@ public class NodeReporter
         z = (z ^ (z >>> 30)) * 0xBF58476D1CE4E5B9L;
         z = (z ^ (z >>> 27)) * 0x94D049BB133111EBL;
         return z ^ (z >>> 31);
+    }
+
+    /**
+     * The node's reports start: the snapshot they start at, the latest when they do.  Without it, they start at the
+     * first snapshot they're asked about.
+     */
+    public void begin(HealthSnapshot first)
+    {
+        if(mFirst == null)
+        {
+            mFirst = first;
+        }
     }
 
     /**
@@ -175,19 +191,26 @@ public class NodeReporter
         {
             mDeliveredTo = null;
             mSeq = 0;
+            mFirst = now;
+        }
+
+        if(mFirst == null)
+        {
+            mFirst = now;
         }
 
         if(mSlot == null)
         {
+            long start = mFirst.timeMs();
             long phase = (long)(mRandom.nextDouble() * mInterval);
-            long slot = now.sinceMs() + phase;
+            long slot = start + phase;
 
-            while(slot < now.sinceMs() + FIRST_AFTER_MS)
+            while(slot < start + FIRST_AFTER_MS)
             {
                 slot += mInterval;
             }
 
-            aim(slot, now.sinceMs() + FIRST_AFTER_MS);
+            aim(slot, start + FIRST_AFTER_MS);
         }
 
         return now.timeMs() >= mNextAt;
@@ -195,7 +218,9 @@ public class NodeReporter
 
     /**
      * The window of the report due: from the end of the last one delivered (or, after more than 15 minutes
-     * undelivered, the latest start a window may have, with gap) to the latest snapshot.  Null without snapshots.
+     * undelivered, the latest start a window may have, with gap) to the latest snapshot.  The first window starts
+     * where the totals do, or, for reports that started after other snapshots were taken, at their own first
+     * snapshot, with gap.  Null without snapshots, or when the window would have no time in it.
      */
     public Window window(HealthHistory history)
     {
@@ -207,11 +232,17 @@ public class NodeReporter
         }
 
         Long from = mDeliveredTo != null && mDeliveredTo[1] == now.sinceMs() ? mDeliveredTo[0] : null;
+        boolean startedLate = from == null && startedLate(history, now);
         long oldest = now.timeMs() - MAX_WINDOW_MS;
         HealthSnapshot base;
         boolean gap;
 
-        if(from != null)
+        if(startedLate)
+        {
+            gap = true;
+            base = history.atOrAfter(Math.max(mFirst.timeMs(), oldest));
+        }
+        else if(from != null)
         {
             gap = from < oldest;
             base = history.atOrAfter(gap ? oldest : from);
@@ -227,8 +258,26 @@ public class NodeReporter
             base = null;
         }
 
+        //A window with no time in it (yet), or a start no snapshot is kept for, isn't sent.
+        long start = base != null ? base.timeMs() : now.sinceMs();
+
+        if(start >= now.timeMs() || (base == null && (from != null || startedLate)))
+        {
+            return null;
+        }
+
         mBuilt = new long[]{now.timeMs(), now.sinceMs()};
         return new Window(base, now, gap, mSeq);
+    }
+
+    /**
+     * True when these reports started after the totals' first snapshot: something may have reported before them.
+     */
+    private boolean startedLate(HealthHistory history, HealthSnapshot now)
+    {
+        HealthSnapshot first = history.first();
+        return mFirst != null && first != null && mFirst.sinceMs() == now.sinceMs() &&
+            first.sinceMs() == now.sinceMs() && mFirst.timeMs() > first.timeMs();
     }
 
     /**

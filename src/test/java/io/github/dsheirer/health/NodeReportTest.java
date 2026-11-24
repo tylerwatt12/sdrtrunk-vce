@@ -258,11 +258,15 @@ public class NodeReportTest
         history.add(s[0]);
         history.add(s[1]);
         NodeReporter reporter = new NodeReporter(1);
+        reporter.begin(s[0]);
         assertTrue(reporter.isDue(s[1]));
         NodeReporter.Window window = reporter.window(history);
         assertNull(window.base(), "first: from the start");
         reporter.delivered(null);
-        assertEquals(1, reporter.window(history).seq());
+        history.add(new HealthSnapshot(s[1].timeMs() + 10_000, s[1].sinceMs(), s[1].channels(), s[1].radios()));
+        window = reporter.window(history);
+        assertEquals(1, window.seq());
+        assertEquals(s[1].timeMs(), window.startMs(), "where the last ended");
     }
 
     /**

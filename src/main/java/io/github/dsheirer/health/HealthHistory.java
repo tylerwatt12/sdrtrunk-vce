@@ -32,18 +32,33 @@ public class HealthHistory
     public static final long KEEP_MS = 30 * 60 * 1000;
 
     private final Deque<HealthSnapshot> mSnapshots = new ArrayDeque<>();
+    private HealthSnapshot mFirst;
 
     /**
      * Adds the latest snapshot, dropping those too old to need.
      */
     public synchronized void add(HealthSnapshot snapshot)
     {
+        if(mFirst == null || mFirst.sinceMs() != snapshot.sinceMs())
+        {
+            mFirst = snapshot;
+        }
+
         mSnapshots.addLast(snapshot);
 
         while(!mSnapshots.isEmpty() && mSnapshots.getFirst().timeMs() < snapshot.timeMs() - KEEP_MS)
         {
             mSnapshots.removeFirst();
         }
+    }
+
+    /**
+     * The first snapshot of these totals, kept after it's too old to keep with the rest, or null when there is none
+     * yet.  No node can have reported anything before it: snapshots start when the first node's reports do.
+     */
+    public synchronized HealthSnapshot first()
+    {
+        return mFirst;
     }
 
     /**

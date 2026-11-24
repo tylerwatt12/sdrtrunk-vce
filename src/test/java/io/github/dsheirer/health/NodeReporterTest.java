@@ -216,6 +216,8 @@ public class NodeReporterTest
     {
         NodeReporter reporter = new NodeReporter(9);
         HealthHistory history = new HealthHistory();
+        history.add(snapshot(SINCE + 990_000, 0));
+        reporter.begin(history.first());
         HealthSnapshot now = snapshot(SINCE + 1_000_000, 0);
         history.add(now);
         reporter.isDue(now);
@@ -223,6 +225,8 @@ public class NodeReporterTest
         reporter.delivered(1200.0);
         assertEquals(now.timeMs() + 1_200_000, reporter.getNextAt(), NodeReporter.JITTER_MS + 1);
 
+        now = snapshot(now.timeMs() + 10_000, 0);
+        history.add(now);
         reporter.window(history);
         reporter.delivered(5.0);
         assertEquals(now.timeMs() + NodeReporter.MIN_INTERVAL_MS, reporter.getNextAt(), NodeReporter.JITTER_MS + 1);
@@ -233,11 +237,14 @@ public class NodeReporterTest
     {
         NodeReporter reporter = new NodeReporter(11);
         HealthHistory history = new HealthHistory();
+        history.add(snapshot(SINCE + 990_000, 0));
+        reporter.begin(history.first());
         HealthSnapshot now = snapshot(SINCE + 1_000_000, 0);
         history.add(now);
         reporter.isDue(now);
         reporter.window(history);
         reporter.delivered(null);
+        history.add(snapshot(SINCE + 1_010_000, 0));
         assertEquals(1, reporter.window(history).seq());
 
         //A snapshot from totals that started again later.
@@ -248,5 +255,114 @@ public class NodeReporterTest
         NodeReporter.Window window = reporter.window(after);
         assertEquals(0, window.seq());
         assertNull(window.base(), "from the start of the new totals");
+    }
+
+    @Test
+    void a_window_always_has_time_in_it()
+    {
+        NodeReporter reporter = new NodeReporter(17);
+        HealthHistory history = new HealthHistory();
+        history.add(snapshot(SINCE, 0));
+        reporter.isDue(history.latest());
+        assertNull(reporter.window(history), "the totals' first snapshot: nothing to report yet");
+
+        history.add(snapshot(SINCE + 300_000, 10));
+        NodeReporter.Window window = reporter.window(history);
+        assertNotNull(window);
+        reporter.delivered(null);
+        assertNull(reporter.window(history), "no snapshot since the last delivered window");
+
+        history.add(snapshot(SINCE + 310_000, 11));
+        window = reporter.window(history);
+        assertNotNull(window);
+        assertEquals(SINCE + 300_000, window.startMs());
+        assertTrue(window.now().timeMs() > window.startMs());
+    }
+
+    @Test
+    void reports_started_with_the_recording_start_where_it_did()
+    {
+        HealthHistory history = new HealthHistory();
+        history.add(snapshot(SINCE, 0));
+        NodeReporter reporter = new NodeReporter(18);
+        reporter.begin(history.latest());
+
+        for(long t = SINCE + 10_000; !reporter.isDue(history.latest()); t += 10_000)
+        {
+            history.add(snapshot(t, t - SINCE));
+        }
+
+        NodeReporter.Window window = reporter.window(history);
+        assertEquals(SINCE, window.startMs());
+        assertFalse(window.gap());
+        assertEquals(0, window.seq());
+    }
+
+    @Test
+    void reports_started_while_recording_goes_on_start_at_their_own_first_snapshot_with_a_gap()
+    {
+        //One node's reports, delivered for 20 minutes, then started again (its destination restarted, say).
+        HealthHistory history = new HealthHistory();
+        NodeReporter before = new NodeReporter(19);
+        history.add(snapshot(SINCE, 0));
+        before.begin(history.latest());
+        long lastDelivered = 0;
+        long t = SINCE;
+
+        while(t < SINCE + 1_200_000)
+        {
+            t += 10_000;
+            history.add(snapshot(t, t - SINCE));
+
+            if(before.isDue(history.latest()) && before.window(history) != null)
+            {
+                lastDelivered = t;
+                before.delivered(null);
+            }
+        }
+
+        assertTrue(lastDelivered > SINCE);
+        NodeReporter after = new NodeReporter(19);
+        HealthSnapshot first = history.latest();
+        after.begin(first);
+        assertFalse(after.isDue(first));
+        assertTrue(after.getNextAt() >= first.timeMs() + NodeReporter.FIRST_AFTER_MS,
+            "at least 60 s after its own start");
+
+        while(!after.isDue(history.latest()))
+        {
+            t += 10_000;
+            history.add(snapshot(t, t - SINCE));
+        }
+
+        NodeReporter.Window window = after.window(history);
+        assertEquals(first.timeMs(), window.startMs(), "from its own first snapshot");
+        assertTrue(window.startMs() >= lastDelivered, "never over time already reported");
+        assertTrue(window.gap(), "it can't say what came before");
+        assertEquals(0, window.seq(), "numbered from 0 again");
+
+        after.delivered(null);
+
+        while(!after.isDue(history.latest()))
+        {
+            t += 10_000;
+            history.add(snapshot(t, t - SINCE));
+        }
+
+        assertFalse(after.window(history).gap(), "only the first");
+    }
+
+    @Test
+    void the_first_snapshot_of_the_totals_is_kept_after_older_ones_go()
+    {
+        HealthHistory history = new HealthHistory();
+
+        for(long t = SINCE; t <= SINCE + HealthHistory.KEEP_MS * 2; t += 60_000)
+        {
+            history.add(snapshot(t, 0));
+        }
+
+        assertEquals(SINCE, history.first().timeMs());
+        assertTrue(history.atOrAfter(SINCE).timeMs() > SINCE, "the rest are kept for half an hour");
     }
 }

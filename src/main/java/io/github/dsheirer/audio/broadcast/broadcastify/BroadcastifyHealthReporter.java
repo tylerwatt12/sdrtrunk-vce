@@ -110,7 +110,8 @@ public class BroadcastifyHealthReporter
             return;
         }
 
-        HealthRegistry.getInstance().getHistory(); //Starts the snapshots
+        //Starts the snapshots, if they haven't: the node's reports start at the latest.
+        mReporter.begin(HealthRegistry.getInstance().getHistory().latest());
         mFuture = ThreadPool.SCHEDULED.scheduleAtFixedRate(this::check, CHECK_INTERVAL_MS, CHECK_INTERVAL_MS,
             TimeUnit.MILLISECONDS);
     }
@@ -343,8 +344,8 @@ public class BroadcastifyHealthReporter
 
         try
         {
-            long at = ZonedDateTime.parse(value.trim(), DateTimeFormatter.RFC_1123_DATE_TIME).toInstant().toEpochMilli();
-            return Math.max(0, at - nowMs) / 1000.0;
+            ZonedDateTime at = ZonedDateTime.parse(value.trim(), DateTimeFormatter.RFC_1123_DATE_TIME);
+            return Math.max(0, at.toInstant().toEpochMilli() - nowMs) / 1000.0;
         }
         catch(Exception e)
         {
