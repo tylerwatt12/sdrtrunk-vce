@@ -19,7 +19,6 @@
 
 package io.github.dsheirer.module.decode.p25.phase1.message.lc.motorola;
 
-import io.github.dsheirer.bits.BinaryMessage;
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
 import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.identifier.Identifier;
@@ -60,9 +59,8 @@ public class MotorolaTalkerAliasComplete extends TimeslotMessage
     private static final IntField SUID_WACN = IntField.length20(OCTET_0_BIT_0);
     private static final IntField SUID_SYSTEM = IntField.length12(OCTET_2_BIT_16 + 4);
     private static final IntField SUID_ID = IntField.length24(OCTET_4_BIT_32);
-    private static final IntField CHUNK = IntField.length16(0);
     private static final int ENCODED_ALIAS_START = OCTET_7_BIT_56;
-    private static final int CHUNK_SIZE = 16;
+    private final int mEncodedAliasBytes;
 
     private APCO25Talkgroup mTalkgroup;
     private APCO25FullyQualifiedRadioIdentifier mRadio;
@@ -88,6 +86,16 @@ public class MotorolaTalkerAliasComplete extends TimeslotMessage
         mTalkgroup = talkgroup;
         mSequence = sequence;
         mProtocol = protocol;
+        int payloadEnd = MotorolaTalkerAliasPayload.findPayloadEnd(message);
+        setValid(payloadEnd >= 0);
+        mEncodedAliasBytes = payloadEnd >= 0 ?
+            (payloadEnd - ENCODED_ALIAS_START - MotorolaTalkerAliasPayload.CRC_BITS) / 8 : 0;
+        if(payloadEnd >= 0)
+        {
+            message.setSize(payloadEnd);
+            //Encoding validity must be established before any consumer can accept this observation.
+            if(decodeAlias() == null) setValid(false);
+        }
     }
 
     public String toString()
@@ -134,11 +142,18 @@ public class MotorolaTalkerAliasComplete extends TimeslotMessage
      */
     public P25TalkerAliasIdentifier getAlias()
     {
+        return isValid() ? mAlias : null;
+    }
+
+    private P25TalkerAliasIdentifier decodeAlias()
+    {
+        if(!isValid() || mEncodedAliasBytes == 0) return null;
         if(mAlias == null)
         {
-            byte[] encoded = getEncodedAlias().toByteArray();
+            byte[] encoded = getMessage().getSubMessage(ENCODED_ALIAS_START,
+                ENCODED_ALIAS_START + mEncodedAliasBytes * 8).toByteArray();
 
-            // Note: CRC check is performed by assembler.
+            //The constructor has established the exact CRC-verified payload boundary.
             //   Data:  wwwww sss iiiiii aaaa...aaaa cccc
             //
             //   - w = WACN
@@ -146,8 +161,8 @@ public class MotorolaTalkerAliasComplete extends TimeslotMessage
             //   - i = id
             //   - a = encoded alias
             //   - c = CRC-16/GSM of the previous bytes
-            // Get number of bytes and characters excluding checksum
-            char bytes = (char) (encoded.length - 2);
+            //The exact framed extent excludes both CRC and transport filler.
+            char bytes = (char) encoded.length;
             char chars = (char) (bytes / 2);
 
             // Create array for decoded computed bytes (big-endian)
@@ -189,52 +204,40 @@ public class MotorolaTalkerAliasComplete extends TimeslotMessage
 
             // Copy decoded bytes (as chars) to our alias string
             StringBuilder alias = new StringBuilder(chars);
+            boolean highSurrogate = false;
             for(char i = 0; i < chars; i++)
             {
-                alias.append((char)(((decoded[i * 2] & 0xFF) << 8) | (decoded[i * 2 + 1] & 0xFF)));
+                char value = (char)(((decoded[i * 2] & 0xFF) << 8) | (decoded[i * 2 + 1] & 0xFF));
+                if(Character.isLowSurrogate(value))
+                {
+                    if(!highSurrogate)
+                    {
+                        setValid(false);
+                        return null;
+                    }
+                    highSurrogate = false;
+                }
+                else
+                {
+                    if(highSurrogate)
+                    {
+                        setValid(false);
+                        return null;
+                    }
+                    highSurrogate = Character.isHighSurrogate(value);
+                }
+                alias.append(value);
+            }
+            if(highSurrogate)
+            {
+                setValid(false);
+                return null;
             }
 
             mAlias = P25TalkerAliasIdentifier.create(alias.toString());
         }
 
         return mAlias;
-    }
-
-    /**
-     * Calculates the 16-bit value at the specified chunk number.
-     * @param chunk to get
-     * @return int value at the chunk
-     */
-    private int getChunkValue(int chunk)
-    {
-        int lastIndex = ENCODED_ALIAS_START + (chunk * CHUNK_SIZE) - 1;
-
-        if(getMessage().size() >= lastIndex)
-        {
-            return getInt(CHUNK, ENCODED_ALIAS_START + ((chunk - 1) * CHUNK_SIZE));
-        }
-
-        return 0;
-    }
-
-    /**
-     * Extracts the encoded alias payload.
-     * @return encoded alias binary message
-     */
-    private BinaryMessage getEncodedAlias()
-    {
-        int length = 1;
-
-        for(int x = 16; x > 1; x--)
-        {
-            if(getChunkValue(x) > 0)
-            {
-                length = x;
-                break;
-            }
-        }
-
-        return getMessage().getSubMessage(ENCODED_ALIAS_START, ENCODED_ALIAS_START + (length * 16));
     }
 
     /**
@@ -274,7 +277,8 @@ public class MotorolaTalkerAliasComplete extends TimeslotMessage
             //Only add the alias if it passes the CRC check.
             if(isValid())
             {
-                mIdentifiers.add(getAlias());
+                P25TalkerAliasIdentifier alias = getAlias();
+                if(alias != null) mIdentifiers.add(alias);
             }
         }
 

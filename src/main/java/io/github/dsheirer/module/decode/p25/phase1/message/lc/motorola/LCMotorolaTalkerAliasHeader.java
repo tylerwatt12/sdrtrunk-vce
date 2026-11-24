@@ -136,6 +136,12 @@ public class LCMotorolaTalkerAliasHeader extends LinkControlWord
         }
     }
 
+    /** Raw format value; only the observed Unicode format 1 is decoded. */
+    public int getFormatValue()
+    {
+        return getInt(FORMAT);
+    }
+
     /**
      * Sequence number that ties the header to each of the data blocks.
      */

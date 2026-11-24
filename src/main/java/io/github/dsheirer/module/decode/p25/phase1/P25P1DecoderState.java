@@ -40,6 +40,7 @@ import io.github.dsheirer.identifier.IdentifierClass;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
 import io.github.dsheirer.identifier.Role;
 import io.github.dsheirer.identifier.alias.TalkerAliasManager;
+import io.github.dsheirer.identifier.alias.TalkerAliasIdentifier;
 import io.github.dsheirer.identifier.alias.TalkerAliasManagerProvider;
 import io.github.dsheirer.identifier.configuration.FrequencyConfigurationIdentifier;
 import io.github.dsheirer.identifier.decoder.DecoderLogicalChannelNameIdentifier;
@@ -86,8 +87,10 @@ import io.github.dsheirer.module.decode.p25.phase1.message.lc.LinkControlWord;
 import io.github.dsheirer.module.decode.p25.phase1.message.lc.l3harris.LCHarrisReturnToControlChannel;
 import io.github.dsheirer.module.decode.p25.phase1.message.lc.l3harris.LCHarrisTalkerAliasBase;
 import io.github.dsheirer.module.decode.p25.phase1.message.lc.l3harris.LCHarrisTalkerAliasBlock1;
+import io.github.dsheirer.module.decode.p25.phase1.message.lc.l3harris.LCHarrisTalkerAliasBlock3;
 import io.github.dsheirer.module.decode.p25.phase1.message.lc.l3harris.LCHarrisTalkerAliasComplete;
 import io.github.dsheirer.module.decode.p25.phase1.message.lc.l3harris.LCHarrisTalkerGPSComplete;
+import io.github.dsheirer.module.decode.p25.phase1.message.lc.tait.LCTaitTalkerAlias;
 import io.github.dsheirer.module.decode.p25.phase1.message.lc.motorola.LCMotorolaEmergencyAlarmActivation;
 import io.github.dsheirer.module.decode.p25.phase1.message.lc.motorola.LCMotorolaTalkComplete;
 import io.github.dsheirer.module.decode.p25.phase1.message.lc.motorola.LCMotorolaUnitGPS;
@@ -244,8 +247,12 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
     //Keep raw LC participants separate from patch-resolved presentation identifiers.
     private Identifier<?> mAlgorithmSource;
     private Identifier<?> mAlgorithmTarget;
-    private RadioIdentifier mHarrisTalkerAliasRadio;
-    private boolean mHarrisTalkerAliasSourceInvalid;
+    private final RadioIdentifier[] mHarrisTalkerAliasRadios = new RadioIdentifier[2];
+    private final boolean[] mHarrisTalkerAliasSourceInvalid = new boolean[2];
+    private long mTalkerAliasReceptionGeneration;
+    private RadioIdentifier mContextTalkerAliasSource;
+    private int mContextTalkerAliasSourceNac = -1;
+    private int mTalkerAliasNac = -1;
 
     /**
      * Constructs an APCO-25 decoder state with an optional traffic channel manager.
@@ -387,6 +394,11 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
 
             //The standard control-channel message processor is the sole NAC authority. Any message reaching this
             //state has already passed that gate; traffic and conventional decoders retain their normal NAC behavior.
+            if(message.isValid() && message.getNAC().getValue() instanceof Integer nac)
+            {
+                if(mTalkerAliasNac >= 0 && mTalkerAliasNac != nac) resetHarrisTalkerAliasSource();
+                mTalkerAliasNac = nac;
+            }
             getIdentifierCollection().update(message.getNAC());
             if(isTrunkedControlChannel() && message.isValid())
             {
@@ -529,48 +541,69 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
      */
     private void processTalkerAlias(LCHarrisTalkerAliasComplete talkerAlias)
     {
+        int pair = talkerAlias.getConveyanceIndex();
         Identifier identifier = getIdentifierCollection().getFromIdentifier();
         RadioIdentifier currentRadio = identifier instanceof RadioIdentifier radioIdentifier ? radioIdentifier : null;
 
-        if(!mHarrisTalkerAliasSourceInvalid && mHarrisTalkerAliasRadio != null &&
-            mHarrisTalkerAliasRadio.equals(currentRadio))
+        if(talkerAlias.isValid() && !mHarrisTalkerAliasSourceInvalid[pair] && mHarrisTalkerAliasRadios[pair] != null &&
+            mHarrisTalkerAliasRadios[pair].equals(currentRadio))
         {
-            mTrafficChannelManager.processP1HarrisTalkerAlias(getCurrentFrequency(), mHarrisTalkerAliasRadio,
+            mTrafficChannelManager.processP1HarrisTalkerAlias(getCurrentFrequency(), mHarrisTalkerAliasRadios[pair],
                 talkerAlias.getTalkerAlias(), getIdentifierCollection(), talkerAlias.getTimestamp());
         }
 
-        resetHarrisTalkerAliasSource();
+        mHarrisTalkerAliasRadios[pair] = null;
+        mHarrisTalkerAliasSourceInvalid[pair] = false;
     }
 
     private void observeHarrisTalkerAliasFragment(LCHarrisTalkerAliasBase fragment)
     {
+        int pair = fragment.getConveyanceIndex();
         Identifier identifier = getIdentifierCollection().getFromIdentifier();
         RadioIdentifier currentRadio = identifier instanceof RadioIdentifier radioIdentifier ? radioIdentifier : null;
 
-        if(fragment instanceof LCHarrisTalkerAliasBlock1)
+        if(fragment instanceof LCHarrisTalkerAliasBlock1 || fragment instanceof LCHarrisTalkerAliasBlock3)
         {
-            mHarrisTalkerAliasRadio = currentRadio;
-            mHarrisTalkerAliasSourceInvalid = currentRadio == null;
+            mHarrisTalkerAliasRadios[pair] = currentRadio;
+            mHarrisTalkerAliasSourceInvalid[pair] = currentRadio == null;
         }
-        else if(!mHarrisTalkerAliasSourceInvalid)
+        else if(!mHarrisTalkerAliasSourceInvalid[pair])
         {
-            if(mHarrisTalkerAliasRadio == null)
+            if(mHarrisTalkerAliasRadios[pair] == null || !mHarrisTalkerAliasRadios[pair].equals(currentRadio))
             {
-                mHarrisTalkerAliasRadio = currentRadio;
-                mHarrisTalkerAliasSourceInvalid = currentRadio == null;
-            }
-            else if(!mHarrisTalkerAliasRadio.equals(currentRadio))
-            {
-                mHarrisTalkerAliasRadio = null;
-                mHarrisTalkerAliasSourceInvalid = true;
+                mHarrisTalkerAliasRadios[pair] = null;
+                mHarrisTalkerAliasSourceInvalid[pair] = true;
             }
         }
     }
 
     private void resetHarrisTalkerAliasSource()
     {
-        mHarrisTalkerAliasRadio = null;
-        mHarrisTalkerAliasSourceInvalid = false;
+        mTalkerAliasReceptionGeneration++;
+        mHarrisTalkerAliasRadios[0] = null;
+        mHarrisTalkerAliasRadios[1] = null;
+        mHarrisTalkerAliasSourceInvalid[0] = false;
+        mHarrisTalkerAliasSourceInvalid[1] = false;
+        mContextTalkerAliasSource = null;
+        mContextTalkerAliasSourceNac = -1;
+    }
+
+    /** Tait's text-only LC can enrich only the already accepted current source. */
+    private void processTaitTalkerAlias(LCTaitTalkerAlias message, long timestamp)
+    {
+        long generation = mTalkerAliasReceptionGeneration;
+        Identifier<?> from = getIdentifierCollection().getFromIdentifier();
+        RadioIdentifier radio = from instanceof RadioIdentifier value ? value : null;
+        TalkerAliasIdentifier decoded = message.getTalkerAlias();
+        TalkerAliasIdentifier owned = decoded != null ? decoded.bindTo(getIdentifierCollection()) : null;
+        if(owned != null && mContextTalkerAliasSource != null && mContextTalkerAliasSourceNac == mTalkerAliasNac &&
+            owned.matchesSource(mContextTalkerAliasSource) &&
+            mTrafficChannelManager.processP1TaitTalkerAlias(getCurrentFrequency(), radio,
+            owned, getIdentifierCollection(), timestamp) && generation == mTalkerAliasReceptionGeneration &&
+            owned.matchesContext(getIdentifierCollection()))
+        {
+            getIdentifierCollection().update(owned);
+        }
     }
 
     @Override
@@ -644,6 +677,23 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
      */
     private void processLCChannelUser(LinkControlWord lcw, long timestamp)
     {
+        if(lcw.isValid() && !lcw.isEncrypted())
+        {
+            //An explicit unknown source must not leave a previous radio as the owner of later source-less text.
+            //Keep generic call-continuity handling below independent of this stricter alias admission anchor.
+            mContextTalkerAliasSource = null;
+            mContextTalkerAliasSourceNac = -1;
+            for(Identifier<?> identifier: lcw.getIdentifiers())
+            {
+                if(identifier instanceof RadioIdentifier radio && radio.getRole() == Role.FROM && radio.isValid())
+                {
+                    mContextTalkerAliasSource = radio;
+                    mContextTalkerAliasSourceNac = mTalkerAliasNac;
+                    break;
+                }
+            }
+            if(mContextTalkerAliasSource == null) resetHarrisTalkerAliasSource();
+        }
         for(Identifier<?> participant: lcw.getIdentifiers())
         {
             if(!participant.isValid() || (participant.getRole() != Role.FROM && participant.getRole() != Role.TO))
@@ -2467,9 +2517,15 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                 break;
             case L3HARRIS_TALKER_ALIAS_BLOCK_1, L3HARRIS_TALKER_ALIAS_BLOCK_2,
                     L3HARRIS_TALKER_ALIAS_BLOCK_3, L3HARRIS_TALKER_ALIAS_BLOCK_4:
-                if(lcw instanceof LCHarrisTalkerAliasBase fragment)
+                if(!isTerminator && lcw instanceof LCHarrisTalkerAliasBase fragment)
                 {
                     observeHarrisTalkerAliasFragment(fragment);
+                }
+                break;
+            case TAIT_TALKER_ALIAS:
+                if(!isTerminator && lcw instanceof LCTaitTalkerAlias alias)
+                {
+                    processTaitTalkerAlias(alias, timestamp);
                 }
                 break;
 

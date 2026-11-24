@@ -73,6 +73,7 @@ import io.github.dsheirer.module.decode.p25.phase1.message.lc.standard.LCUnitReg
 import io.github.dsheirer.module.decode.p25.phase1.message.lc.standard.LCUnitToUnitAnswerRequest;
 import io.github.dsheirer.module.decode.p25.phase1.message.lc.standard.LCUnitToUnitVoiceChannelUser;
 import io.github.dsheirer.module.decode.p25.phase1.message.lc.standard.LCUnitToUnitVoiceChannelUserExtended;
+import io.github.dsheirer.module.decode.p25.phase1.message.lc.tait.LCTaitTalkerAlias;
 
 /**
  * Factory class for creating link control word (LCW) message parsers.
@@ -95,6 +96,8 @@ public class LinkControlWordFactory
         LinkControlOpcode opcode = LinkControlWord.getOpcode(message);
         switch(opcode)
         {
+            case TAIT_TALKER_ALIAS:
+                return new LCTaitTalkerAlias(message);
             case ADJACENT_SITE_STATUS_BROADCAST:
                 return new LCAdjacentSiteStatusBroadcast(message);
             case ADJACENT_SITE_STATUS_BROADCAST_EXPLICIT:

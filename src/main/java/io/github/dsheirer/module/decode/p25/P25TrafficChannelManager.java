@@ -452,7 +452,14 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
     public void processP1HarrisTalkerAlias(long frequency, RadioIdentifier radio, TalkerAliasIdentifier alias,
                                            IdentifierCollection identifiers, long timestamp)
     {
-        processHarrisTalkerAlias(frequency, TimeslotMessage.TIMESLOT_1, radio, alias, identifiers, timestamp);
+        processContextTalkerAlias(frequency, TimeslotMessage.TIMESLOT_1, radio, alias, identifiers, timestamp);
+    }
+
+    /** Tait format 0 contains only text; accept it only against the same active, source-bearing call. */
+    public boolean processP1TaitTalkerAlias(long frequency, RadioIdentifier radio, TalkerAliasIdentifier alias,
+                                           IdentifierCollection identifiers, long timestamp)
+    {
+        return processContextTalkerAlias(frequency, TimeslotMessage.TIMESLOT_1, radio, alias, identifiers, timestamp);
     }
 
     /**
@@ -481,14 +488,14 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                                            TalkerAliasIdentifier alias, IdentifierCollection identifiers,
                                            long timestamp)
     {
-        return processHarrisTalkerAlias(frequency, timeslot, radio, alias, identifiers, timestamp);
+        return processContextTalkerAlias(frequency, timeslot, radio, alias, identifiers, timestamp);
     }
 
     /**
-     * Harris alias messages contain text but no embedded radio identity.  Reject a conflicting traffic/grant source
+     * Context-only alias messages contain text but no embedded radio identity. Reject a conflicting traffic/grant source
      * instead of guessing which radio owns the alias.
      */
-    private boolean processHarrisTalkerAlias(long frequency, int timeslot, RadioIdentifier radio,
+    private boolean processContextTalkerAlias(long frequency, int timeslot, RadioIdentifier radio,
                                           TalkerAliasIdentifier alias, IdentifierCollection identifiers,
                                           long timestamp)
     {
@@ -499,7 +506,8 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
         alias = alias.bindTo(radio);
         if(alias == null) return false;
 
-        mLock.lock();
+        //Names are optional observations. A contended call update must never hold up the decoder callback.
+        if(!mLock.tryLock()) return false;
 
         try
         {

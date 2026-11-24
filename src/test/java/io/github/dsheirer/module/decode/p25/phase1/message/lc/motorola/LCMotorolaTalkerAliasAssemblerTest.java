@@ -141,6 +141,52 @@ class LCMotorolaTalkerAliasAssemblerTest
         }
     }
 
+    @Test
+    void invalidCountsTruncatedWordsAndExpiredHeadersRequireAFreshTransaction()
+    {
+        LCMotorolaTalkerAliasAssembler assembler = new LCMotorolaTalkerAliasAssembler();
+        for(int count: new int[]{0, 255})
+        {
+            CorrectedBinaryMessage invalid = CorrectedBinaryMessage.loadHex(HEADER);
+            invalid.load(32, 8, count);
+            assertFalse(assembler.add(new LCMotorolaTalkerAliasHeader(invalid), 1_000));
+            for(String body: BLOCKS) assertFalse(assembler.add(block(body), 1_100));
+        }
+        assertFalse(assembler.add(new LCMotorolaTalkerAliasHeader(new CorrectedBinaryMessage(32)), 2_000));
+        assembler.add(header(), 3_000);
+        assertFalse(assembler.add(new LCMotorolaTalkerAliasDataBlock(new CorrectedBinaryMessage(28)), 3_100));
+        for(String body: BLOCKS) assertFalse(assembler.add(block(body), 13_001));
+        assembler.add(header(), 20_000);
+        assertTrue(addAllBlocks(assembler, 20_100).isValid());
+    }
+
+    @Test
+    void exactDuplicatesAreSafeButConflictingDuplicatesInvalidateTheTransaction()
+    {
+        LCMotorolaTalkerAliasAssembler assembler = new LCMotorolaTalkerAliasAssembler();
+        assembler.add(header(), 1_000);
+        assertFalse(assembler.add(block(BLOCKS[0]), 1_100));
+        assertFalse(assembler.add(block(BLOCKS[0]), 1_200));
+        CorrectedBinaryMessage conflict = CorrectedBinaryMessage.loadHex(BLOCKS[0]);
+        conflict.flip(30);
+        assertFalse(assembler.add(new LCMotorolaTalkerAliasDataBlock(conflict), 1_300));
+        for(String body: BLOCKS) assertFalse(assembler.add(block(body), 1_400));
+        assembler.add(header(), 2_000);
+        assertTrue(addAllBlocks(assembler, 2_100).isValid());
+    }
+
+    @Test
+    void unsupportedEncodingCannotBeAssumedToContainUnicode()
+    {
+        LCMotorolaTalkerAliasAssembler assembler = new LCMotorolaTalkerAliasAssembler();
+        CorrectedBinaryMessage unsupported = CorrectedBinaryMessage.loadHex(HEADER);
+        unsupported.load(40, 8, 2);
+        assertFalse(assembler.add(new LCMotorolaTalkerAliasHeader(unsupported), 1_000));
+        for(String body: BLOCKS) assertFalse(assembler.add(block(body), 1_100));
+        assembler.add(header(), 2_000);
+        assertTrue(addAllBlocks(assembler, 2_100).isValid());
+    }
+
     private static LCMotorolaTalkerAliasHeader header()
     {
         return new LCMotorolaTalkerAliasHeader(CorrectedBinaryMessage.loadHex(HEADER));

@@ -34,6 +34,51 @@ import org.junit.jupiter.api.Test;
 class P25P2HarrisTalkerAliasAcceptanceTest
 {
     @Test
+    void newPushToTalkWithoutASourceCannotInheritThePreviousRadiosName()
+    {
+        Channel channel = channel();
+        AcceptanceManager manager = new AcceptanceManager(channel, true);
+        var state = new P25P2DecoderState(channel, 1, manager, new PatchGroupManager());
+        state.getIdentifierCollection().update(APCO25RadioIdentifier.createFrom(101));
+        state.receive(message(1, "OLD UNIT"));
+        assertEquals("OLD UNIT", alias(state.getIdentifierCollection()).getValue());
+
+        var bits = new CorrectedBinaryMessage(180);
+        bits.load(80, 8, 0x80);
+        bits.load(128, 16, 100);
+        var ptt = new io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.PushToTalk(bits);
+        state.receive(new MacMessage(1, DataUnitID.UNSCRAMBLED_FACCH, bits, 1200, ptt));
+        state.receive(message(2, "OTHER SLOT"));
+        state.receive(message(1, "UNKNOWN UNIT"));
+        assertNull(alias(state.getIdentifierCollection()));
+        assertEquals(1, manager.mCalls, "an unknown source is rejected before name acceptance");
+
+        var qualified = io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier
+            .createFrom(0, 0xABCDE, 0x123, 202);
+        state.getIdentifierCollection().update(qualified);
+        state.receive(message(1, "KNOWN HOME"));
+        assertEquals("KNOWN HOME", alias(state.getIdentifierCollection()).getValue());
+        assertTrue(((TalkerAliasIdentifier)alias(state.getIdentifierCollection())).matchesSource(qualified));
+    }
+
+    @Test
+    void malformedAliasStructureCannotReachAcceptance()
+    {
+        Channel channel = channel();
+        AcceptanceManager manager = new AcceptanceManager(channel, true);
+        var state = new P25P2DecoderState(channel, 1, manager, new PatchGroupManager());
+        state.getIdentifierCollection().update(APCO25RadioIdentifier.createFrom(101));
+        var bits = new CorrectedBinaryMessage(32);
+        bits.load(0, 8, 0xA8);
+        bits.load(8, 8, 0xA4);
+        bits.load(16, 8, 17);
+        state.receive(new MacMessage(1, DataUnitID.UNSCRAMBLED_FACCH, bits, 1100,
+            new L3HarrisTalkerAlias(bits, 0)));
+        assertEquals(0, manager.mCalls);
+        assertNull(alias(state.getIdentifierCollection()));
+    }
+
+    @Test
     void rejectedAliasNeverReachesDecoderOrAudioMetadata()
     {
         Channel channel = channel();

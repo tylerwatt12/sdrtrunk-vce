@@ -170,7 +170,7 @@ public class P25P1MessageProcessor implements Listener<IMessage>, IDecoderStateE
         }
         else if(message instanceof HDUMessage && message.isValid() ||
             message instanceof TDULCMessage tdulc &&
-                (!tdulc.isValid() || !tdulc.getLinkControlWord().isValid()))
+                (!tdulc.isValid() || !tdulc.getLinkControlWord().isValid() || tdulc.getLinkControlWord().isEncrypted()))
         {
             //An interrupted call or untrusted protected LC cannot supply the next alias's header or body.
             mMotorolaTalkerAliasAssembler.reset();
@@ -212,6 +212,7 @@ public class P25P1MessageProcessor implements Listener<IMessage>, IDecoderStateE
             if(message instanceof P25P1Message p25 && p25.getNAC().getValue() instanceof Integer nac &&
                 mHarrisTalkerAliasNac != nac)
             {
+                mMotorolaTalkerAliasAssembler.reset();
                 mHarrisTalkerAliasAssembler.reset();
                 mHarrisTalkerAliasSource = null;
                 mHarrisTalkerAliasNac = nac;
@@ -220,6 +221,7 @@ public class P25P1MessageProcessor implements Listener<IMessage>, IDecoderStateE
             {
                 //Both call endings and a fresh header delimit source-less Harris fragments, including when a
                 //terminator or one of the alias's fragments was missed.
+                mMotorolaTalkerAliasAssembler.reset();
                 mHarrisTalkerAliasAssembler.reset();
                 mHarrisTalkerAliasSource = null;
             }
@@ -228,6 +230,14 @@ public class P25P1MessageProcessor implements Listener<IMessage>, IDecoderStateE
             {
                 LinkControlWord lcw = ldu1.getLinkControlWord();
                 LCHarrisTalkerAliasComplete harrisTalkerAliasComplete = null;
+                boolean motorolaTalkerAliasComplete = false;
+
+                if(!lcw.isValid() || lcw.isEncrypted())
+                {
+                    mMotorolaTalkerAliasAssembler.reset();
+                    mHarrisTalkerAliasAssembler.reset();
+                    mHarrisTalkerAliasSource = null;
+                }
 
                 switch(lcw)
                 {
@@ -249,6 +259,10 @@ public class P25P1MessageProcessor implements Listener<IMessage>, IDecoderStateE
                         }
                         break;
                     default:
+                        if(lcw.isValid() && !lcw.isEncrypted())
+                        {
+                            motorolaTalkerAliasComplete = mMotorolaTalkerAliasAssembler.add(lcw, ldu1.getTimestamp());
+                        }
                         break;
                 }
 
@@ -259,6 +273,7 @@ public class P25P1MessageProcessor implements Listener<IMessage>, IDecoderStateE
 
                 //Dispatch after the source LDU so the decoder state can anchor the assembly to the active FROM radio.
                 if(!dispatch(harrisTalkerAliasComplete)) return;
+                if(motorolaTalkerAliasComplete && !dispatch(mMotorolaTalkerAliasAssembler.assemble())) return;
 
                 //Process Harris Talker GPS messages
                 if(lcw instanceof LCHarrisTalkerGPSBlock1 block1)
@@ -321,7 +336,7 @@ public class P25P1MessageProcessor implements Listener<IMessage>, IDecoderStateE
                 }
 
                 //Motorola carries the talker alias in the TDULC
-                else if(lcw.isValid() && mMotorolaTalkerAliasAssembler.add(lcw, message.getTimestamp()))
+                else if(lcw.isValid() && !lcw.isEncrypted() && mMotorolaTalkerAliasAssembler.add(lcw, message.getTimestamp()))
                 {
                     motorolaTalkerAliasComplete = true;
                 }
@@ -403,7 +418,7 @@ public class P25P1MessageProcessor implements Listener<IMessage>, IDecoderStateE
         //Also process the link control messages for frequency bands.
         if(message instanceof LDU1Message ldu1 && ldu1.getLinkControlWord() instanceof LinkControlWord lcw && lcw.isValid())
         {
-            if(message.isValid())
+            if(message.isValid() && !lcw.isEncrypted())
             {
                 observeHarrisTalkerAliasSource(lcw);
             }
@@ -431,6 +446,7 @@ public class P25P1MessageProcessor implements Listener<IMessage>, IDecoderStateE
             {
                 ResolvedRadioIdentity previous = ResolvedRadioIdentity.from(mHarrisTalkerAliasSource);
                 ResolvedRadioIdentity next = ResolvedRadioIdentity.from(radio);
+                if(next == null) continue;
                 if(previous == null || !previous.matchesWithinScope(next))
                 {
                     mHarrisTalkerAliasAssembler.reset();
@@ -438,6 +454,19 @@ public class P25P1MessageProcessor implements Listener<IMessage>, IDecoderStateE
                 mHarrisTalkerAliasSource = radio;
                 return;
             }
+        }
+        switch(lcw.getOpcode())
+        {
+            case GROUP_VOICE_CHANNEL_USER, MOTOROLA_GROUP_REGROUP_VOICE_CHANNEL_USER,
+                TELEPHONE_INTERCONNECT_VOICE_CHANNEL_USER, UNIT_TO_UNIT_VOICE_CHANNEL_USER,
+                UNIT_TO_UNIT_VOICE_CHANNEL_USER_EXTENDED ->
+            {
+                //These LCs explicitly describe the current caller. A missing/zero source is an unknown owner,
+                //not permission for later source-less text to borrow the previous radio's anchor.
+                mHarrisTalkerAliasAssembler.reset();
+                mHarrisTalkerAliasSource = null;
+            }
+            default -> { }
         }
     }
 

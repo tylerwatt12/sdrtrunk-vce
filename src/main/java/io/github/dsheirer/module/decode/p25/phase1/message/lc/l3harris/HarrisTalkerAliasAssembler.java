@@ -1,115 +1,44 @@
 /*
- * *****************************************************************************
- * Copyright (C) 2014-2024 Dennis Sheirer
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
- * ****************************************************************************
+ * Copyright (C) 2014-2026 Dennis Sheirer
+ * SPDX-License-Identifier: GPL-3.0-or-later
  */
-
 package io.github.dsheirer.module.decode.p25.phase1.message.lc.l3harris;
 
-/**
- * Assembles a talker alias from talker alias blocks 1-4
- */
+/** Independent odd/even A/B conveyances (TIA-102.AABF-D-2, July 2023, 7.3.35-36). */
 public class HarrisTalkerAliasAssembler
 {
-    private LCHarrisTalkerAliasBlock1 mBlock1;
-    private LCHarrisTalkerAliasBlock2 mBlock2;
-    private LCHarrisTalkerAliasBlock3 mBlock3;
-    private LCHarrisTalkerAliasBlock4 mBlock4;
-    private long mTimestamp;
-    private boolean mComplete;
+    //Receiver admission policy, not a protocol timeout. Source-less parts cannot remain indefinitely.
+    private static final long MAXIMUM_PAIR_AGE_MS = 2_000;
+    private final LCHarrisTalkerAliasBase[] mFirstParts = new LCHarrisTalkerAliasBase[2];
+    private final long[] mTimestamps = new long[2];
 
-    /**
-     * Resets the contents when a terminator or idle message is received.
-     */
+    /** Call/source/reception boundaries invalidate both conveyances. */
     public void reset()
     {
-        mBlock1 = null;
-        mBlock2 = null;
-        mBlock3 = null;
-        mBlock4 = null;
-        mComplete = false;
+        mFirstParts[0] = null;
+        mFirstParts[1] = null;
     }
 
-    /**
-     * Processes the FLC talker alias message and returns a fully assembled alias when at least 2 fragments are received.
-     * @param lcw containing Harris LC talker alias blocks 1-4
-     * @return fully assembled talker alias, if available, or null.
-     */
-    public LCHarrisTalkerAliasComplete process(LCHarrisTalkerAliasBase lcw, long timestamp)
+    public LCHarrisTalkerAliasComplete process(LCHarrisTalkerAliasBase part, long timestamp)
     {
-        mTimestamp = timestamp;
-
-        if(lcw.isValid())
+        if(part == null) return null;
+        int pair = part.getConveyanceIndex();
+        if(!part.isValid() || part.isEncrypted() || part.getMessage().size() != 72)
         {
-            switch(lcw.getOpcode())
-            {
-                case L3HARRIS_TALKER_ALIAS_BLOCK_1:
-                    if(lcw instanceof LCHarrisTalkerAliasBlock1 block1)
-                    {
-                        //No sequence or radio is carried in these fragments. Only block 1 establishes a new
-                        //assembly; a prior continuation must never complete the next alias's first block.
-                        reset();
-                        mBlock1 = block1;
-                        return assemble();
-                    }
-                    break;
-                case L3HARRIS_TALKER_ALIAS_BLOCK_2:
-                    if(mBlock1 != null && !mComplete && lcw instanceof LCHarrisTalkerAliasBlock2 block2)
-                    {
-                        mBlock2 = block2;
-                        return assemble();
-                    }
-                    break;
-                case L3HARRIS_TALKER_ALIAS_BLOCK_3:
-                    if(mBlock1 != null && !mComplete && lcw instanceof LCHarrisTalkerAliasBlock3 block3)
-                    {
-                        mBlock3 = block3;
-                        return assemble();
-                    }
-                    break;
-                case L3HARRIS_TALKER_ALIAS_BLOCK_4:
-                    if(mBlock1 != null && !mComplete && lcw instanceof LCHarrisTalkerAliasBlock4 block4)
-                    {
-                        mBlock4 = block4;
-                        return assemble();
-                    }
-                    break;
-                default:
-                    break;
-            }
+            reset();
+            return null;
         }
-
-        return null;
-    }
-
-    /**
-     * Assembles a complete alias from the 4 fragment blocks
-     * @return assembled alias or null.
-     */
-    private LCHarrisTalkerAliasComplete assemble()
-    {
-        if(!mComplete && mBlock1 != null && mBlock2 != null)
+        if(part instanceof LCHarrisTalkerAliasBlock1 || part instanceof LCHarrisTalkerAliasBlock3)
         {
-            String fragment2 = mBlock2.getPayloadFragmentString();
-            String fragment3 = mBlock3 != null ? mBlock3.getPayloadFragmentString() : null;
-            String fragment4 = mBlock4 != null ? mBlock4.getPayloadFragmentString() : null;
-            mComplete = true;
-            return new LCHarrisTalkerAliasComplete(mBlock1.getMessage(), fragment2, fragment3, fragment4, mTimestamp);
+            mFirstParts[pair] = part;
+            mTimestamps[pair] = timestamp;
+            return null;
         }
-
-        return null;
+        LCHarrisTalkerAliasBase first = mFirstParts[pair];
+        mFirstParts[pair] = null;
+        if(first == null || timestamp < mTimestamps[pair] ||
+            timestamp - mTimestamps[pair] > MAXIMUM_PAIR_AGE_MS) return null;
+        LCHarrisTalkerAliasComplete complete = new LCHarrisTalkerAliasComplete(first, part, timestamp);
+        return complete.isValid() ? complete : null;
     }
 }

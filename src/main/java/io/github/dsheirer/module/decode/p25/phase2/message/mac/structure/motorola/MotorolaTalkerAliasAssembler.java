@@ -19,10 +19,9 @@
 
 package io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.motorola;
 
-import io.github.dsheirer.bits.BinaryMessage;
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
-import io.github.dsheirer.edac.CRC16;
 import io.github.dsheirer.module.decode.p25.phase1.message.lc.motorola.MotorolaTalkerAliasComplete;
+import io.github.dsheirer.module.decode.p25.phase1.message.lc.motorola.MotorolaTalkerAliasPayload;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.MacStructure;
 import io.github.dsheirer.protocol.Protocol;
 import java.util.HashMap;
@@ -38,6 +37,10 @@ public class MotorolaTalkerAliasAssembler
 {
     private static final int HEADER_FRAGMENT_LENGTH = 64;
     private static final int DATA_BLOCK_FRAGMENT_LENGTH = 100;
+    private static final int MAXIMUM_BLOCK_COUNT =
+        (MotorolaTalkerAliasPayload.MAXIMUM_PAYLOAD_BITS - HEADER_FRAGMENT_LENGTH + DATA_BLOCK_FRAGMENT_LENGTH - 1) /
+            DATA_BLOCK_FRAGMENT_LENGTH;
+    private static final long MAXIMUM_ASSEMBLY_MILLISECONDS = 10_000;
     private MotorolaTalkerAliasHeader mHeader;
     private Map<Integer, MotorolaTalkerAliasDataBlock> mDataBlocks = new HashMap<>();
     private int mSequence = -1;
@@ -76,6 +79,8 @@ public class MotorolaTalkerAliasAssembler
         {
             //The sequence nibble wraps. A header always starts a new fragment lifetime.
             reset();
+            if(header.getMessage().size() - header.getOffset() < 136 || header.getBlockCount() < 1 ||
+                header.getBlockCount() > MAXIMUM_BLOCK_COUNT || header.getFormatValue() != 1) return false;
             mHeader = header;
             mSequence = header.getSequence();
             mHeaderTimestamp = timestamp;
@@ -83,9 +88,21 @@ public class MotorolaTalkerAliasAssembler
         }
         else if(mac instanceof MotorolaTalkerAliasDataBlock block)
         {
-            if(mHeader == null || block.getSequence() != mSequence || timestamp < mHeaderTimestamp ||
-                block.getBlockNumber() < 1 || block.getBlockNumber() > mHeader.getBlockCount())
+            if(mHeader != null && timestamp - mHeaderTimestamp > MAXIMUM_ASSEMBLY_MILLISECONDS)
             {
+                reset();
+                return false;
+            }
+            if(mHeader == null || block.getSequence() != mSequence || timestamp < mHeaderTimestamp ||
+                block.getMessage().size() - block.getOffset() < 136 || block.getBlockNumber() < 1 ||
+                block.getBlockNumber() > mHeader.getBlockCount())
+            {
+                return false;
+            }
+            MotorolaTalkerAliasDataBlock previous = mDataBlocks.get(block.getBlockNumber());
+            if(previous != null && !previous.getFragment().equals(block.getFragment()))
+            {
+                reset();
                 return false;
             }
             mMostRecentTimestamp = Math.max(mMostRecentTimestamp, timestamp);
@@ -151,7 +168,6 @@ public class MotorolaTalkerAliasAssembler
             offset += DATA_BLOCK_FRAGMENT_LENGTH;
         }
 
-        trimTalkerAliasLength(reassembled);
         MotorolaTalkerAliasComplete complete = new MotorolaTalkerAliasComplete(reassembled, mHeader.getTalkgroup(),
                 mHeader.getSequence(), mTimeslot, mMostRecentTimestamp, Protocol.APCO25_PHASE2);
 
@@ -162,24 +178,8 @@ public class MotorolaTalkerAliasAssembler
         //   - i = id
         //   - a = encoded alias
         //   - c = CRC-16/GSM of the previous bytes
-        complete.setValid(CRC16.check(reassembled));
-
         reset();
         return complete;
     }
 
-    /**
-     * Trims the message length to exclude pad zeros so that the CRC calculation knows where to finish.
-     * @param message containing an encoded talker alias.
-     */
-    public static void trimTalkerAliasLength(BinaryMessage message)
-    {
-        int x = 72; //Minimum bit size WACN + SYS + RADIO + 1 CHARACTER = 18 Hex Characters * 4 Bits Each
-        while(message.nextSetBit(x) > 0 && x < message.size())
-        {
-            x += 8;
-        }
-
-        message.setSize(x);
-    }
 }

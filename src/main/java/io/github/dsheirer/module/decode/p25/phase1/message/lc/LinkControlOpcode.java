@@ -116,6 +116,9 @@ public enum LinkControlOpcode
     L3HARRIS_TALKER_ALIAS_BLOCK_4("TALKER ALIAS BLOCK 4", 53),
     L3HARRIS_UNKNOWN("L3HARRIS UNKNOWN", -1),
 
+    TAIT_TALKER_ALIAS("TAIT TALKER ALIAS", 0),
+    TAIT_UNKNOWN("TAIT UNKNOWN", -1),
+
     //This is used for reassembled talker aliases and is not an actual opcode
     TALKER_ALIAS_COMPLETE("TALKER ALIAS COMPLETE", -1),
 
@@ -213,7 +216,7 @@ public enum LinkControlOpcode
     {
         switch(vendor)
         {
-            case STANDARD:
+            case STANDARD, STANDARD_V1:
                 if(0 <= value && value <= 63)
                 {
                     return values()[value];
@@ -267,13 +270,11 @@ public enum LinkControlOpcode
                     default:
                         return MOTOROLA_UNKNOWN;
                 }
+            case TAIT:
+                return value == 0 ? TAIT_TALKER_ALIAS : TAIT_UNKNOWN;
             default:
-                break;
-        }
-
-        if(0 <= value && value <= 63)
-        {
-            return values()[value];
+                //An explicit vendor opcode is not a standard call-user message merely because its number matches.
+                return UNKNOWN;
         }
 
         return UNKNOWN;

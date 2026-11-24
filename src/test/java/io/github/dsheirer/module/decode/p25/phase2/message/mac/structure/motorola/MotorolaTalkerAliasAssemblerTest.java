@@ -116,6 +116,52 @@ class MotorolaTalkerAliasAssemblerTest
         assertFalse(assembler.assemble().isValid());
     }
 
+    @Test
+    void invalidCountsTruncatedStructuresAndExpiredHeadersRequireAFreshTransaction()
+    {
+        MotorolaTalkerAliasAssembler assembler = new MotorolaTalkerAliasAssembler(1);
+        for(int count: new int[]{0, 255})
+        {
+            CorrectedBinaryMessage invalid = new CorrectedBinaryMessage(136);
+            invalid.load(40, 8, count);
+            assertFalse(assembler.add(new MotorolaTalkerAliasHeader(invalid, 0), 1_000));
+            for(int number = 1; number <= 3; number++) assertFalse(assembler.add(block(number), 1_100));
+        }
+        assertFalse(assembler.add(new MotorolaTalkerAliasHeader(new CorrectedBinaryMessage(64), 0), 2_000));
+        assembler.add(header(), 3_000);
+        assertFalse(assembler.add(new MotorolaTalkerAliasDataBlock(new CorrectedBinaryMessage(40), 0), 3_100));
+        for(int number = 1; number <= 3; number++) assertFalse(assembler.add(block(number), 13_001));
+        assembler.add(header(), 20_000);
+        assertTrue(addAllBlocks(assembler, 20_100).isValid());
+    }
+
+    @Test
+    void exactDuplicatesAreSafeButConflictingDuplicatesInvalidateTheTransaction()
+    {
+        MotorolaTalkerAliasAssembler assembler = new MotorolaTalkerAliasAssembler(1);
+        assembler.add(header(), 1_000);
+        assertFalse(assembler.add(block(1), 1_100));
+        assertFalse(assembler.add(block(1), 1_200));
+        CorrectedBinaryMessage conflict = blockBits(1);
+        conflict.flip(38);
+        assertFalse(assembler.add(new MotorolaTalkerAliasDataBlock(conflict, 0), 1_300));
+        for(int number = 1; number <= 3; number++) assertFalse(assembler.add(block(number), 1_400));
+        assembler.add(header(), 2_000);
+        assertTrue(addAllBlocks(assembler, 2_100).isValid());
+    }
+
+    @Test
+    void unsupportedEncodingCannotBeAssumedToContainUnicode()
+    {
+        MotorolaTalkerAliasAssembler assembler = new MotorolaTalkerAliasAssembler(1);
+        CorrectedBinaryMessage unsupported = header().getMessage();
+        unsupported.load(48, 8, 2);
+        assertFalse(assembler.add(new MotorolaTalkerAliasHeader(unsupported, 0), 1_000));
+        for(int number = 1; number <= 3; number++) assertFalse(assembler.add(block(number), 1_100));
+        assembler.add(header(), 2_000);
+        assertTrue(addAllBlocks(assembler, 2_100).isValid());
+    }
+
     private static MotorolaTalkerAliasComplete addAllBlocks(MotorolaTalkerAliasAssembler assembler, long timestamp)
     {
         assertFalse(assembler.add(block(1), timestamp));
@@ -129,6 +175,7 @@ class MotorolaTalkerAliasAssemblerTest
         CorrectedBinaryMessage message = new CorrectedBinaryMessage(136);
         message.load(24, 16, 0x1BBD);
         message.load(40, 8, 3);
+        message.load(48, 8, 1);
         message.load(64, 4, 4);
         message.load(72, CorrectedBinaryMessage.loadHex(PAYLOAD).getSubMessage(0, 64));
         return new MotorolaTalkerAliasHeader(message, 0);

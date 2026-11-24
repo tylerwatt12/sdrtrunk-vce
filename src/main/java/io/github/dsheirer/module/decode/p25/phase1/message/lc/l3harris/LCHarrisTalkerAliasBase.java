@@ -24,6 +24,7 @@ import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.module.decode.p25.phase1.message.lc.LinkControlWord;
 import java.util.Collections;
 import java.util.List;
+import java.nio.charset.StandardCharsets;
 
 /**
  * Base class for L3Harris talker alias messages
@@ -58,7 +59,13 @@ public abstract class LCHarrisTalkerAliasBase extends LinkControlWord
      */
     public String getPayloadFragmentString()
     {
-        return new String(getPayloadFragment().toByteArray()).trim();
+        return new String(getPayloadFragment().toByteArray(), StandardCharsets.US_ASCII);
+    }
+
+    /** Odd (0) or even (1) conveyance. Both parts of a pair have the same index. */
+    public int getConveyanceIndex()
+    {
+        return this instanceof LCHarrisTalkerAliasBlock3 || this instanceof LCHarrisTalkerAliasBlock4 ? 1 : 0;
     }
 
     /**

@@ -1,109 +1,122 @@
 /*
- * *****************************************************************************
  * Copyright (C) 2026
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- * *****************************************************************************
+ * SPDX-License-Identifier: GPL-3.0-or-later
  */
 package io.github.dsheirer.module.decode.p25.phase1.message.lc.l3harris;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import java.nio.charset.StandardCharsets;
 import org.junit.jupiter.api.Test;
-
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.*;
 
 class HarrisTalkerAliasAssemblerTest
 {
     @Test
-    void emitsEachTwoBlockAliasOnlyOnce()
+    void eachConveyanceIndependentlySuppliesACompleteNameAndConsumesItsFirstPart()
     {
-        HarrisTalkerAliasAssembler assembler = new HarrisTalkerAliasAssembler();
-        assertNull(assembler.process(block1("32A443445020233032"), 1_000L));
-
-        LCHarrisTalkerAliasComplete complete = assembler.process(block2("33A433312020202020"), 1_500L);
-
-        assertNotNull(complete);
-        assertEquals("CDP #0231", complete.getTalkerAlias().getValue());
-        assertNull(assembler.process(block3("34A443445020233032"), 2_000L));
-        assertNull(assembler.process(block4("35A433312020202020"), 2_500L));
-
-        assertNull(assembler.process(block1("32A44E455720202020"), 3_000L));
-        assertNotNull(assembler.process(block2("33A4414C4941532020"), 3_500L));
+        var assembler = new HarrisTalkerAliasAssembler();
+        assertNull(assembler.process(part(0x32, "ODDUNIT"), 1000));
+        assertEquals("ODDUNIT1", assembler.process(part(0x33, "1"), 1200).getTalkerAlias().getValue());
+        assertNull(assembler.process(part(0x33, "1"), 1250));
+        assertNull(assembler.process(part(0x34, "EVENUNI"), 1300));
+        assertEquals("EVENUNIT2", assembler.process(part(0x35, "T2"), 1500).getTalkerAlias().getValue());
+        assertNull(assembler.process(part(0x35, "T2"), 1550));
     }
 
     @Test
-    void orphanContinuationsCannotCompleteTheNextFirstBlock()
+    void repeatedHalvesAndSpacesAcrossThePartBoundaryAreLiteralText()
     {
-        HarrisTalkerAliasAssembler assembler = new HarrisTalkerAliasAssembler();
-        assertNull(assembler.process(block2("33A433312020202020"), 1_000L));
-        assertNull(assembler.process(block3("34A443445020233032"), 1_100L));
-        assertNull(assembler.process(block4("35A433312020202020"), 1_200L));
-        assertNull(assembler.process(block1("32A44E455720202020"), 2_000L));
-
-        LCHarrisTalkerAliasComplete complete = assembler.process(block2("33A4414C4941532020"), 2_100L);
-
-        assertNotNull(complete);
-        assertEquals("NEWALIAS", complete.getTalkerAlias().getValue());
+        var assembler = new HarrisTalkerAliasAssembler();
+        assembler.process(part(0x32, "ABCDEFG"), 1000);
+        assertEquals("ABCDEFGABCDEFG", assembler.process(part(0x33, "ABCDEFG"), 1100).getTalkerAlias().getValue());
+        assembler.process(part(0x34, "ABC DEF"), 1200);
+        assertEquals("ABC DEF GHIJKL", assembler.process(part(0x35, " GHIJKL"), 1300).getTalkerAlias().getValue());
+        assembler.process(part(0x32, " UNIT  "), 1400);
+        assertEquals(" UNIT  2", assembler.process(part(0x33, "2      "), 1500).getTalkerAlias().getValue());
     }
 
     @Test
-    void repeatedFirstBlockStartsANewAssemblyWithoutOldOptionalBlocks()
+    void oddAndEvenPartsCannotBeJoinedAndOrphansCannotWaitForANewFirstPart()
     {
-        HarrisTalkerAliasAssembler assembler = new HarrisTalkerAliasAssembler();
-        assertNull(assembler.process(block1("32A443445020233032"), 1_000L));
-        assertNull(assembler.process(block3("34A443445020233032"), 1_100L));
-        assertNull(assembler.process(block1("32A44E455720202020"), 2_000L));
-
-        LCHarrisTalkerAliasComplete complete = assembler.process(block2("33A4414C4941532020"), 2_100L);
-
-        assertNotNull(complete);
-        assertEquals("NEWALIAS", complete.getTalkerAlias().getValue());
-        assertNull(assembler.process(block2("33A4414C4941532020"), 2_200L));
+        var assembler = new HarrisTalkerAliasAssembler();
+        assertNull(assembler.process(part(0x33, "OLDTAIL"), 900));
+        assembler.process(part(0x32, "NEWHEAD"), 1000);
+        assertNull(assembler.process(part(0x35, "WRONG"), 1100));
+        assertEquals("NEWHEADRIGHT", assembler.process(part(0x33, "RIGHT"), 1200).getTalkerAlias().getValue());
+        assertNull(assembler.process(part(0x34, "EVENNEW"), 1300));
+        assertNull(assembler.process(part(0x33, "WRONG"), 1400));
+        assertEquals("EVENNEWTAIL", assembler.process(part(0x35, "TAIL"), 1500).getTalkerAlias().getValue());
     }
 
     @Test
-    void explicitResetDiscardsIncompleteAndCompletedAliases()
+    void bothPairsCanBePendingAndARepeatedFirstPartReplacesOnlyItsOwnPair()
     {
-        HarrisTalkerAliasAssembler assembler = new HarrisTalkerAliasAssembler();
-        assembler.process(block1("32A443445020233032"), 1_000L);
-        assembler.reset();
-        assertNull(assembler.process(block2("33A433312020202020"), 1_100L));
-        assertNull(assembler.process(block1("32A44E455720202020"), 2_000L));
-        assertNotNull(assembler.process(block2("33A4414C4941532020"), 2_100L));
-        assembler.reset();
-        assertNull(assembler.process(block2("33A4414C4941532020"), 2_200L));
+        var assembler = new HarrisTalkerAliasAssembler();
+        assembler.process(part(0x32, "OLDHEAD"), 1000);
+        assembler.process(part(0x34, "EVENONE"), 1100);
+        assembler.process(part(0x32, "NEWHEAD"), 1200);
+        assertEquals("EVENONETWO", assembler.process(part(0x35, "TWO"), 1300).getTalkerAlias().getValue());
+        assertEquals("NEWHEADTAIL", assembler.process(part(0x33, "TAIL"), 1400).getTalkerAlias().getValue());
     }
 
-    private static LCHarrisTalkerAliasBlock1 block1(String hex)
+    @Test
+    void resetInvalidProtectedExpiredAndEarlierPartsCannotCompleteAnOldPair()
     {
-        LCHarrisTalkerAliasBlock1 block = new LCHarrisTalkerAliasBlock1(CorrectedBinaryMessage.loadHex(hex));
-        block.setValid(true);
-        return block;
+        for(int boundary = 0; boundary < 5; boundary++)
+        {
+            var assembler = new HarrisTalkerAliasAssembler();
+            assembler.process(part(0x32, "OLDHEAD"), 1000);
+            assembler.process(part(0x34, "EVENOLD"), 1000);
+            if(boundary == 0) assembler.reset();
+            if(boundary == 1)
+            {
+                var invalid = part(0x33, "TAIL");
+                invalid.setValid(false);
+                assertNull(assembler.process(invalid, 1100));
+            }
+            if(boundary == 2)
+            {
+                var protectedPart = part(0x33, "TAIL");
+                protectedPart.getMessage().set(0);
+                assertNull(assembler.process(protectedPart, 1100));
+            }
+            long timestamp = boundary == 3 ? 3001 : boundary == 4 ? 999 : 1200;
+            assertNull(assembler.process(part(0x33, "TAIL"), timestamp));
+            if(boundary < 3) assertNull(assembler.process(part(0x35, "TAIL"), 1200));
+        }
     }
 
-    private static LCHarrisTalkerAliasBlock2 block2(String hex)
+    @Test
+    void nullPaddingEndsTheJoinedNameAndMalformedTextIsRejected()
     {
-        LCHarrisTalkerAliasBlock2 block = new LCHarrisTalkerAliasBlock2(CorrectedBinaryMessage.loadHex(hex));
-        block.setValid(true);
-        return block;
+        var assembler = new HarrisTalkerAliasAssembler();
+        assembler.process(part(0x34, "UNIT"), 1000);
+        assertEquals("UNIT", assembler.process(part(0x35, ""), 1100).getTalkerAlias().getValue());
+        assembler.process(part(0x32, "UNIT"), 1200);
+        assertNull(assembler.process(part(0x33, "TAIL"), 1300), "text after null padding is not a second name");
+        var highBit = part(0x32, "BADNAME");
+        highBit.getMessage().load(16, 8, 0x80);
+        assembler.process(highBit, 1400);
+        assertNull(assembler.process(part(0x33, ""), 1500));
     }
 
-    private static LCHarrisTalkerAliasBlock3 block3(String hex)
+    private static LCHarrisTalkerAliasBase part(int opcode, String text)
     {
-        LCHarrisTalkerAliasBlock3 block = new LCHarrisTalkerAliasBlock3(CorrectedBinaryMessage.loadHex(hex));
-        block.setValid(true);
-        return block;
-    }
-
-    private static LCHarrisTalkerAliasBlock4 block4(String hex)
-    {
-        LCHarrisTalkerAliasBlock4 block = new LCHarrisTalkerAliasBlock4(CorrectedBinaryMessage.loadHex(hex));
-        block.setValid(true);
-        return block;
+        byte[] bytes = text.getBytes(StandardCharsets.US_ASCII);
+        assertTrue(bytes.length <= 7);
+        var bits = new CorrectedBinaryMessage(72);
+        bits.load(0, 8, opcode);
+        bits.load(8, 8, 0xA4);
+        for(int index = 0; index < bytes.length; index++) bits.load(16 + index * 8, 8, Byte.toUnsignedInt(bytes[index]));
+        LCHarrisTalkerAliasBase part = switch(opcode)
+        {
+            case 0x32 -> new LCHarrisTalkerAliasBlock1(bits);
+            case 0x33 -> new LCHarrisTalkerAliasBlock2(bits);
+            case 0x34 -> new LCHarrisTalkerAliasBlock3(bits);
+            case 0x35 -> new LCHarrisTalkerAliasBlock4(bits);
+            default -> throw new IllegalArgumentException();
+        };
+        part.setValid(true);
+        return part;
     }
 }

@@ -19,9 +19,7 @@
 
 package io.github.dsheirer.module.decode.p25.phase1.message.lc.motorola;
 
-import io.github.dsheirer.bits.BinaryMessage;
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
-import io.github.dsheirer.edac.CRC16;
 import io.github.dsheirer.message.TimeslotMessage;
 import io.github.dsheirer.module.decode.p25.phase1.message.lc.LinkControlWord;
 import io.github.dsheirer.protocol.Protocol;
@@ -38,6 +36,9 @@ import java.util.Map;
 public class LCMotorolaTalkerAliasAssembler
 {
     private static final int DATA_BLOCK_FRAGMENT_LENGTH = 44;
+    private static final int MAXIMUM_BLOCK_COUNT =
+        (MotorolaTalkerAliasPayload.MAXIMUM_PAYLOAD_BITS + DATA_BLOCK_FRAGMENT_LENGTH - 1) / DATA_BLOCK_FRAGMENT_LENGTH;
+    private static final long MAXIMUM_ASSEMBLY_MILLISECONDS = 10_000;
     private LCMotorolaTalkerAliasHeader mHeader;
     private Map<Integer, LCMotorolaTalkerAliasDataBlock> mDataBlocks = new HashMap<>();
     private int mSequence = -1;
@@ -69,6 +70,8 @@ public class LCMotorolaTalkerAliasAssembler
             {
                 //The sequence nibble wraps. A header always starts a new fragment lifetime.
                 reset();
+                if(header.getMessage().size() < 72 || header.getBlockCount() < 1 ||
+                    header.getBlockCount() > MAXIMUM_BLOCK_COUNT || header.getFormatValue() != 1) return false;
                 mHeader = header;
                 mSequence = header.getSequence();
                 mHeaderTimestamp = timestamp;
@@ -77,9 +80,21 @@ public class LCMotorolaTalkerAliasAssembler
             }
             case LCMotorolaTalkerAliasDataBlock block:
             {
-                if(mHeader == null || block.getSequence() != mSequence || timestamp < mHeaderTimestamp ||
-                    block.getBlockNumber() < 1 || block.getBlockNumber() > mHeader.getBlockCount())
+                if(mHeader != null && timestamp - mHeaderTimestamp > MAXIMUM_ASSEMBLY_MILLISECONDS)
                 {
+                    reset();
+                    return false;
+                }
+                if(mHeader == null || block.getSequence() != mSequence || timestamp < mHeaderTimestamp ||
+                    block.getMessage().size() < 72 || block.getBlockNumber() < 1 ||
+                    block.getBlockNumber() > mHeader.getBlockCount())
+                {
+                    return false;
+                }
+                LCMotorolaTalkerAliasDataBlock previous = mDataBlocks.get(block.getBlockNumber());
+                if(previous != null && !previous.getFragment().equals(block.getFragment()))
+                {
+                    reset();
                     return false;
                 }
                 mMostRecentTimestamp = Math.max(mMostRecentTimestamp, timestamp);
@@ -142,7 +157,6 @@ public class LCMotorolaTalkerAliasAssembler
             offset += DATA_BLOCK_FRAGMENT_LENGTH;
         }
 
-        trimTalkerAliasLength(reassembled);
         MotorolaTalkerAliasComplete complete = new MotorolaTalkerAliasComplete(reassembled, mHeader.getTalkgroup(),
                 mHeader.getSequence(), TimeslotMessage.TIMESLOT_0, mMostRecentTimestamp, Protocol.APCO25);
 
@@ -153,25 +167,8 @@ public class LCMotorolaTalkerAliasAssembler
         //   - i = id
         //   - a = encoded alias
         //   - c = CRC-16/GSM of the previous bytes
-        complete.setValid(CRC16.check(reassembled));
-
         reset();
         return complete;
     }
 
-
-    /**
-     * Trims the message length to exclude pad zeros so that the CRC calculation knows where to finish.
-     * @param message containing an encoded talker alias.
-     */
-    public static void trimTalkerAliasLength(BinaryMessage message)
-    {
-        int x = 72; //Minimum bit size WACN + SYS + RADIO + 1 CHARACTER = 18 Hex Characters * 4 Bits Each
-        while(message.nextSetBit(x) > 0 && x < message.size())
-        {
-            x += 8;
-        }
-
-        message.setSize(x);
-    }
 }

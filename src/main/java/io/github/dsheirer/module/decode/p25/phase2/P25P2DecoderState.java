@@ -1941,7 +1941,8 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
             long generation = mTalkerAliasReceptionGeneration;
             Identifier from = getIdentifierCollection().getFromIdentifier();
             RadioIdentifier radio = from instanceof RadioIdentifier radioIdentifier ? radioIdentifier : null;
-            TalkerAliasIdentifier alias = talkerAlias.getAlias().bindTo(getIdentifierCollection());
+            TalkerAliasIdentifier decodedAlias = talkerAlias.getAlias();
+            TalkerAliasIdentifier alias = decodedAlias != null ? decodedAlias.bindTo(getIdentifierCollection()) : null;
             if(alias == null) return;
             if(mTrafficChannelManager.processP2HarrisTalkerAlias(getCurrentFrequency(), getTimeslot(), radio, alias,
                 getIdentifierCollection(), message.getTimestamp()) && generation == mTalkerAliasReceptionGeneration)

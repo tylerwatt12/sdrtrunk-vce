@@ -192,6 +192,7 @@ class P25P2MotorolaTalkerAliasLifecycleTest
         CorrectedBinaryMessage message = new CorrectedBinaryMessage(136);
         message.load(24, 16, 0x1BBD);
         message.load(40, 8, 3);
+        message.load(48, 8, 1);
         message.load(64, 4, 4);
         message.load(72, CorrectedBinaryMessage.loadHex(PAYLOAD).getSubMessage(0, 64));
         return new MotorolaTalkerAliasHeader(message, 0);

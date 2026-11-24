@@ -24,6 +24,7 @@ import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.alias.P25TalkerAliasIdentifier;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.MacStructureVendor;
 import io.github.dsheirer.module.decode.p25.reference.Vendor;
+import io.github.dsheirer.module.decode.p25.reference.UserAliasText;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -75,20 +76,15 @@ public class L3HarrisTalkerAlias extends MacStructureVendor
     {
         if(mAliasIdentifier == null)
         {
-            int length = getLength() - 2;
-
-            if(length > 0)
+            //TIA-102.BBAD-A-1 (March 2025), 3.99: 17 octets including the three-octet envelope.
+            //Retain bounded shorter legacy forms, but never accept a truncated declared structure.
+            if(getOffset() < 0 || getOffset() + ALIAS_START > getMessage().size()) return null;
+            int length = getLength();
+            int end = getOffset() + length * 8;
+            if(getVendor() == Vendor.HARRIS && length >= 4 && length <= 17 && end <= getMessage().size())
             {
-                length *= 8;
-                length += getOffset();
-
-                if(length > getMessage().size())
-                {
-                    length = getMessage().size();
-                }
-
-                String alias = new String(getMessage().getSubMessage(ALIAS_START + getOffset(), length).getBytes()).trim();
-                mAliasIdentifier = P25TalkerAliasIdentifier.create(alias);
+                String alias = UserAliasText.decode(getMessage().getSubMessage(ALIAS_START + getOffset(), end).getBytes());
+                if(alias != null) mAliasIdentifier = P25TalkerAliasIdentifier.create(alias);
             }
         }
 
@@ -101,7 +97,7 @@ public class L3HarrisTalkerAlias extends MacStructureVendor
         if(mIdentifiers == null)
         {
             mIdentifiers = new ArrayList<>();
-            mIdentifiers.add(getAlias());
+            if(getAlias() != null) mIdentifiers.add(getAlias());
         }
 
         return mIdentifiers;
