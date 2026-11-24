@@ -9,6 +9,7 @@ package io.github.dsheirer.module.decode.p25.phase1;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
@@ -20,6 +21,106 @@ import org.junit.jupiter.api.Test;
 
 class P25P1SynchronizationBroadcastTest
 {
+    //TIA-102.AABC-E (April 2019), 6.2.33 and Figure 6.2.33-1.
+    //Constructed fields use zero-based MSB-first TSBK positions independently of decoder flag constants.
+    @Test
+    void appliesOnlyValidOffsetsWithoutChangingTheUtcTimestamp()
+    {
+        long utc = Instant.parse("2026-07-29T12:34:00.600Z").toEpochMilli();
+
+        for(int halfHours: new int[]{0, 1, -1, -10, 11, -31, 31})
+        {
+            for(boolean valid: new boolean[]{false, true})
+            {
+                SynchronizationBroadcast message = synchronizationBroadcast(7, 29, 80);
+                message.getMessage().set(33, valid);
+                message.getMessage().set(34, halfHours < 0);
+                message.getMessage().setInt(Math.abs(halfHours), IntField.range(35, 39));
+
+                assertEquals(valid, message.isValidLocalTimeOffset());
+                assertEquals(valid ? halfHours * 1_800_000 : 0, message.getTimeZone().getRawOffset());
+                assertEquals(utc, message.getSystemTime());
+            }
+        }
+    }
+
+    @Test
+    void formatsTheBroadcastTimeUsingOnlyTheAdvertisedValidOffset()
+    {
+        SynchronizationBroadcast message = synchronizationBroadcast(7, 29, 80);
+        message.getMessage().set(34);
+        message.getMessage().setInt(10, IntField.range(35, 39));
+        assertTrue(message.toString().contains("2026-07-29 12:34:00.600 +0000"));
+
+        message.getMessage().set(33);
+        assertTrue(message.toString().contains("2026-07-29 07:34:00.600 -0500"));
+
+        message.getMessage().clear(34);
+        message.getMessage().setInt(11, IntField.range(35, 39));
+        assertTrue(message.toString().contains("2026-07-29 18:04:00.600 +0530"));
+    }
+
+    @Test
+    void reportsTrafficChannelSynchronizationIndependentlyOfClockAndRolloverFlags()
+    {
+        for(boolean unsynchronized: new boolean[]{false, true})
+        {
+            for(boolean unreliableTime: new boolean[]{false, true})
+            {
+                for(boolean unlockedRollover: new boolean[]{false, true})
+                {
+                    SynchronizationBroadcast message = synchronizationBroadcast(7, 29, 80);
+                    message.getMessage().set(28, unsynchronized);
+                    message.getMessage().set(29, unreliableTime);
+                    message.getMessage().set(30, unlockedRollover);
+
+                    assertEquals(unsynchronized, message.isTdmaUnsynchronized());
+                    assertEquals(unreliableTime, message.isSystemTimeNotLockedToExternalReference());
+                    assertEquals(!unlockedRollover, message.isMicroslotsLockedToMinuteRollover());
+                    assertEquals(Instant.parse("2026-07-29T12:34:00.600Z").toEpochMilli(), message.getSystemTime());
+                    assertEquals(unsynchronized, message.toString().contains("TDMA CHANNELS:NOT SYNCHRONIZED"));
+                    assertEquals(unreliableTime, message.toString().contains("SYSTEM TIME UNLOCKED"));
+                    assertEquals(unlockedRollover, message.toString().contains("ROLLOVER:UNLOCKED"));
+                }
+            }
+        }
+    }
+
+    @Test
+    void preservesUnsetCalendarAndCounterResetWithoutTreatingThemAsCivilTime()
+    {
+        SynchronizationBroadcast before = synchronizationBroadcast(0, 0, 7990);
+        before.getMessage().setInt(0, IntField.range(40, 46));
+        before.getMessage().setInt(0, IntField.range(56, 60));
+        before.getMessage().setInt(2, IntField.range(61, 66));
+        SynchronizationBroadcast after = synchronizationBroadcast(0, 0, 70);
+        after.getMessage().setInt(0, IntField.range(40, 46));
+        after.getMessage().setInt(0, IntField.range(56, 60));
+        after.getMessage().setInt(0, IntField.range(61, 66));
+
+        P25P1NetworkConfigurationMonitor monitor = new P25P1NetworkConfigurationMonitor(Modulation.C4FM);
+        for(SynchronizationBroadcast message: new SynchronizationBroadcast[]{before, after})
+        {
+            assertFalse(message.hasValidDate());
+            assertThrows(IllegalStateException.class, message::getSystemTime);
+            assertTrue(message.isSystemTimeNotLockedToExternalReference());
+            assertTrue(message.isMicroslotsLockedToMinuteRollover());
+            assertFalse(message.isValidLocalTimeOffset());
+            assertFalse(message.isTdmaUnsynchronized());
+            assertTrue(message.toString().contains("SYSTEM TIME UNLOCKED: INVALID DATE"));
+            assertFalse(message.toString().contains("NOT SYNCHRONIZED"));
+            P25NetworkConfigurationSnapshot observation = monitor.process(message);
+            assertNull(observation.siteStatus().broadcastClockEpochMilliseconds());
+            assertEquals(message.getMicroSlots(), observation.siteStatus().microSlots());
+        }
+        assertNull(monitor.getSnapshot().siteStatus().broadcastClockEpochMilliseconds());
+        assertEquals(70, monitor.getSnapshot().siteStatus().microSlots());
+
+        after.getMessage().set(28);
+        assertTrue(after.toString().contains("INVALID DATE"));
+        assertTrue(after.toString().contains("TDMA CHANNELS:NOT SYNCHRONIZED"));
+    }
+
     @Test
     void acceptsUnlockedValidDateAndRejectsInvalidDateWithoutLosingMicroslots()
     {

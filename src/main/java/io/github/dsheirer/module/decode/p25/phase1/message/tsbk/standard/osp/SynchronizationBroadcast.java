@@ -41,6 +41,7 @@ import java.util.TimeZone;
  */
 public class SynchronizationBroadcast extends OSPMessage
 {
+    public static final int TDMA_UNSYNCHRONIZED_FLAG = 28;
     public static final int SYSTEM_TIME_NOT_LOCKED_TO_EXTERNAL_REFERENCE_FLAG = 29;
     public static final int MICRO_SLOTS_TO_MINUTE_ROLLOVER_UNLOCKED_FLAG = 30;
     private static final IntField LEAP_SECOND_CORRECTION = IntField.length2(31);
@@ -87,6 +88,10 @@ public class SynchronizationBroadcast extends OSPMessage
         {
             sb.append(" MICROSLOT-MINUTE ROLLOVER:UNLOCKED");
         }
+        if(isTdmaUnsynchronized())
+        {
+            sb.append(" TDMA CHANNELS:NOT SYNCHRONIZED");
+        }
         return sb.toString();
     }
 
@@ -123,6 +128,15 @@ public class SynchronizationBroadcast extends OSPMessage
         {
             return false;
         }
+    }
+
+    /**
+     * Whether the TDMA traffic channels are not synchronized with the FDMA control channel.
+     * This is independent of system-time reliability and microslot/minute rollover locking.
+     */
+    public boolean isTdmaUnsynchronized()
+    {
+        return getMessage().get(TDMA_UNSYNCHRONIZED_FLAG);
     }
 
     /**
@@ -168,7 +182,8 @@ public class SynchronizationBroadcast extends OSPMessage
      */
     public boolean isValidLocalTimeOffset()
     {
-        return !getMessage().get(LOCAL_TIME_OFFSET_VALID_FLAG);
+        //TIA-102.AABC-E (April 2019), 6.2.33: a set VL flag makes the offset valid.
+        return getMessage().get(LOCAL_TIME_OFFSET_VALID_FLAG);
     }
 
     /**
