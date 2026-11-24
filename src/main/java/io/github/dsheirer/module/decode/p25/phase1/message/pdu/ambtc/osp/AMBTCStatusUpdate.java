@@ -38,8 +38,8 @@ public class AMBTCStatusUpdate extends AMBTCMessage
     private static final IntField BLOCK_0_SOURCE_WACN = IntField.length4(0);
     private static final IntField BLOCK_0_SOURCE_SYSTEM = IntField.length12(4);
     private static final IntField BLOCK_0_SOURCE_ID = IntField.length24(16);
-    private static final IntField BLOCK_0_UNIT_STATUS = IntField.length8(40);
-    private static final IntField BLOCK_0_USER_STATUS = IntField.length8(48);
+    private static final IntField BLOCK_0_UNIT_STATUS = IntField.length8(48);
+    private static final IntField BLOCK_0_USER_STATUS = IntField.length8(40);
     private static final IntField BLOCK_0_SOURCE_ADDRESS = IntField.length16(80);
     private static final IntField BLOCK_1_SOURCE_ADDRESS = IntField.length8(0);
     private static final IntField BLOCK_1_TARGET_WACN = IntField.length20(8);

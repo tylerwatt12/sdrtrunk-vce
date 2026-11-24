@@ -38,8 +38,8 @@ import java.util.List;
  */
 public class StatusUpdateRequest extends ISPMessage
 {
-    private static final IntField UNIT_STATUS = IntField.length8(16);
-    private static final IntField USER_STATUS = IntField.length8(24);
+    private static final IntField UNIT_STATUS = IntField.length8(24);
+    private static final IntField USER_STATUS = IntField.length8(16);
     private static final IntField TARGET_ADDRESS = IntField.length24(32);
     private static final IntField SOURCE_ADDRESS = IntField.length24(56);
 

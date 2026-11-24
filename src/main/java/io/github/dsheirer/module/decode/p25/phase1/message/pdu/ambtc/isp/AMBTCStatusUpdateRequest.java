@@ -38,8 +38,8 @@ import java.util.List;
 
 public class AMBTCStatusUpdateRequest extends AMBTCMessage
 {
-    private static final IntField HEADER_UNIT_STATUS = IntField.length8(64);
-    private static final IntField HEADER_USER_STATUS = IntField.length8(72);
+    private static final IntField HEADER_UNIT_STATUS = IntField.length8(72);
+    private static final IntField HEADER_USER_STATUS = IntField.length8(64);
     private static final IntField BLOCK_0_WACN = IntField.length20(0);
     private static final IntField BLOCK_0_SYSTEM = IntField.length12(20);
     private static final IntField BLOCK_0_TARGET_ID = IntField.length24(32);
