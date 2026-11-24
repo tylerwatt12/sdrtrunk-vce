@@ -18,10 +18,11 @@ Each site is reported whole: all of its calls, not only those that stream to tha
 
 Counts of what VCE heard, not scores:
 
-- **For each trunked site (P25, DMR, NXDN):** the control channel's frequency; the seconds spent decoding it, the
-  messages decoded and lost, and (P25, NXDN) the time without frame sync; for P25, the identity its control channel
-  broadcasts (WACN, System ID, RFSS, site, NAC); the calls it announced, how many were recorded and why any weren't
-  (encrypted, data, no tuner, every traffic channel busy, a channel with no frequency for it).
+- **For each trunked site (P25, DMR, NXDN):** the identity its control channel broadcasts (P25: WACN, System ID,
+  RFSS, site, NAC; DMR: network, site, color code; NXDN: system, site, RAN) and the control channel's frequency; the
+  seconds spent decoding it, the messages decoded and lost, and (P25, NXDN) the time without frame sync; the calls it
+  announced, how many were recorded and why any weren't (encrypted, data, no tuner, every traffic channel busy, a
+  channel with no frequency for it).
 - **For each conventional channel:** its frequency and the name you gave it, the time it was heard and open, and its
   calls.
 - **For each tuner those use:** its name, its kind (`airspy`, `hackrf`, `rtlsdr`, ...), the time it ran and its

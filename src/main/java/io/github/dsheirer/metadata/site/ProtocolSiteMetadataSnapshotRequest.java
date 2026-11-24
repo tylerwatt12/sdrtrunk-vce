@@ -12,6 +12,8 @@
 package io.github.dsheirer.metadata.site;
 
 import io.github.dsheirer.controller.channel.Channel;
+import io.github.dsheirer.health.HealthRegistry;
+import io.github.dsheirer.health.SiteIdentity;
 import java.util.function.Supplier;
 
 /**
@@ -36,6 +38,12 @@ public record ProtocolSiteMetadataSnapshotRequest(Channel channel, SiteReceiverC
         if(snapshot == null || !snapshot.isUseful())
         {
             return null;
+        }
+
+        //The site's identity, for node health reports: what its control channel says it is.
+        if(channel != null && channel.isStandardChannel())
+        {
+            SiteIdentity.give(HealthRegistry.getInstance().channel(channel), snapshot);
         }
 
         return new ProtocolSiteMetadataEvent(channel, receiverContext, snapshot, observedAtEpochMilliseconds);
