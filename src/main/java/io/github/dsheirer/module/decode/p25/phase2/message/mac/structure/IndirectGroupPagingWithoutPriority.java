@@ -32,10 +32,10 @@ import java.util.List;
 public class IndirectGroupPagingWithoutPriority extends MacStructureVariableLength
 {
     private static final IntField ID_COUNT = IntField.range(14, 15);
-    private static final IntField GROUP_ADDRESS_1 = IntField.length24(OCTET_3_BIT_16);
-    private static final IntField GROUP_ADDRESS_2 = IntField.length24(OCTET_6_BIT_40);
-    private static final IntField GROUP_ADDRESS_3 = IntField.length24(OCTET_9_BIT_64);
-    private static final IntField GROUP_ADDRESS_4 = IntField.length24(OCTET_12_BIT_88);
+    private static final IntField GROUP_ADDRESS_1 = IntField.length16(OCTET_3_BIT_16);
+    private static final IntField GROUP_ADDRESS_2 = IntField.length16(OCTET_5_BIT_32);
+    private static final IntField GROUP_ADDRESS_3 = IntField.length16(OCTET_7_BIT_48);
+    private static final IntField GROUP_ADDRESS_4 = IntField.length16(OCTET_9_BIT_64);
 
     private List<Identifier> mIdentifiers;
     private Identifier mTargetGroup1;
@@ -62,20 +62,8 @@ public class IndirectGroupPagingWithoutPriority extends MacStructureVariableLeng
      */
     public static int getLength(CorrectedBinaryMessage message, int offset)
     {
-        int count = message.getInt(ID_COUNT, offset);
-
-        switch(count)
-        {
-            case 1:
-                return 4;
-            case 2:
-                return 6;
-            case 3:
-                return 8;
-            case 4:
-            default:
-                return 10;
-        }
+        // TIA-102.BBAD-A 3.38, Figure 88/Table 7: two header octets and 1-4 two-octet group IDs.
+        return 2 + 2 * (message.getInt(ID_COUNT, offset) + 1);
     }
 
     @Override
@@ -118,7 +106,7 @@ public class IndirectGroupPagingWithoutPriority extends MacStructureVariableLeng
      */
     public int getCount()
     {
-        return getInt(ID_COUNT);
+        return getInt(ID_COUNT) + 1;
     }
 
     /**

@@ -473,7 +473,7 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
                 //Inbound only.
                 break;
             case PHASE1_45_UNIT_TO_UNIT_ANSWER_REQUEST_ABBREVIATED:
-            case PHASE1_4A_TELEPHONE_INTERCONNECT_ANSWER_RESPONSE:
+            case PHASE1_4A_TELEPHONE_INTERCONNECT_ANSWER_REQUEST:
             case PHASE1_C5_UNIT_TO_UNIT_ANSWER_REQUEST_EXTENDED:
                 processAnswer(message, mac);
                 break;
@@ -822,7 +822,7 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
                             "UNIT-TO-UNIT ANSWER REQUEST - " + uuara.getServiceOptions());
                 }
                 break;
-            case PHASE1_4A_TELEPHONE_INTERCONNECT_ANSWER_RESPONSE:
+            case PHASE1_4A_TELEPHONE_INTERCONNECT_ANSWER_REQUEST:
                 if(mac instanceof TelephoneInterconnectAnswerRequest)
                 {
                     broadcast(message, mac, getCurrentChannel(), DecodeEventType.REQUEST,

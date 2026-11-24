@@ -34,17 +34,17 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Sub-Network Dependent Convergence Protocol (SNDCP) Data Channel Grant
+ * Sub-Network Dependent Convergence Protocol (SNDCP) Data Page Request
  */
 public class SNDCPDataPageRequest extends OSPMessage
 {
     private static final IntField DATA_SERVICE_OPTIONS = IntField.length8(16);
-    private static final IntField TARGET_ADDRESS = IntField.length24(32);
-    private static final IntField SOURCE_ADDRESS = IntField.length24(56);
+    // TIA-102.AABC-E 5.2.6: the page carries a target WUID, not a source radio address.
+    private static final IntField DATA_ACCESS_CONTROL = IntField.length16(40);
+    private static final IntField TARGET_ADDRESS = IntField.length24(56);
 
     private DataServiceOptions mServiceOptions;
     private Identifier mTargetAddress;
-    private Identifier mSourceAddress;
     private List<Identifier> mIdentifiers;
 
     /**
@@ -59,8 +59,8 @@ public class SNDCPDataPageRequest extends OSPMessage
     {
         StringBuilder sb = new StringBuilder();
         sb.append(getMessageStub());
-        sb.append(" FM:").append(getSourceAddress());
         sb.append(" TO:").append(getTargetAddress());
+        sb.append(" DATA ACCESS CONTROL:").append(String.format("%04X", getDataAccessControl()));
         sb.append(" ").append(getServiceOptions().toString());
         return sb.toString();
     }
@@ -88,14 +88,10 @@ public class SNDCPDataPageRequest extends OSPMessage
         return mTargetAddress;
     }
 
-    public Identifier getSourceAddress()
+    /** Data Access Control is a control field, not a radio identity. */
+    public int getDataAccessControl()
     {
-        if(mSourceAddress == null)
-        {
-            mSourceAddress = APCO25RadioIdentifier.createFrom(getMessage().getInt(SOURCE_ADDRESS));
-        }
-
-        return mSourceAddress;
+        return getMessage().getInt(DATA_ACCESS_CONTROL);
     }
 
     @Override
@@ -105,7 +101,6 @@ public class SNDCPDataPageRequest extends OSPMessage
         {
             mIdentifiers = new ArrayList<>();
             mIdentifiers.add(getTargetAddress());
-            mIdentifiers.add(getSourceAddress());
         }
 
         return mIdentifiers;

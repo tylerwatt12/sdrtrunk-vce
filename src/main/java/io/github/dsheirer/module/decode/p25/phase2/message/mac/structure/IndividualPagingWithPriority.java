@@ -69,20 +69,7 @@ public class IndividualPagingWithPriority extends MacStructureVariableLength
      */
     public static int getLength(CorrectedBinaryMessage message, int offset)
     {
-        int count = message.getInt(ID_COUNT, offset);
-
-        switch(count)
-        {
-            case 1:
-                return 5;
-            case 2:
-                return 8;
-            case 3:
-                return 11;
-            case 4:
-            default:
-                return 14;
-        }
+        return getLength((BinaryMessage)message, offset);
     }
 
     @Override
@@ -158,7 +145,8 @@ public class IndividualPagingWithPriority extends MacStructureVariableLength
 
     public static int getIdCount(BinaryMessage message, int offset)
     {
-        return message.getInt(ID_COUNT, offset);
+        // TIA-102.BBAD-A 3.37, Table 6: LEN encodes one fewer than the number of targets.
+        return message.getInt(ID_COUNT, offset) + 1;
     }
 
     /**
@@ -177,23 +165,7 @@ public class IndividualPagingWithPriority extends MacStructureVariableLength
      */
     public static int getLength(BinaryMessage message, int offset)
     {
-        int count = getIdCount(message, offset);
-
-        switch(count)
-        {
-            case 1:
-                return 5;
-            case 2:
-                return 8;
-            case 3:
-                return 11;
-            case 4:
-                return 14;
-            default:
-                break;
-        }
-
-        return 5;
+        return 2 + 3 * getIdCount(message, offset);
     }
 
     public boolean isTalkgroupPriority1()

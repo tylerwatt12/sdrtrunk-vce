@@ -424,7 +424,7 @@ public class MacMessageFactory
                 return new TelephoneInterconnectVoiceChannelGrantImplicit(message, offset);
             case PHASE1_49_TELEPHONE_INTERCONNECT_VOICE_CHANNEL_GRANT_UPDATE_IMPLICIT:
                 return new TelephoneInterconnectVoiceChannelGrantUpdateImplicit(message, offset);
-            case PHASE1_4A_TELEPHONE_INTERCONNECT_ANSWER_RESPONSE:
+            case PHASE1_4A_TELEPHONE_INTERCONNECT_ANSWER_REQUEST:
                 return new TelephoneInterconnectAnswerRequest(message, offset);
             case PHASE1_4C_RADIO_UNIT_MONITOR_COMMAND_ABBREVIATED:
                 return new RadioUnitMonitorCommandAbbreviated(message, offset);
