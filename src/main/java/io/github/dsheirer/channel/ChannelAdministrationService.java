@@ -158,8 +158,7 @@ public final class ChannelAdministrationService
         {
             Channel current = live.get(channel.configurationId());
             Long frequency = current != null ? activeControlFrequency(current, channel.channelKind()) : null;
-            return channel.withRuntimeState(isProcessing(channel.configurationId()) ?
-                ProcessingState.RUNNING : ProcessingState.STOPPED, frequency);
+            return channel.withRuntimeState(processingState(channel.configurationId()), frequency);
         }).toList());
     }
 
@@ -893,6 +892,7 @@ public final class ChannelAdministrationService
             });
             boolean restart = isProcessing(id);
             if(restart && !allowRestart) throw new RestartRequiredException();
+            mConfigurationManager.getChannelProcessingManager().cancelPendingUsbChannelRecovery(id);
             boolean stopped = false;
             try
             {
@@ -1001,6 +1001,8 @@ public final class ChannelAdministrationService
             {
                 for(Channel channel: selected)
                 {
+                    mConfigurationManager.getChannelProcessingManager()
+                        .cancelUsbChannelRecovery(channel.getConfigurationId());
                     if(isProcessing(channel.getConfigurationId()))
                     {
                         mConfigurationManager.getChannelProcessingManager().stop(channel);
@@ -1207,6 +1209,7 @@ public final class ChannelAdministrationService
                 Channel channel = channels.get(id);
                 try
                 {
+                    if(!start) mConfigurationManager.getChannelProcessingManager().cancelUsbChannelRecovery(id);
                     if(start)
                     {
                         if(!isProcessing(id))
@@ -1367,7 +1370,14 @@ public final class ChannelAdministrationService
 
     private ProcessingState processingState(Channel channel)
     {
-        return isProcessing(channel.getConfigurationId()) ? ProcessingState.RUNNING : ProcessingState.STOPPED;
+        return processingState(channel.getConfigurationId());
+    }
+
+    private ProcessingState processingState(String configurationId)
+    {
+        if(isProcessing(configurationId)) return ProcessingState.RUNNING;
+        return mConfigurationManager.getChannelProcessingManager().isUsbRecoveryPending(configurationId) ?
+            ProcessingState.RECOVERING : ProcessingState.STOPPED;
     }
 
     private boolean isProcessing(String configurationId)
@@ -1563,7 +1573,7 @@ public final class ChannelAdministrationService
         return message != null && !message.isBlank() ? message : "Channel lifecycle command failed";
     }
 
-    public enum ProcessingState { STOPPED, RUNNING }
+    public enum ProcessingState { STOPPED, RUNNING, RECOVERING }
     public enum Direction { EARLIER, LATER }
 
     public record Catalog(long revision, List<ChannelSummary> channels)

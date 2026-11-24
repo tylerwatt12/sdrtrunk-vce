@@ -404,7 +404,9 @@ public class ProcessingChain implements Listener<ChannelEvent>
      */
     public boolean hasSource(Source source)
     {
-        return mSource != null && mSource.equals(source);
+        Source current = mSource;
+        return current != null && (current.equals(source) ||
+            current instanceof MultiFrequencyTunerChannelSource multiple && multiple.isCurrentSource(source));
     }
 
     /**

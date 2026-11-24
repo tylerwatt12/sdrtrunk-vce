@@ -80,10 +80,13 @@ import io.github.dsheirer.source.tuner.diagnostic.TunerAllocationContext;
 import io.github.dsheirer.source.tuner.diagnostic.TunerAllocationRuntimeChannel;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.source.tuner.manager.DiscoveredTuner;
+import io.github.dsheirer.source.tuner.manager.DiscoveredUSBTuner;
 import io.github.dsheirer.util.ThreadPool;
 import io.github.dsheirer.util.concurrent.ObserverThreadFactory;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -171,6 +174,7 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
     private ChannelActivityModel mChannelActivityModel;
     private EventLogManager mEventLogManager;
     private TunerManager mTunerManager;
+    private final UsbChannelRecoverySupport mUsbChannelRecovery;
     private AliasModel mAliasModel;
     private UserPreferences mUserPreferences;
     private volatile P25RemoteBitstreamService mP25RemoteBitstreamService;
@@ -184,6 +188,9 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
     private final DMRRestChannelHandoffCoordinator mDmrRestChannelHandoffCoordinator;
     private final long mDmrRestChannelRetryDelayMilliseconds;
     private final Object mShutdownLock = new Object();
+    private final ThreadLocal<Set<Channel>> mStoppingChannels = ThreadLocal.withInitial(() ->
+        Collections.newSetFromMap(new IdentityHashMap<>()));
+    private final Map<Channel,Integer> mChannelTeardowns = new ConcurrentHashMap<>();
     private volatile boolean mShuttingDown;
     private volatile boolean mClosed;
     private volatile boolean mSiteMetadataWorkerRunning = true;
@@ -226,6 +233,39 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
 
         mEventLogManager = eventLogManager;
         mTunerManager = tunerManager;
+        mUsbChannelRecovery = new UsbChannelRecoverySupport(this, new UsbChannelRecoverySupport.Operations()
+        {
+            @Override public DiscoveredUSBTuner usbTuner(String identity)
+            {
+                DiscoveredTuner tuner = mTunerManager != null ?
+                    mTunerManager.getDiscoveredTunerRegistry().find(identity) : null;
+                return tuner instanceof DiscoveredUSBTuner usb ? usb : null;
+            }
+            @Override public List<TunerChannelAssignment> assignments(String identity)
+            {
+                return getChannelsUsingTuner(identity);
+            }
+            @Override public DiscoveredUSBTuner currentUsbTuner(Channel channel)
+            {
+                ProcessingChain chain = mProcessingChainsMap.get(channel);
+                return chain != null && chain.getSource() instanceof TunerChannelSource source ?
+                    usbTuner(source.getTunerIdentity()) : null;
+            }
+            @Override public boolean isProcessing(Channel channel)
+            {
+                return ChannelProcessingManager.this.isProcessing(channel);
+            }
+            @Override public boolean isStopping(Channel channel) { return mChannelTeardowns.containsKey(channel); }
+            @Override public void stopInterrupted(TunerChannelAssignment assignment) throws ChannelException
+            {
+                stopInterruptedIfCurrent(assignment);
+            }
+            @Override public void startRecovered(Channel channel, DiscoveredUSBTuner tuner) throws ChannelException
+            {
+                startProcessing(new ChannelStartProcessingRequest(channel), true, tuner, true);
+            }
+            @Override public boolean isClosed() { return mClosed || mShuttingDown; }
+        });
         mAliasModel = aliasModel;
         mUserPreferences = userPreferences;
         mChannelActivityModel = new ChannelActivityModel(aliasModel, userPreferences.getNowPlayingPreference());
@@ -237,6 +277,7 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
         mSiteMetadataWorker = new ObserverThreadFactory("site metadata observers")
             .newThread(this::runSiteMetadataWorker);
         mSiteMetadataWorker.start();
+        if(mTunerManager != null) mTunerManager.setUsbRecoveryListener(mUsbChannelRecovery);
     }
 
     public ChannelActivityModel getChannelActivityModel()
@@ -656,6 +697,9 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
     public void receive(ChannelEvent event)
     {
         Channel channel = event.getChannel();
+        // Traffic-manager teardown can ask to disable its configured parent again. The original mapping is already
+        // claimed: that nested notification must neither cancel USB recovery nor stop a concurrent replacement.
+        if(event.getEvent() == ChannelEvent.Event.REQUEST_DISABLE && mStoppingChannels.get().contains(channel)) return;
 
         switch(event.getEvent())
         {
@@ -700,6 +744,7 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
             case REQUEST_DISABLE, NOTIFICATION_DELETE:
                 if(channel != null)
                 {
+                    if(channel.isStandardChannel()) cancelUsbChannelRecovery(channel.getConfigurationId());
                     try
                     {
                         stopProcessing(channel);
@@ -723,6 +768,7 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
                 }
                 break;
             case NOTIFICATION_CONFIGURATION_CHANGE:
+                mUsbChannelRecovery.configurationChanged(channel);
                 mChannelActivityModel.channelConfigurationChanged(channel);
                 break;
             default:
@@ -1394,7 +1440,7 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
         {
             try
             {
-                stop(channel);
+                stopInterruptedSource(channel, request.getTunerChannelSource());
             }
             catch(ChannelException ce)
             {
@@ -1409,7 +1455,51 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
      */
     public void stop(Channel channel) throws ChannelException
     {
+        if(channel.isStandardChannel()) cancelUsbChannelRecovery(channel.getConfigurationId());
         stopProcessing(channel);
+    }
+
+    /** An explicit Stop cancels a future USB restart even if hardware loss has already stopped the chain. */
+    public void cancelUsbChannelRecovery(String configurationId)
+    {
+        mUsbChannelRecovery.cancel(configurationId);
+    }
+
+    /** A validated configuration edit supersedes a waiting USB restart. */
+    public void cancelPendingUsbChannelRecovery(String configurationId)
+    {
+        mUsbChannelRecovery.cancelPending(configurationId);
+    }
+
+    public boolean isUsbRecoveryPending(String configurationId)
+    {
+        return mUsbChannelRecovery.isPending(configurationId);
+    }
+
+    private void stopInterruptedSource(Channel channel, Source expectedSource) throws ChannelException
+    {
+        beginChannelTeardown(channel);
+        try { stopInterruptedSourceOwned(channel, expectedSource); }
+        finally { endChannelTeardown(channel); }
+    }
+
+    private void stopInterruptedSourceOwned(Channel channel, Source expectedSource) throws ChannelException
+    {
+        long[] incarnation = {0};
+        TunerChannelSource[] source = {null};
+        // Capture the source and incarnation atomically with respect to replacement of this channel's mapping.
+        mProcessingChainsMap.computeIfPresent(channel, (_, chain) ->
+        {
+            if(chain.hasSource(expectedSource))
+            {
+                incarnation[0] = channel.getProcessingIncarnation();
+                if(chain.getSource() instanceof TunerChannelSource tuner) source[0] = tuner;
+            }
+            return chain;
+        });
+        if(incarnation[0] == 0) return;
+        if(source[0] != null) mUsbChannelRecovery.sourceInterrupted(channel, source[0], incarnation[0]);
+        stopProcessingIfCurrent(channel, incarnation[0]);
     }
 
     /**
@@ -1418,21 +1508,34 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
      */
     public StopCurrentResult stopIfCurrent(TunerChannelAssignment expected) throws ChannelException
     {
+        StopCurrentResult result = stopInterruptedIfCurrent(expected);
+        if(result != StopCurrentResult.NOT_OWNED && expected.channel().isStandardChannel())
+            mUsbChannelRecovery.cancelIfIncarnation(expected.id(), expected.processingIncarnation());
+        return result;
+    }
+
+    private StopCurrentResult stopInterruptedIfCurrent(TunerChannelAssignment expected) throws ChannelException
+    {
         if(expected == null || expected.channel() == null || expected.processingIncarnation() == 0)
         {
             return StopCurrentResult.NOT_OWNED;
         }
 
         Channel channel = expected.channel();
+        return stopProcessingIfCurrent(channel, expected.processingIncarnation());
+    }
+
+    private StopCurrentResult stopProcessingIfCurrent(Channel channel, long incarnation) throws ChannelException
+    {
         if(requiresDmrRestChannelLifecycleSerialization(channel))
         {
             synchronized(this)
             {
-                return stopProcessingInternal(channel, true, expected.processingIncarnation());
+                return stopProcessingInternal(channel, true, incarnation);
             }
         }
 
-        return stopProcessingInternal(channel, false, expected.processingIncarnation());
+        return stopProcessingInternal(channel, false, incarnation);
     }
 
     /**
@@ -1453,6 +1556,12 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
 
     private synchronized void startProcessing(ChannelStartProcessingRequest request, boolean strictFunctionalStartup,
                                                DiscoveredTuner selectedTuner) throws ChannelException
+    {
+        startProcessing(request, strictFunctionalStartup, selectedTuner, false);
+    }
+
+    private synchronized void startProcessing(ChannelStartProcessingRequest request, boolean strictFunctionalStartup,
+                                               DiscoveredTuner selectedTuner, boolean usbRecovery) throws ChannelException
     {
         Channel channel = request.getChannel();
 
@@ -1485,7 +1594,9 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
 
             if(selectedTuner != null)
             {
-                source = mTunerManager.getSourceAtCurrentCenter(channel.getSourceConfiguration(),
+                source = usbRecovery ? mTunerManager.getSourceForUsbRecovery(channel.getSourceConfiguration(),
+                    channel.getDecodeConfiguration().getChannelSpecification(), threadName, selectedTuner,
+                    allocationContext) : mTunerManager.getSourceAtCurrentCenter(channel.getSourceConfiguration(),
                     channel.getDecodeConfiguration().getChannelSpecification(), threadName, selectedTuner,
                     allocationContext);
             }
@@ -1700,6 +1811,16 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
 
                 if(source instanceof TunerChannelSource tunerSource)
                 {
+                    if(mProcessingChainsMap.get(channel) == processingChain && processingChain.isProcessing())
+                    {
+                        mUsbChannelRecovery.channelStarted(channel, tunerSource, channel.getProcessingIncarnation());
+                        if(tunerSource instanceof MultiFrequencyTunerChannelSource rotating)
+                        {
+                            long incarnation = channel.getProcessingIncarnation();
+                            rotating.setTunerAssignmentListener(identity ->
+                                mUsbChannelRecovery.sourceAssigned(channel, identity, incarnation));
+                        }
+                    }
                     try
                     {
                         var diagnostic = mTunerManager != null ? mTunerManager.getTunerAllocationDiagnosticService() : null;
@@ -2036,6 +2157,31 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
                                                      long expectedIncarnation)
         throws ChannelException
     {
+        Set<Channel> stopping = mStoppingChannels.get();
+        if(!stopping.add(channel)) return StopCurrentResult.NOT_OWNED;
+        beginChannelTeardown(channel);
+        try { return stopProcessingInternalOwned(channel, handleDmrRestChannelLifecycle, expectedIncarnation); }
+        finally
+        {
+            endChannelTeardown(channel);
+            stopping.remove(channel);
+            if(stopping.isEmpty()) mStoppingChannels.remove();
+        }
+    }
+
+    private void beginChannelTeardown(Channel channel)
+    {
+        mChannelTeardowns.compute(channel, (_, count) -> count == null ? 1 : count + 1);
+    }
+
+    private void endChannelTeardown(Channel channel)
+    {
+        mChannelTeardowns.computeIfPresent(channel, (_, count) -> count > 1 ? count - 1 : null);
+    }
+
+    private StopCurrentResult stopProcessingInternalOwned(Channel channel, boolean handleDmrRestChannelLifecycle,
+                                                          long expectedIncarnation) throws ChannelException
+    {
         if(handleDmrRestChannelLifecycle && expectedIncarnation != 0 &&
             !isCurrentProcessingIncarnation(channel, expectedIncarnation))
         {
@@ -2262,6 +2408,7 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
             }
 
             mShuttingDown = true;
+            mUsbChannelRecovery.clear();
 
             try
             {
@@ -2936,7 +3083,7 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
 
                     try
                     {
-                        stopProcessing(toShutdown);
+                        stopInterruptedSource(toShutdown, sourceEvent.getSource());
                     }
                     catch(ChannelException ce)
                     {

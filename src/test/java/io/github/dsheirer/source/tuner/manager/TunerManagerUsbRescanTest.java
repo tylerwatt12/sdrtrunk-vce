@@ -28,7 +28,7 @@ import org.junit.jupiter.api.Test;
 class TunerManagerUsbRescanTest
 {
     @Test
-    void failedHotplugScanDoesNotCreateAnAutomaticRetryLoop() throws Exception
+    void hotplugCallbackOnlyRecordsChangeAndExplicitScanRemainsBoundedOnFailure() throws Exception
     {
         CountDownLatch started = new CountDownLatch(1), release = new CountDownLatch(1);
         AtomicInteger scans = new AtomicInteger();
@@ -42,8 +42,9 @@ class TunerManagerUsbRescanTest
         {
             manager.new HotplugEventSupport(() -> {}, null).processEvent(null, null,
                 org.usb4java.LibUsb.HOTPLUG_EVENT_DEVICE_LEFT, null);
-            assertTrue(started.await(1, TimeUnit.SECONDS));
+            assertEquals(0, scans.get(), "The native callback only records the changed inventory revision");
             var active = manager.requestUsbTunerRescan();
+            assertTrue(started.await(1, TimeUnit.SECONDS));
             release.countDown();
             org.junit.jupiter.api.Assertions.assertThrows(java.util.concurrent.ExecutionException.class,
                 () -> active.get(1, TimeUnit.SECONDS));
@@ -51,6 +52,25 @@ class TunerManagerUsbRescanTest
             assertEquals(1, scans.get());
         }
         finally { release.countDown(); manager.stopUsbRescanWorker(1, TimeUnit.SECONDS); }
+    }
+
+    @Test
+    void recoveryMonitoringRetriesFailedScanWithoutAnotherHotplugEvent() throws Exception
+    {
+        AtomicInteger scans = new AtomicInteger();
+        CountDownLatch recovered = new CountDownLatch(1);
+        TestTunerManager manager = new TestTunerManager(() -> {
+            if(scans.incrementAndGet() == 1) throw new IllegalStateException("temporary enumeration failure");
+            recovered.countDown();
+            return 0;
+        });
+        try
+        {
+            manager.startUsbRecoveryMonitoring();
+            assertTrue(recovered.await(7, TimeUnit.SECONDS), "Periodic recovery must survive its first failed scan");
+            assertTrue(scans.get() >= 2);
+        }
+        finally { manager.stop(); }
     }
 
     @Test

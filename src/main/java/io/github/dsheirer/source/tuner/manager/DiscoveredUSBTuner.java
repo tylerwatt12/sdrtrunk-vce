@@ -27,6 +27,7 @@ import io.github.dsheirer.source.tuner.Tuner;
 import io.github.dsheirer.source.tuner.usb.USBTunerController;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * A USB tuner that is discovered during the USB device traversal process that has a VID and PID that match a known
@@ -37,7 +38,9 @@ public class DiscoveredUSBTuner extends DiscoveredTuner
     private Logger mLog = LoggerFactory.getLogger(DiscoveredUSBTuner.class);
     private TunerClass mTunerClass;
     private USBTunerController mRetiredController;
-    private long mRuntimeGeneration;
+    private volatile long mRuntimeGeneration;
+    private volatile boolean mManagedRecovery;
+    private final AtomicReference<RuntimeFailure> mRuntimeFailure = new AtomicReference<>();
     private int mDeviceAddress = -1;
     private int mBus;
     private String mPortAddress;
@@ -55,6 +58,57 @@ public class DiscoveredUSBTuner extends DiscoveredTuner
     }
 
     void setDeviceAddress(int address) { mDeviceAddress = address; }
+
+    void enableManagedRecovery() { mManagedRecovery = true; }
+
+    @Override
+    public boolean isAvailable()
+    {
+        RuntimeFailure failure = mRuntimeFailure.get();
+        return (failure == null || failure.generation != mRuntimeGeneration) && super.isAvailable();
+    }
+
+    /** Called on the lifecycle worker, never on the native/decoder callback that reported the failure. */
+    boolean publishRuntimeFailure()
+    {
+        RuntimeFailure failure = mRuntimeFailure.get();
+        if(failure == null) return false;
+        boolean[] accepted = {false};
+        withLifecycleLock(() -> {
+            if(failure.generation == mRuntimeGeneration && isEnabled())
+            {
+                markErrorMessage(failure.message);
+                accepted[0] = true;
+            }
+            // Keep the allocation gate closed while waiting for a concurrent settings operation to release it.
+            mRuntimeFailure.compareAndSet(failure, null);
+        });
+        return accepted[0];
+    }
+
+    void markRecoveryNeeded(String message)
+    {
+        withLifecycleLock(() -> { if(isEnabled()) markErrorMessage(message); });
+    }
+
+    private void reportRuntimeFailure(long generation, String message)
+    {
+        if(generation != mRuntimeGeneration) return;
+        if(mManagedRecovery)
+        {
+            // One latest-value slot per physical radio: a burst of callbacks never waits for cleanup, channels, UI
+            // observers or the USB worker, and it cannot create an unbounded recovery queue.
+            RuntimeFailure pending = mRuntimeFailure.get();
+            if(generation == mRuntimeGeneration && (pending == null || pending.generation <= generation))
+                mRuntimeFailure.compareAndSet(pending, new RuntimeFailure(generation, message));
+        }
+        else
+        {
+            withLifecycleLock(() -> {
+                if(generation == mRuntimeGeneration) DiscoveredUSBTuner.this.setErrorMessage(message);
+            });
+        }
+    }
 
     boolean isSameAttachment(DiscoveredUSBTuner other)
     {
@@ -154,13 +208,12 @@ public class DiscoveredUSBTuner extends DiscoveredTuner
         {
             @Override public void setErrorMessage(String message)
             {
-                withLifecycleLock(() -> {
-                    if(generation == mRuntimeGeneration) DiscoveredUSBTuner.this.setErrorMessage(message);
-                });
+                reportRuntimeFailure(generation, message);
             }
             @Override public void tunerRemoved()
             {
-                withLifecycleLock(() -> {
+                if(mManagedRecovery) reportRuntimeFailure(generation, "USB radio disconnected");
+                else withLifecycleLock(() -> {
                     if(generation == mRuntimeGeneration) DiscoveredUSBTuner.this.tunerRemoved();
                 });
             }
@@ -179,6 +232,8 @@ public class DiscoveredUSBTuner extends DiscoveredTuner
     {
         return mRetiredController == null || mRetiredController.isUsbShutdownComplete();
     }
+
+    private record RuntimeFailure(long generation, String message) {}
 
     @Override
     public String toString()

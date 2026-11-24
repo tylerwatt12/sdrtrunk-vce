@@ -52,7 +52,7 @@ class UsbTunerReconciliationTest
     }
 
     @Test
-    void reconnectTwoOfThreeRecoversErrorsAndRetiresMissingWithoutTouchingHealthyRadio()
+    void reconnectTwoOfThreeRecoversErrorsAndRetainsMissingWithoutTouchingHealthyRadio()
     {
         try(Fixture manager = new Fixture())
         {
@@ -66,7 +66,10 @@ class UsbTunerReconciliationTest
             assertEquals(2, second.created);
             assertEquals(1, healthy.created);
             assertEquals(0, healthy.closed.get());
-            assertFalse(manager.getDiscoveredTunerRegistry().contains(missing));
+            assertTrue(manager.getDiscoveredTunerRegistry().contains(missing));
+            assertEquals(TunerStatus.REMOVED, missing.getTunerStatus());
+            assertFalse(missing.isAvailable());
+            assertFalse(missing.hasTuner());
             assertEquals(1, missing.closed.get());
             assertEquals(3, manager.getAvailableTuners().size());
             assertEquals(855_000_000, first.getTuner().getTunerController().getFrequency());
@@ -91,6 +94,10 @@ class UsbTunerReconciliationTest
             assertEquals(201, radio.created);
             assertEquals(1, manager.reconcileUsbTuners(List.of()));
             assertEquals(radio.created, radio.closed.get());
+            assertSame(radio, manager.getDiscoveredTunerRegistry().find(radio.getId()));
+            assertEquals(TunerStatus.REMOVED, radio.getTunerStatus());
+            assertEquals(0, manager.reconcileUsbTuners(List.of()));
+            assertTrue(manager.getAvailableTuners().isEmpty());
         }
     }
 
@@ -189,6 +196,56 @@ class UsbTunerReconciliationTest
             finally { release.countDown(); }
             reservation.get(1, TimeUnit.SECONDS);
             assertEquals(1, manager.reconcileUsbTuners(List.of()));
+        }
+    }
+
+    @Test
+    void managedFailureCallbackDoesNotWaitForLifecycleLockAndWorkerOwnsCleanup() throws Exception
+    {
+        try(Fixture manager = new Fixture(); var holder = Executors.newSingleThreadExecutor();
+            var callbacks = Executors.newSingleThreadExecutor())
+        {
+            Radio radio = new Radio(1);
+            radio.enableManagedRecovery();
+            manager.reconcileUsbTuners(List.of(radio));
+            ITunerErrorListener retired = radio.runtimeListener;
+            Tuner runtime = radio.getTuner();
+            CountDownLatch held = new CountDownLatch(1), release = new CountDownLatch(1);
+            var reservation = holder.submit(() -> {
+                assertTrue(radio.tryAcquireForAllocation());
+                held.countDown();
+                try { assertTrue(release.await(5, TimeUnit.SECONDS)); }
+                catch(InterruptedException e) { throw new AssertionError(e); }
+                finally { radio.releaseAfterAllocation(); }
+            });
+            try
+            {
+                assertTrue(held.await(1, TimeUnit.SECONDS));
+                callbacks.submit(() -> retired.setErrorMessage("USB failure")).get(1, TimeUnit.SECONDS);
+                assertFalse(radio.isAvailable(), "Pending failure immediately closes allocation admission");
+                assertSame(runtime, radio.getTuner());
+                assertEquals(0, radio.closed.get(), "The reporting callback must never stop hardware");
+                assertEquals(TunerStatus.ENABLED, radio.getTunerStatus());
+            }
+            finally { release.countDown(); }
+            reservation.get(1, TimeUnit.SECONDS);
+
+            manager.processUsbRuntimeFailures();
+            assertEquals(TunerStatus.ERROR, radio.getTunerStatus());
+            assertFalse(radio.hasTuner());
+            assertEquals(1, radio.closed.get());
+            assertEquals(1, manager.reconcileUsbTuners(List.of(new Radio(1))));
+            Tuner replacement = radio.getTuner();
+            assertTrue(radio.isAvailable());
+
+            callbacks.submit(() -> {
+                retired.setErrorMessage("late failure");
+                retired.tunerRemoved();
+            }).get(1, TimeUnit.SECONDS);
+            manager.processUsbRuntimeFailures();
+            assertSame(replacement, radio.getTuner());
+            assertTrue(radio.isAvailable());
+            assertEquals(1, radio.closed.get());
         }
     }
 

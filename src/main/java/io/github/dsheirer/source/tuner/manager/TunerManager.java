@@ -47,6 +47,7 @@ import io.github.dsheirer.source.tuner.sdrplay.DiscoveredRspTuner;
 import io.github.dsheirer.source.tuner.sdrplay.api.SDRPlayException;
 import io.github.dsheirer.source.tuner.sdrplay.api.SDRplay;
 import io.github.dsheirer.source.tuner.sdrplay.api.device.DeviceInfo;
+import io.github.dsheirer.source.tuner.usb.USBTunerController;
 import java.nio.ByteBuffer;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -106,6 +107,17 @@ public class TunerManager implements IDiscoveredTunerStatusListener
     private boolean mUsbRescanClosed;
     private volatile boolean mLibUsbInitialized = false;
     private volatile boolean mStopping;
+    private volatile boolean mAutomaticUsbRecovery;
+    private volatile UsbTunerRecoveryListener mUsbRecoveryListener = UsbTunerRecoveryListener.NONE;
+    private final AtomicBoolean mExplicitUsbRescan = new AtomicBoolean();
+    private final UsbRecoveryMonitor mUsbRecoveryMonitor = new UsbRecoveryMonitor();
+    private final ScheduledExecutorService mUsbRecoveryTimer = Executors.newSingleThreadScheduledExecutor(task ->
+    {
+        Thread thread = new Thread(task, "sdrtrunk USB recovery timer");
+        thread.setDaemon(true);
+        thread.setPriority(Thread.MIN_PRIORITY);
+        return thread;
+    });
     private final AtomicLong mChannelAllocationRequests = new AtomicLong();
     private final AtomicLong mChannelAllocationSuccesses = new AtomicLong();
     private final AtomicLong mChannelAllocationFailures = new AtomicLong();
@@ -145,6 +157,11 @@ public class TunerManager implements IDiscoveredTunerStatusListener
     public DiscoveredTunerRegistry getDiscoveredTunerRegistry()
     {
         return mDiscoveredTunerRegistry;
+    }
+
+    public void setUsbRecoveryListener(UsbTunerRecoveryListener listener)
+    {
+        mUsbRecoveryListener = Objects.requireNonNull(listener);
     }
 
     /**
@@ -270,7 +287,9 @@ public class TunerManager implements IDiscoveredTunerStatusListener
         if(status == LibUsb.SUCCESS)
         {
             mLibUsbInitialized = true;
-            discoverUSBTuners();
+            startUsbRecoveryMonitoring();
+            // Initial discovery shares the serialized lifecycle worker with every later retry.
+            requestAutomaticUsbTunerRescan().join();
             mHotplugEventSupport.start();
         }
         else
@@ -285,6 +304,7 @@ public class TunerManager implements IDiscoveredTunerStatusListener
     public void stop()
     {
         mStopping = true;
+        mUsbRecoveryTimer.shutdownNow();
         mCoverageRepairExecutor.shutdownNow();
         mAllocationDiagnostics.close();
         boolean rescanStopped = stopUsbRescanWorker(1, TimeUnit.SECONDS);
@@ -328,6 +348,13 @@ public class TunerManager implements IDiscoveredTunerStatusListener
      */
     public CompletableFuture<Integer> requestUsbTunerRescan()
     {
+        mExplicitUsbRescan.set(true);
+        return requestAutomaticUsbTunerRescan();
+    }
+
+    /** One coalesced request. The timer and hotplug callbacks never run native/channel work themselves. */
+    private CompletableFuture<Integer> requestAutomaticUsbTunerRescan()
+    {
         synchronized(mUsbRescanLock)
         {
             if(mStopping || mUsbRescanClosed)
@@ -363,7 +390,7 @@ public class TunerManager implements IDiscoveredTunerStatusListener
                         {
                             mUsbRescan = null;
                             if(!mStopping && mUsbHotplugHandledRevision != mUsbHotplugRevision.get())
-                                requestUsbTunerRescan();
+                                requestAutomaticUsbTunerRescan();
                         }
                     }
                 });
@@ -372,6 +399,49 @@ public class TunerManager implements IDiscoveredTunerStatusListener
             catch(RejectedExecutionException ree)
             {
                 return CompletableFuture.completedFuture(USB_RESCAN_UNAVAILABLE);
+            }
+        }
+    }
+
+    void startUsbRecoveryMonitoring()
+    {
+        if(mAutomaticUsbRecovery) return;
+        mAutomaticUsbRecovery = true;
+        // The same fallback runs on every platform, including platforms without native hotplug notifications.
+        // A fixed delay plus the single in-flight request bounds work after sleep and during repeated failures.
+        mUsbRecoveryTimer.scheduleWithFixedDelay(() -> {
+            if(!mStopping) requestAutomaticUsbTunerRescan();
+        }, 2, 2, TimeUnit.SECONDS);
+    }
+
+    /** The lifecycle worker consumes bounded fault slots before enumeration, even if enumeration itself fails. */
+    void processUsbRuntimeFailures()
+    {
+        for(DiscoveredTuner discovered: mDiscoveredTunerRegistry.snapshot())
+        {
+            if(!(discovered instanceof DiscoveredUSBTuner usb)) continue;
+            if(!usb.isEnabled())
+            {
+                mUsbRecoveryMonitor.forget(usb.getId());
+                mUsbRecoveryListener.tunerDisabled(usb);
+                continue;
+            }
+            if(usb.publishRuntimeFailure())
+            {
+                mUsbRecoveryListener.tunerUnavailable(usb);
+                usb.stop();
+                continue;
+            }
+            Tuner runtime = usb.getTuner();
+            if(runtime == null || !(runtime.getTunerController() instanceof USBTunerController controller)) continue;
+            USBTunerController.UsbTransferHealthSnapshot health = controller.getUsbTransferHealthSnapshot();
+            boolean receiving = usb.isAvailable() && usb.getOperatorState() == DiscoveredTuner.OperatorState.LIVE &&
+                runtime.getChannelSourceManager() != null && runtime.getChannelSourceManager().getTunerChannelCount() > 0;
+            if(mUsbRecoveryMonitor.samplesStalled(usb.getId(), runtime, health.streamSequence(), receiving, health.usableBytes()))
+            {
+                usb.markRecoveryNeeded("Radio stopped supplying samples. Reconnecting the USB radio.");
+                mUsbRecoveryListener.tunerUnavailable(usb);
+                usb.stop();
             }
         }
     }
@@ -394,6 +464,9 @@ public class TunerManager implements IDiscoveredTunerStatusListener
             return USB_RESCAN_UNAVAILABLE;
         }
 
+        boolean explicit = mExplicitUsbRescan.getAndSet(false);
+        processUsbRuntimeFailures();
+
         List<DiscoveredUSBTuner> discovered = new ArrayList<>();
         DeviceList deviceList = new DeviceList();
         boolean listed = false;
@@ -407,7 +480,7 @@ public class TunerManager implements IDiscoveredTunerStatusListener
                 return USB_RESCAN_FAILED;
             }
             listed = true;
-            mLog.info("LibUsb - discovered [{}] potential usb devices", count);
+            mLog.debug("LibUsb - discovered [{}] potential usb devices", count);
             for(Device device: deviceList)
             {
                 if(LibUsb.getPortNumber(device) <= 0) continue;
@@ -439,7 +512,7 @@ public class TunerManager implements IDiscoveredTunerStatusListener
             if(listed) LibUsb.freeDeviceList(deviceList, true);
         }
         // An incomplete inventory is never evidence that an existing radio was disconnected.
-        return reconcileUsbTuners(discovered, complete);
+        return reconcileUsbTuners(discovered, complete, explicit);
     }
 
     /** Background lifecycle work only. Healthy and intentionally disabled devices are never restarted. */
@@ -450,6 +523,11 @@ public class TunerManager implements IDiscoveredTunerStatusListener
 
     int reconcileUsbTuners(List<DiscoveredUSBTuner> connected, boolean inventoryComplete)
     {
+        return reconcileUsbTuners(connected, inventoryComplete, true);
+    }
+
+    int reconcileUsbTuners(List<DiscoveredUSBTuner> connected, boolean inventoryComplete, boolean explicit)
+    {
         if(!inventoryComplete) return USB_RESCAN_FAILED;
         synchronized(mUsbAttachLock)
         {
@@ -459,52 +537,81 @@ public class TunerManager implements IDiscoveredTunerStatusListener
             for(DiscoveredTuner candidate: mDiscoveredTunerRegistry.snapshot())
             {
                 if(!(candidate instanceof DiscoveredUSBTuner existing)) continue;
+                if(mAutomaticUsbRecovery) existing.enableManagedRecovery();
+                if(!existing.isEnabled()) mUsbRecoveryListener.tunerDisabled(existing);
                 DiscoveredUSBTuner attached = connected.stream().filter(device ->
                     existing.isAt(device.getBus(), device.getPortAddress()) &&
                         existing.getTunerClass() == device.getTunerClass()).findFirst().orElse(null);
                 if(attached != null)
                 {
-                    if(!existing.isSameAttachment(attached) || existing.getTunerStatus() == TunerStatus.REMOVED)
+                    boolean newAttachment = !existing.isSameAttachment(attached) || existing.getTunerStatus() == TunerStatus.REMOVED;
+                    boolean failedRuntime = existing.getTunerStatus() == TunerStatus.ERROR;
+                    if(existing.isEnabled() && (newAttachment || failedRuntime))
                     {
-                        existing.recoverAttachment(attached);
-                        if(!existing.isEnabled() || existing.isAvailable()) changed++;
-                        else failed = true;
+                        if(!mUsbRecoveryMonitor.mayRetry(existing.getId(), existing.operatorGeneration(), explicit, newAttachment))
+                        {
+                            failed = true;
+                            continue;
+                        }
+                        existing.markRecoveryNeeded("Reconnecting the USB radio.");
+                        mUsbRecoveryListener.tunerUnavailable(existing);
+                        if(newAttachment) existing.recoverAttachment(attached);
+                        else existing.restart();
+                        if(existing.isAvailable())
+                        {
+                            changed++;
+                            mUsbRecoveryMonitor.recovered(existing.getId());
+                        }
+                        else
+                        {
+                            mUsbRecoveryMonitor.failed(existing.getId(), existing.operatorGeneration());
+                            failed = true;
+                        }
                     }
-                    else if(existing.getTunerStatus() == TunerStatus.ERROR && existing.isEnabled())
+                    else if(newAttachment)
                     {
-                        existing.restart();
-                        if(existing.isAvailable()) changed++;
-                        else failed = true;
+                        existing.recoverAttachment(attached); // Disabled devices update attachment identity only.
                     }
+                    if(existing.isAvailable() && existing.getOperatorState() == DiscoveredTuner.OperatorState.LIVE)
+                        mUsbRecoveryListener.tunerAvailable(existing);
                     continue;
                 }
                 // A concurrent settings operation keeps ownership. A later scan can retry without blocking allocation.
                 if(!existing.tryAcquireForAllocation()) { failed = true; continue; }
+                boolean missing = existing.getTunerStatus() == TunerStatus.REMOVED && !existing.hasTuner();
                 try
                 {
-                    existing.stop();
-                    if(!existing.isUsbStopComplete())
-                    {
-                        existing.setErrorMessage("USB shutdown did not finish. Restart the receiver before retrying.");
-                        failed = true;
-                        continue;
-                    }
                     existing.tunerRemoved();
-                    existing.removeTunerStatusListener(this);
-                    mDiscoveredTunerRegistry.removeStoppedUsbTuner(existing);
-                    changed++;
                 }
                 finally { existing.releaseAfterAllocation(); }
+                // Never enter channel lifecycle while holding the tuner allocation lock. Retain the absent device's
+                // identity and operator intent so it can be disabled while missing and recovered after a later replug.
+                mUsbRecoveryListener.tunerUnavailable(existing);
+                existing.stop();
+                if(!existing.isUsbStopComplete())
+                {
+                    existing.markRecoveryNeeded("USB shutdown did not finish. Restart the receiver before retrying.");
+                    failed = true;
+                    continue;
+                }
+                if(!missing) changed++;
             }
             for(DiscoveredUSBTuner device: connected)
             {
                 if(mStopping) return USB_RESCAN_UNAVAILABLE;
                 if(!mDiscoveredTunerRegistry.hasUsbTuner(device.getBus(), device.getPortAddress()))
                 {
+                    if(mAutomaticUsbRecovery) device.enableManagedRecovery();
                     if(startAndConfigureTuner(device))
                     {
                         changed++;
-                        if(device.getTunerStatus() == TunerStatus.ERROR) failed = true;
+                        if(device.getTunerStatus() == TunerStatus.ERROR)
+                        {
+                            mUsbRecoveryMonitor.failed(device.getId(), device.operatorGeneration());
+                            failed = true;
+                        }
+                        else if(device.isAvailable() && device.getOperatorState() == DiscoveredTuner.OperatorState.LIVE)
+                            mUsbRecoveryListener.tunerAvailable(device);
                     }
                 }
             }
@@ -707,6 +814,14 @@ public class TunerManager implements IDiscoveredTunerStatusListener
         return getSource(config, channelSpecification, threadName, Objects.requireNonNull(selectedTuner), null);
     }
 
+    /** Restore interrupted channels on their returning radio, without allocating or retuning a healthy neighbour. */
+    public Source getSourceForUsbRecovery(SourceConfiguration config, ChannelSpecification channelSpecification,
+                                          String threadName, DiscoveredTuner selectedTuner,
+                                          TunerAllocationContext context) throws SourceException
+    {
+        return getSource(config, channelSpecification, threadName, Objects.requireNonNull(selectedTuner), context, true);
+    }
+
     public Source getSourceAtCurrentCenter(SourceConfiguration config, ChannelSpecification channelSpecification,
                                            String threadName, DiscoveredTuner selectedTuner,
                                            TunerAllocationContext context) throws SourceException
@@ -716,6 +831,13 @@ public class TunerManager implements IDiscoveredTunerStatusListener
 
     private Source getSource(SourceConfiguration config, ChannelSpecification channelSpecification,
                              String threadName, DiscoveredTuner selectedTuner, TunerAllocationContext context) throws SourceException
+    {
+        return getSource(config, channelSpecification, threadName, selectedTuner, context, false);
+    }
+
+    private Source getSource(SourceConfiguration config, ChannelSpecification channelSpecification,
+                             String threadName, DiscoveredTuner selectedTuner, TunerAllocationContext context,
+                             boolean usbRecovery) throws SourceException
     {
         if(config == null || config.getSourceType() == null || !config.getSourceType().isActive())
         {
@@ -740,8 +862,8 @@ public class TunerManager implements IDiscoveredTunerStatusListener
                     SourceConfigTuner sourceConfigTuner = (SourceConfigTuner)config;
                     TunerChannel tunerChannel = sourceConfigTuner.getTunerChannel(channelSpecification.getBandwidth());
                     String preferredTuner = sourceConfigTuner.getPreferredTuner();
-                    retVal = selectedTuner != null ? getSourceAtCurrentCenter(selectedTuner, tunerChannel,
-                        channelSpecification, threadName, context) : getSource(tunerChannel, channelSpecification,
+                    retVal = selectedTuner != null ? getSourceFromSelectedTuner(selectedTuner, tunerChannel,
+                        channelSpecification, threadName, context, null, usbRecovery) : getSource(tunerChannel, channelSpecification,
                         preferredTuner, threadName + " " + tunerChannel.getFrequency(), null, context);
                 }
                 break;
@@ -753,8 +875,8 @@ public class TunerManager implements IDiscoveredTunerStatusListener
                     String preferredTuner = sourceConfigTuner.getPreferredTuner();
                     SortedSet<TunerChannel> tunerChannels = getTunerChannels(sourceConfigTuner, channelSpecification);
 
-                    Source source = selectedTuner != null ? getSourceAtCurrentCenter(selectedTuner, tunerChannel,
-                        channelSpecification, threadName, context) : getSource(tunerChannel, channelSpecification,
+                    Source source = selectedTuner != null ? getSourceFromSelectedTuner(selectedTuner, tunerChannel,
+                        channelSpecification, threadName, context, tunerChannels, usbRecovery) : getSource(tunerChannel, channelSpecification,
                         preferredTuner, threadName, tunerChannels, context);
 
                     if(source instanceof TunerChannelSource)
@@ -773,9 +895,10 @@ public class TunerManager implements IDiscoveredTunerStatusListener
         return retVal;
     }
 
-    private Source getSourceAtCurrentCenter(DiscoveredTuner selectedTuner, TunerChannel tunerChannel,
-                                            ChannelSpecification channelSpecification, String threadName,
-                                            TunerAllocationContext context)
+    private Source getSourceFromSelectedTuner(DiscoveredTuner selectedTuner, TunerChannel tunerChannel,
+                                              ChannelSpecification channelSpecification, String threadName,
+                                              TunerAllocationContext context, SortedSet<TunerChannel> tunerChannels,
+                                              boolean allowRetune)
     {
         mChannelAllocationRequests.incrementAndGet();
         Map<DiscoveredTuner,PolyphaseChannelSourceManager.AllocationAttempt> attempts = new LinkedHashMap<>();
@@ -783,14 +906,18 @@ public class TunerManager implements IDiscoveredTunerStatusListener
         {
             if(mDiscoveredTunerRegistry.availableTuners().contains(selectedTuner))
             {
-                Source source = getSource(selectedTuner, tunerChannel, channelSpecification, threadName, null,
-                    PolyphaseChannelSourceManager.AllocationMode.CURRENT_CENTER, context, attempts);
-                if(source != null)
+                for(PolyphaseChannelSourceManager.AllocationMode mode: allowRetune ? CHANNEL_ALLOCATION_STAGES :
+                    List.of(PolyphaseChannelSourceManager.AllocationMode.CURRENT_CENTER))
                 {
-                    mChannelAllocationSuccesses.incrementAndGet();
-                    mAllocationDiagnostics.resolved(context, tunerChannel.getFrequency());
-                    recordDecisions(context, tunerChannel, attempts, selectedTuner, true);
-                    return source;
+                    Source source = getSource(selectedTuner, tunerChannel, channelSpecification, threadName,
+                        tunerChannels, mode, context, attempts);
+                    if(source != null)
+                    {
+                        mChannelAllocationSuccesses.incrementAndGet();
+                        mAllocationDiagnostics.resolved(context, tunerChannel.getFrequency());
+                        recordDecisions(context, tunerChannel, attempts, selectedTuner, true);
+                        return source;
+                    }
                 }
             }
         }
@@ -1378,7 +1505,8 @@ public class TunerManager implements IDiscoveredTunerStatusListener
             {
                 // No device pointer or native ownership escapes the callback. Coalesce bursts on the rescan worker.
                 mUsbHotplugRevision.incrementAndGet();
-                requestUsbTunerRescan();
+                // The periodic worker sees this revision within two seconds. A native callback never acquires
+                // the rescan lock, waits for a queue, starts hardware, or enters a channel lifecycle operation.
             }
             return HOTPLUG_CONTINUE_EVENT_SUPPORT;
         }

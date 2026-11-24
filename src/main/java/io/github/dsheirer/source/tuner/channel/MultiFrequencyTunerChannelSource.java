@@ -43,6 +43,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Supplier;
+import java.util.function.Consumer;
 
 /**
  * Multiple-frequency tuner channel source.  Provides a wrapper around a tuner channel source and listens for external
@@ -54,6 +55,7 @@ public class MultiFrequencyTunerChannelSource extends TunerChannelSource
 
     private TunerManager mTunerManager;
     private volatile TunerChannelSource mTunerChannelSource;
+    private volatile Consumer<String> mTunerAssignmentListener;
     private final Supplier<List<Long>> mFrequencies;
     private Set<Long> mLockedFrequencies = ConcurrentHashMap.newKeySet();
     private int mFrequencyListPointer = 0;
@@ -184,6 +186,8 @@ public class MultiFrequencyTunerChannelSource extends TunerChannelSource
             {
                 mTunerChannelSource = (TunerChannelSource)source;
                 setTunerIdentity(mTunerChannelSource.getTunerIdentity());
+                Consumer<String> assignmentListener = mTunerAssignmentListener;
+                if(assignmentListener != null) assignmentListener.accept(getTunerIdentity());
                 mTunerChannelSource.setSourceEventListener(mConsumerSourceEventAdapter);
                 mTunerChannelSource.setListener(mComplexSamplesListener);
                 mTunerChannelSource.addHeartbeatListener(mHeartbeatListener);
@@ -320,6 +324,18 @@ public class MultiFrequencyTunerChannelSource extends TunerChannelSource
         {
             mRotationLock.unlock();
         }
+    }
+
+    /** Recognizes only the current inner source, so a late stop from a retired rotation cannot stop its replacement. */
+    public boolean isCurrentSource(Source source)
+    {
+        return source == this || source != null && source == mTunerChannelSource;
+    }
+
+    /** Receiver-owned bounded bookkeeping only; callers must not install blocking observers here. */
+    public void setTunerAssignmentListener(Consumer<String> listener)
+    {
+        mTunerAssignmentListener = listener;
     }
 
     /** Best-effort observer value without acquiring the rotation lifecycle lock. */

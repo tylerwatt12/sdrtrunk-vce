@@ -44,6 +44,34 @@ import org.junit.jupiter.api.Test;
 
 class MultiFrequencyTunerChannelSourceTest
 {
+    @Test
+    void processingChainMatchesCurrentInnerSourceButRejectsRetiredRotationSource() throws Exception
+    {
+        TestTunerChannelSource first = new TestTunerChannelSource(FIRST_FREQUENCY);
+        TestTunerChannelSource replacement = new TestTunerChannelSource(SECOND_FREQUENCY);
+        replacement.setTunerIdentity("replacement-usb");
+        MultiFrequencyTunerChannelSource source = new MultiFrequencyTunerChannelSource(
+            new TestTunerManager(null, null, replacement), first, FREQUENCIES, CHANNEL_SPECIFICATION,
+            null, "source ownership test", null, null);
+        ProcessingChain chain = new ProcessingChain(new Channel("Control"), new AliasModel());
+        chain.setSource(source);
+        AtomicReference<String> assigned = new AtomicReference<>();
+        source.setTunerAssignmentListener(assigned::set);
+        source.setSourceEventListener(event -> {});
+        try
+        {
+            assertTrue(chain.hasSource(source));
+            assertTrue(chain.hasSource(first), "USB shutdown identifies the inner source rather than its wrapper");
+            assertFalse(chain.hasSource(replacement));
+            source.start();
+            source.process(SourceEvent.frequencyRotationRequest());
+            assertTrue(chain.hasSource(replacement));
+            assertEquals("replacement-usb", assigned.get());
+            assertFalse(chain.hasSource(first), "A delayed callback from a retired source cannot stop its replacement");
+        }
+        finally { source.stop(); chain.dispose(); }
+    }
+
     private static final long FIRST_FREQUENCY = 851_012_500L;
     private static final long SECOND_FREQUENCY = 851_512_500L;
     private static final long THIRD_FREQUENCY = 852_012_500L;

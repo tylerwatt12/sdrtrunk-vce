@@ -25,6 +25,7 @@ import io.github.dsheirer.source.SourceEvent;
 import io.github.dsheirer.source.SourceException;
 import io.github.dsheirer.source.tuner.TunerEvent.Event;
 import io.github.dsheirer.source.tuner.manager.ChannelSourceManager;
+import io.github.dsheirer.util.ThreadPool;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -135,12 +136,11 @@ public abstract class Tuner implements ISourceEventProcessor, ITunerErrorListene
     @Override
     public void tunerRemoved()
     {
-        stop();
-
-        if(mTunerErrorListener != null)
-        {
-            mTunerErrorListener.tunerRemoved();
-        }
+        ITunerErrorListener listener = mTunerErrorListener;
+        // The owner must see removal before stop() clears its listener. USB owners coalesce this notification on
+        // their lifecycle worker; neither channel teardown nor native shutdown belongs on a hardware callback.
+        if(listener != null) listener.tunerRemoved();
+        else ThreadPool.CACHED.execute(this::stop);
     }
 
     /**

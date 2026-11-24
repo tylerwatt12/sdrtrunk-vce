@@ -86,14 +86,14 @@ class TunerAdministrationServiceTest
         TunerAdministrationService service = new TunerAdministrationService(inventory::get,
             () -> tuner -> null, null, tuner -> List.of(), nicknames);
         assertEquals("", service.item(first).nickname());
-        assertEquals("stable-device-id", service.item(first).name());
+        assertEquals(TunerClass.UNKNOWN.toString(), service.item(first).name());
         var before = service.receiverReferences();
         assertSame(before, service.receiverReferences(), "unchanged registry/nicknames reuse the immutable snapshot");
         assertNull(before.get(first.getId()).nickname());
 
         assertEquals("Roof antenna", service.setNickname(first, "  Roof antenna  ").nickname());
         assertEquals("Roof antenna", service.item(first).nickname());
-        assertEquals("stable-device-id", service.item(first).name(), "nickname must not change preferred-tuner matching");
+        assertEquals(TunerClass.UNKNOWN.toString(), service.item(first).name(), "nickname must not change hardware identity");
         var renamed = service.receiverReferences().get(first.getId());
         assertEquals(TunerAdministrationService.opaqueId(first), renamed.id());
         assertEquals("Roof antenna", renamed.nickname());
@@ -108,6 +108,36 @@ class TunerAdministrationServiceTest
         assertEquals("", restarted.item(rediscovered).nickname());
         assertNull(restarted.receiverReferences().get(rediscovered.getId()).nickname());
         assertEquals("Roof antenna", renamed.nickname(), "published snapshots cannot mutate after a save");
+    }
+
+    @Test
+    void disconnectedTunerRetainsItsCachedDisplayNameAndDesiredMode()
+    {
+        FakeDiscoveredTuner discovered = new FakeDiscoveredTuner("native-device-identity");
+        discovered.setEnabled(false);
+        discovered.install(new TestTuner(discovered)
+        {
+            @Override public String getPreferredName() { return "Airspy R2"; }
+            @Override public String getUniqueID() { return "SAMPLE-001"; }
+        });
+        discovered.setEnabled(true);
+        TunerAdministrationService service = new TunerAdministrationService(() -> List.of(discovered), tuner -> null);
+        String id = service.item(discovered).id();
+
+        discovered.tunerRemoved();
+        TunerAdministrationService.Item disconnected = service.item(discovered);
+        discovered.stop();
+
+        assertEquals(id, disconnected.id());
+        assertEquals("Airspy R2 · SAMPLE-001", disconnected.name());
+        assertEquals(disconnected.name(), service.item(discovered).name(), "the label survives runtime disposal");
+        assertEquals("live", disconnected.operatorState(), "a disconnect must not change the desired operator mode");
+        assertEquals("removed", disconnected.status());
+        assertFalse(disconnected.available());
+        assertEquals(0, disconnected.channelCount());
+        assertNull(disconnected.frequencyHz());
+        assertNull(disconnected.sampleRateHz());
+        assertFalse(ApiHttpResponse.normalizePayload(disconnected).toString().contains(discovered.getId()));
     }
 
     @Test

@@ -341,11 +341,11 @@ public final class TunerAdministrationService
                 return "Recording";
             }
         }
-        if(tuner != null && tuner.getPreferredName() != null && !tuner.getPreferredName().isBlank())
+        if(discovered.isAvailable() && tuner != null && tuner.getPreferredName() != null && !tuner.getPreferredName().isBlank())
         {
             return tuner.getPreferredName();
         }
-        return discovered.getId();
+        return discovered.getDisplayName();
     }
 
     private static DeviceGroup deviceGroup(DiscoveredTuner discovered)

@@ -53,6 +53,7 @@ public abstract class DiscoveredTuner implements ITunerErrorListener
     private volatile Thread mRestoreAllocationThread;
     private volatile boolean mDiscoveryHeld;
     private volatile long mOperatorGeneration;
+    private volatile long mRecoveryCancellationGeneration;
     private volatile boolean mSpectrumObserved;
     private volatile String mAllocationPreferredName;
     private volatile String mDisplayName;
@@ -191,6 +192,9 @@ public abstract class DiscoveredTuner implements ITunerErrorListener
     }
 
     long operatorGeneration() { return mOperatorGeneration; }
+
+    /** Explicit operator changes invalidate recovery even if Disable and re-enable occur between USB polls. */
+    public long getRecoveryCancellationGeneration() { return mRecoveryCancellationGeneration; }
     /** Identifies the current operator decision without exposing hardware identity. */
     public long getOperatorGeneration() { return mOperatorGeneration; }
     /** Caller already owns the allocation lifecycle gate when transferring an existing control session. */
@@ -209,6 +213,7 @@ public abstract class DiscoveredTuner implements ITunerErrorListener
         try
         {
             mOperatorGeneration++;
+            mRecoveryCancellationGeneration++;
             mRestoreAllocationThread = null;
             mOperatorState = OperatorState.SETUP;
         }
@@ -253,6 +258,7 @@ public abstract class DiscoveredTuner implements ITunerErrorListener
         try
         {
             mOperatorGeneration++;
+            mRecoveryCancellationGeneration++;
             mRestoreAllocationThread = null;
             mOperatorState = OperatorState.SETUP;
             if(!mEnabled || !isAvailable() || !hasTuner())
@@ -318,6 +324,7 @@ public abstract class DiscoveredTuner implements ITunerErrorListener
         try
         {
             mOperatorGeneration++;
+            mRecoveryCancellationGeneration++;
             if(!mEnabled)
             {
                 return false;
@@ -386,6 +393,7 @@ public abstract class DiscoveredTuner implements ITunerErrorListener
         try
         {
             mOperatorGeneration++;
+            if(!enabled) mRecoveryCancellationGeneration++;
             //If there was a change in state
             if(mEnabled ^ enabled)
             {
@@ -638,12 +646,18 @@ public abstract class DiscoveredTuner implements ITunerErrorListener
         mAllocationLifecycleLock.lock();
         try
         {
-            mErrorMessage = errorMessage;
+            markErrorMessage(errorMessage);
             mLog.info("Tuner Error - Stopping - " + getId() + " Error: " + errorMessage);
             stop();
-            setTunerStatus(TunerStatus.ERROR);
         }
         finally { mAllocationLifecycleLock.unlock(); }
+    }
+
+    /** Gate allocation before channel cleanup; the USB lifecycle worker performs cleanup outside this lock. */
+    protected final void markErrorMessage(String errorMessage)
+    {
+        mErrorMessage = errorMessage;
+        setTunerStatus(TunerStatus.ERROR);
     }
 
     @Override

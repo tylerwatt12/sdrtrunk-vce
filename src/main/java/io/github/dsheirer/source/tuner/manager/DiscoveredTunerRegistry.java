@@ -122,7 +122,7 @@ public final class DiscoveredTunerRegistry implements Listener<TunerEvent>, IDis
     {
         if(current == TunerStatus.REMOVED)
         {
-            // USB reconciliation owns final removal, after native shutdown has been proven complete.
+            // USB reconciliation owns shutdown and retains the absent radio's operator/recovery state.
             if(tuner instanceof DiscoveredUSBTuner) return;
             // RSPduo master/slave mode shares one physical device; either removal retires both logical tuners.
             if(tuner instanceof DiscoveredRspDuoTuner1 master &&
