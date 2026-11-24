@@ -43,6 +43,7 @@ import io.github.dsheirer.channel.state.MultiChannelState;
 import io.github.dsheirer.channel.state.State;
 import io.github.dsheirer.controller.channel.ChannelEvent.Event;
 import io.github.dsheirer.controller.channel.event.ChannelStartProcessingRequest;
+import io.github.dsheirer.health.HealthMonitor;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.IdentifierUpdateNotification;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
@@ -408,6 +409,7 @@ class ChannelProcessingManagerDMRRestHandoffTest
                 .filter(module -> module != trafficManager)
                 .filter(module -> !(module instanceof ControlChannelQualityMonitor))
                 .filter(module -> !(module instanceof ChannelRotationMonitor))
+                .filter(module -> !(module instanceof HealthMonitor))
                 .toList();
             DMRDecoder originalDecoder = modules(original, DMRDecoder.class).getFirst();
             List<DMRDecoderState> originalDecoderStates = modules(original, DMRDecoderState.class);

@@ -72,6 +72,7 @@ public class BroadcastifyCallBroadcaster extends AbstractAudioBroadcaster<Broadc
     private static final String MULTIPART_FORM_DATA = MULTIPART_TYPE + "/" + DEFAULT_SUBTYPE;
     private static final String USER_AGENT_SDRTRUNK = "sdrtrunk";
     private ScheduledFuture<?> mBroadcastifyTestFuture;
+    private BroadcastifyHealthReporter mHealthReporter;
     private Queue<AudioRecording> mAudioRecordingQueue = new LinkedTransferQueue<>();
     private ScheduledFuture<?> mAudioRecordingProcessorFuture;
     private HttpClient mHttpClient = HttpClient.newBuilder()
@@ -146,6 +147,12 @@ public class BroadcastifyCallBroadcaster extends AbstractAudioBroadcaster<Broadc
             mAudioRecordingProcessorFuture = ThreadPool.SCHEDULED.scheduleAtFixedRate(new AudioRecordingProcessor(),
                 0, 500, TimeUnit.MILLISECONDS);
         }
+
+        if(mHealthReporter == null && getBroadcastConfiguration().isHealthReports() && mAliasModel != null)
+        {
+            mHealthReporter = new BroadcastifyHealthReporter(getBroadcastConfiguration(), mAliasModel, mHttpClient);
+            mHealthReporter.start();
+        }
     }
 
     /**
@@ -158,6 +165,12 @@ public class BroadcastifyCallBroadcaster extends AbstractAudioBroadcaster<Broadc
         {
             mBroadcastifyTestFuture.cancel(true);
             mBroadcastifyTestFuture = null;
+        }
+
+        if(mHealthReporter != null)
+        {
+            mHealthReporter.stop();
+            mHealthReporter = null;
         }
         if(mAudioRecordingProcessorFuture != null)
         {

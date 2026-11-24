@@ -17,6 +17,7 @@ import io.github.dsheirer.controller.channel.ChannelException;
 import io.github.dsheirer.controller.channel.ChannelProcessingManager;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.database.settings.ApplicationSettingsStore;
+import io.github.dsheirer.health.HealthRegistry;
 import io.github.dsheirer.log.ApplicationLog;
 import io.github.dsheirer.map.MapSnapshotService;
 import io.github.dsheirer.metadata.site.SiteControlChannelLearner;
@@ -218,6 +219,7 @@ public final class ReceiverRuntime implements AutoCloseable
         mToneActivitySubscription = P25PagingToneService.getInstance()
             .addCompletedToneListener(mActivity::receiveCompletedToneSequence);
         mTuners = new TunerManager(mPreferences);
+        HealthRegistry.getInstance().setTunerManager(mTuners);
         AliasModel aliases = new AliasModel();
         mConfiguration = new ConfigurationManager(mPreferences, mTuners, aliases,
             new EventLogManager(aliases, mPreferences), mActivity::receiveMaintenanceRequest);

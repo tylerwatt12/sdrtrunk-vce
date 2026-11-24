@@ -32,6 +32,7 @@ import io.github.dsheirer.controller.channel.event.ChannelStartProcessingRequest
 import io.github.dsheirer.controller.channel.event.ChannelStopProcessingRequest;
 import io.github.dsheirer.controller.channel.event.PostChannelModuleEventRequest;
 import io.github.dsheirer.controller.channel.event.PreloadDataContent;
+import io.github.dsheirer.health.HealthMonitor;
 import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierClass;
@@ -1581,6 +1582,11 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
                     this::receiveControlChannelQuality));
             }
 
+            if(supportsNodeHealth(channel))
+            {
+                modules.add(new HealthMonitor(channel));
+            }
+
             for(Module module: modules)
             {
                 if(module == deferredDmrDecodeEventProvider)
@@ -2670,6 +2676,16 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
      * same decoder for conventional and trunked operation, so their monitor can run before trunking is observed;
      * {@link ChannelActivityModel} only attaches those measurements after an actual trunked site session exists.
      */
+    /**
+     * Indicates whether node health reports measure a channel: a standard (not traffic) channel this node receives
+     * itself.  A channel mirrored from another node is that node's to report.
+     */
+    static boolean supportsNodeHealth(Channel channel)
+    {
+        return channel != null && channel.isStandardChannel() &&
+            !(channel.getSourceConfiguration() instanceof SourceConfigRemote);
+    }
+
     static boolean supportsControlChannelQuality(Channel channel)
     {
         DecoderType decoderType = channel != null && channel.getDecodeConfiguration() != null ?

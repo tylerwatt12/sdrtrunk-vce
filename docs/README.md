@@ -19,6 +19,7 @@ check the notes for the version you install.
 | Transfer aliases or import a RadioReference CSV | [Alias CSV import and export](alias-import-export.md) |
 | Understand names transmitted by radios | [Talker aliases](talker-alias-implementation.md) |
 | Explore P25 systems, talkgroups, and radios in 3D | [P25 Visualizer](network-visualizer.md) |
+| Understand the health reports sent with Broadcastify Calls, or turn them off | [Broadcastify Calls health reports](broadcastify-health-reports.md) |
 
 For a problem with receiving or playback, include your VCE version, what happened, and the steps that led to it in a
 [bug report](https://github.com/tylerwatt12/sdrtrunk-vce/issues). Screenshots and relevant log excerpts can help; remove

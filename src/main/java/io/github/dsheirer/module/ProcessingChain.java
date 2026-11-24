@@ -27,6 +27,7 @@ import io.github.dsheirer.audio.squelch.ISquelchStateListener;
 import io.github.dsheirer.audio.squelch.ISquelchStateProvider;
 import io.github.dsheirer.audio.squelch.SquelchStateEvent;
 import io.github.dsheirer.channel.quality.ControlChannelQualityMonitor;
+import io.github.dsheirer.health.HealthMonitor;
 import io.github.dsheirer.channel.state.AbstractChannelState;
 import io.github.dsheirer.channel.state.DecoderState;
 import io.github.dsheirer.channel.state.DecoderStateEvent;
@@ -305,7 +306,8 @@ public class ProcessingChain implements Listener<ChannelEvent>
     {
         for(Module module: getModules())
         {
-            if(module instanceof ControlChannelQualityMonitor || module instanceof ChannelRotationMonitor)
+            if(module instanceof ControlChannelQualityMonitor || module instanceof ChannelRotationMonitor ||
+                module instanceof HealthMonitor)
             {
                 removeStopAndDispose(module);
             }

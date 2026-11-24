@@ -219,6 +219,7 @@ public class BroadcastifyCallSiteConfiguration extends BroadcastifyCallConfigura
         copy.setSystemID(getSystemID());
         copy.setAliasListId(getAliasListId());
         copy.setChannelConfigurationId(getChannelConfigurationId());
+        copy.setHealthReports(isHealthReports());
         return copy;
     }
     @Override

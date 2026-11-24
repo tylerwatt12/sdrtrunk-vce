@@ -13,7 +13,8 @@ const providers = [
   { id: 'BROADCASTIFY_CALL', label: 'Broadcastify Call', connection_test: true,
     fields: [...common, maximumAge, apiKey, field('system_id', 'System ID', 'number', { maximum: 2147483647 }),
       field('test_enabled', 'Send periodic keep-alive', 'boolean', { advanced: true }),
-      field('test_interval', 'Keep-alive interval (minutes)', 'number', { minimum: 1, maximum: 1440, advanced: true })] },
+      field('test_interval', 'Keep-alive interval (minutes)', 'number', { minimum: 1, maximum: 1440, advanced: true }),
+      field('health_reports', 'Send node health reports', 'boolean')] },
   { id: 'BROADCASTIFY', label: 'Broadcastify Feed', connection_test: true,
     fields: [...common, maximumAge, field('port', 'Port', 'number', { minimum: 1, maximum: 65535 }),
       field('password', 'Password', 'password'), field('delay', 'Delivery delay (milliseconds)', 'number',
@@ -82,7 +83,7 @@ export function createStreamingGuideData({ signal } = {}) {
       const provider = local.slice('/templates/'.length);
       if (providers.some(item => item.id === provider)) return { provider, configured_credentials: [],
         settings: { name: '', enabled: false, host: '', maximum_recording_age: 600000,
-          system_id: 0, test_enabled: false, test_interval: 15, mode: 'CALLS_AND_METADATA' } };
+          system_id: 0, test_enabled: false, test_interval: 15, health_reports: true, mode: 'CALLS_AND_METADATA' } };
     }
     const id = local?.split('/')[1];
     const destination = destinations.find(row => row.configuration_id === id);
@@ -90,7 +91,8 @@ export function createStreamingGuideData({ signal } = {}) {
       edit_revision: 'e'.repeat(64), destination: { provider: destination.provider,
         configured_credentials: ['api_key'], settings: { name: destination.name, enabled: destination.enabled,
           host: 'https://example.invalid', maximum_recording_age: 600000, system_id: 42,
-          test_enabled: true, test_interval: 15, mode: 'CALLS_AND_METADATA', ignore_certificate_errors: false } },
+          test_enabled: true, test_interval: 15, health_reports: true, mode: 'CALLS_AND_METADATA',
+          ignore_certificate_errors: false } },
       status: copy(destination), references: { aliases: 2, alias_lists: [] }
     };
     if (method === 'GET' && destination && local === `/${id}/aliases`) {
