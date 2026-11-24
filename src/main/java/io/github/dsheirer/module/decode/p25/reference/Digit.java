@@ -61,14 +61,18 @@ public enum Digit
         {
             Digit d = Digit.fromValue( value );
 
-            if( d == Digit.D15 )
+            if( escape )
+            {
+                //TIA-102.AABC-E Table 2.3.13-1: a completed escape/null pair emits no digit.
+                if( d != Digit.D15 )
+                {
+                    sb.append( d.getEscapedValue() );
+                }
+                escape = false;
+            }
+            else if( d == Digit.D15 )
             {
                 escape = true;
-            }
-            else if( escape )
-            {
-                sb.append( d.getEscapedValue() );
-                escape = false;
             }
             else
             {
