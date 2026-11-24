@@ -32,6 +32,9 @@ import io.github.dsheirer.controller.channel.event.ChannelStartProcessingRequest
 import io.github.dsheirer.controller.channel.event.ChannelStopProcessingRequest;
 import io.github.dsheirer.controller.channel.event.PostChannelModuleEventRequest;
 import io.github.dsheirer.controller.channel.event.PreloadDataContent;
+import io.github.dsheirer.health.HealthMonitor;
+import io.github.dsheirer.health.HealthRegistry;
+import io.github.dsheirer.sample.SampleType;
 import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierClass;
@@ -697,6 +700,10 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
     public void receive(ChannelEvent event)
     {
         Channel channel = event.getChannel();
+        if(event.getEvent() == ChannelEvent.Event.NOTIFICATION_DELETE && channel != null && channel.isStandardChannel())
+        {
+            HealthRegistry.getInstance().retire(channel);
+        }
         // Traffic-manager teardown can ask to disable its configured parent again. The original mapping is already
         // claimed: that nested notification must neither cancel USB recovery nor stop a concurrent replacement.
         if(event.getEvent() == ChannelEvent.Event.REQUEST_DISABLE && mStoppingChannels.get().contains(channel)) return;
@@ -1690,6 +1697,11 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
             {
                 modules.add(new ControlChannelQualityMonitor(channel, source.getFrequency(),
                     this::receiveControlChannelQuality));
+            }
+
+            if(supportsNodeHealth(channel))
+            {
+                modules.add(new HealthMonitor(channel, source.getSampleType() == SampleType.COMPLEX));
             }
 
             for(Module module: modules)
@@ -2816,6 +2828,16 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
         {
             listener.receive(snapshot);
         }
+    }
+
+    /**
+     * Indicates whether node health reports measure a channel: a standard (not traffic) channel this node receives
+     * itself.  A channel mirrored from another node is that node's to report.
+     */
+    static boolean supportsNodeHealth(Channel channel)
+    {
+        return channel != null && channel.isStandardChannel() &&
+            !(channel.getSourceConfiguration() instanceof SourceConfigRemote);
     }
 
     /**

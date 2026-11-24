@@ -20,6 +20,8 @@
 package io.github.dsheirer.module.decode.event;
 
 import io.github.dsheirer.channel.IChannelDescriptor;
+import io.github.dsheirer.health.CallOutcome;
+import io.github.dsheirer.health.CallTally;
 import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierCollection;
@@ -42,6 +44,8 @@ public abstract class ChannelEventTracker<T extends DecodeEvent>
     private boolean mStarted = false;
     private boolean mComplete = false;
     private final T mEvent;
+    private CallOutcome mCallOutcome;
+    private CallTally.Pending mPendingCall;
 
     /**
      * Constructs an instance
@@ -263,6 +267,7 @@ public abstract class ChannelEventTracker<T extends DecodeEvent>
      */
     public boolean updateDurationControl(long timestamp)
     {
+        if(mPendingCall != null) mPendingCall.observe(null, timestamp);
         if(!isStarted())
         {
             getEvent().update(timestamp);
@@ -282,6 +287,7 @@ public abstract class ChannelEventTracker<T extends DecodeEvent>
      */
     public void updateDurationTraffic(long timestamp)
     {
+        if(mPendingCall != null) mPendingCall.observe(null, timestamp);
         if(!isComplete())
         {
             mStarted = true;
@@ -306,6 +312,7 @@ public abstract class ChannelEventTracker<T extends DecodeEvent>
         if(!isComplete())
         {
             mComplete = true;
+            finishCall();
             getEvent().end(timestamp);
             return true;
         }
@@ -371,5 +378,39 @@ public abstract class ChannelEventTracker<T extends DecodeEvent>
         {
             getEvent().setChannelDescriptor(channelDescriptor);
         }
+    }
+
+    /** Retains a tentative outcome; only the final outcome reaches the monotonic report counters. */
+    public void tally(CallTally tally, CallOutcome outcome)
+    {
+        if(tally != null && outcome != null)
+        {
+            mCallOutcome = outcome;
+            if(mPendingCall == null)
+            {
+                mPendingCall = tally.pending(outcome, Math.max(getEvent().getTimeStart(), getEvent().getTimeEnd()), STALE_EVENT_THRESHOLD_MS);
+            }
+            else
+            {
+                mPendingCall.observe(outcome, Math.max(getEvent().getTimeStart(), getEvent().getTimeEnd()));
+            }
+        }
+    }
+
+    /** Completes health accounting once; repeated teardown/removal cannot count the call again. */
+    public void finishCall()
+    {
+        if(mPendingCall != null)
+        {
+            mPendingCall.finish();
+        }
+    }
+
+    /**
+     * What became of this call so far, for node health reports, or null when it isn't counted.
+     */
+    public CallOutcome getCallOutcome()
+    {
+        return mCallOutcome;
     }
 }

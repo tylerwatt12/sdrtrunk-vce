@@ -40,6 +40,7 @@ import io.github.dsheirer.controller.channel.ChannelEvent;
 import io.github.dsheirer.controller.channel.DecodeEventSource;
 import io.github.dsheirer.controller.channel.IChannelEventListener;
 import io.github.dsheirer.controller.channel.IChannelEventProvider;
+import io.github.dsheirer.health.HealthMonitor;
 import io.github.dsheirer.identifier.IdentifierUpdateListener;
 import io.github.dsheirer.identifier.IdentifierUpdateNotification;
 import io.github.dsheirer.identifier.IdentifierUpdateProvider;
@@ -305,7 +306,8 @@ public class ProcessingChain implements Listener<ChannelEvent>
     {
         for(Module module: getModules())
         {
-            if(module instanceof ControlChannelQualityMonitor || module instanceof ChannelRotationMonitor)
+            if(module instanceof ControlChannelQualityMonitor || module instanceof ChannelRotationMonitor ||
+                module instanceof HealthMonitor)
             {
                 removeStopAndDispose(module);
             }

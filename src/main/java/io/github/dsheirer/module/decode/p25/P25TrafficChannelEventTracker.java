@@ -20,6 +20,8 @@
 package io.github.dsheirer.module.decode.p25;
 
 import io.github.dsheirer.channel.IChannelDescriptor;
+import io.github.dsheirer.health.CallOutcome;
+import io.github.dsheirer.health.CallTally;
 import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierObservation;
@@ -75,6 +77,8 @@ public class P25TrafficChannelEventTracker
     private boolean mFirstSnapshotPublished;
     private boolean mCompletionPublished;
     private boolean mActivityEncryptionConflicted;
+    private CallOutcome mCallOutcome;
+    private CallTally.Pending mPendingCall;
 
     /**
      * Constructs an instance
@@ -83,6 +87,40 @@ public class P25TrafficChannelEventTracker
     public P25TrafficChannelEventTracker(P25ChannelGrantEvent event)
     {
         this(event, null);
+    }
+
+    /** Retains a tentative outcome; only the final outcome reaches the monotonic report counters. */
+    public void tally(CallTally tally, CallOutcome outcome)
+    {
+        if(tally != null && outcome != null)
+        {
+            mCallOutcome = outcome;
+            if(mPendingCall == null)
+            {
+                mPendingCall = tally.pending(outcome, mLastObservationTimestamp, CONTROL_CONTINUATION_THRESHOLD_MS);
+            }
+            else
+            {
+                mPendingCall.observe(outcome, mLastObservationTimestamp);
+            }
+        }
+    }
+
+    /** Completes health accounting once; repeated teardown/removal cannot count the call again. */
+    public void finishCall()
+    {
+        if(mPendingCall != null)
+        {
+            mPendingCall.finish();
+        }
+    }
+
+    /**
+     * What became of this call so far, for node health reports, or null when it isn't counted.
+     */
+    public CallOutcome getCallOutcome()
+    {
+        return mCallOutcome;
     }
 
     /**
@@ -139,7 +177,7 @@ public class P25TrafficChannelEventTracker
     void observeVoice() { mVoiceObserved = true; }
 
     /** Map retirement expires attribution without inventing a new RF end timestamp. */
-    void completeAttribution() { mCallAttribution.complete(); }
+    void completeAttribution() { finishCall(); mCallAttribution.complete(); }
 
     /** Captured once before the tracker is published to asynchronous observers. */
     void setCallStart(P25CallStartEvent callStart)
@@ -511,6 +549,7 @@ public class P25TrafficChannelEventTracker
 
     private void observe(long timestamp)
     {
+        if(mPendingCall != null) mPendingCall.observe(null, timestamp);
         if(timestamp > mLastObservationTimestamp)
         {
             mLastObservationTimestamp = timestamp;

@@ -38,6 +38,7 @@ public class BroadcastifyCallConfiguration extends BroadcastConfiguration
     private String mApiKey = null;
     private boolean mTestEnabled = false;
     private int mTestInterval = 15;
+    private boolean mHealthReports = true;
 
     /**
      * Constructor for faster jackson
@@ -142,11 +143,56 @@ public class BroadcastifyCallConfiguration extends BroadcastConfiguration
         }
     }
 
+    /**
+     * Sends Broadcastify periodic reception and call totals, with configured site/channel/tuner names, site identity
+     * and frequencies. On by default, including for settings saved before it existed.
+     */
+    public boolean isHealthReports()
+    {
+        return mHealthReports;
+    }
+
+    public void setHealthReports(boolean enabled)
+    {
+        if(mHealthReports != enabled)
+        {
+            mHealthReports = enabled;
+            notifyChanged();
+        }
+    }
+
+    /**
+     * Where node health reports go: the upload server's call-health beside its call-upload, or null when the upload
+     * server's address doesn't end in call-upload.
+     */
+    public static String getHealthUrl(String uploadHost)
+    {
+        if(uploadHost == null)
+        {
+            return null;
+        }
+
+        String host = uploadHost.trim();
+
+        while(host.endsWith("/"))
+        {
+            host = host.substring(0, host.length() - 1);
+        }
+
+        if(host.endsWith("/call-upload"))
+        {
+            return host.substring(0, host.length() - "call-upload".length()) + "call-health";
+        }
+
+        return null;
+    }
+
     @Override
     public BroadcastConfiguration copyOf()
     {
         BroadcastifyCallConfiguration copy = new BroadcastifyCallConfiguration();
         copy.setSystemID(getSystemID());
+        copy.setHealthReports(isHealthReports());
         return copy;
     }
     @Override

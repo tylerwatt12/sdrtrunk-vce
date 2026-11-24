@@ -205,6 +205,7 @@ public final class StreamingConfigurationCodec
             fields.add(number("system_id", "System ID", "SystemID", 0, Integer.MAX_VALUE, int.class, false));
             fields.add(flag("test_enabled", "Send periodic keep-alive", "isTestEnabled", "TestEnabled", true));
             fields.add(number("test_interval", "Keep-alive interval (minutes)", "TestInterval", 1, 1440, int.class, true));
+            fields.add(flag("health_reports", "Send node health reports", "isHealthReports", "HealthReports", false));
         }
         if(configuration instanceof BroadcastifyCallSiteConfiguration)
         {
