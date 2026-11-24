@@ -1,7 +1,7 @@
 'use strict';
 
 import { systemName, homeSystemName, systemIdentity } from '../../core/system-labels.js?v=2';
-import { formatP25RadioIdentifier, p25IdentityFacts, p25IdentifierText, p25ServingSystemKey } from '../../core/radio-labels.js?v=7';
+import { formatP25RadioIdentifier, p25IdentityFacts, p25IdentifierText, p25ServingSystemKey } from '../../core/radio-labels.js?v=8';
 
 const P25_HISTORY_ACTIONS = Object.freeze([
   'JOIN', 'LOGOUT', 'DENIAL', 'EMERGENCY', 'CHECK', 'PAGE', 'BUSY', 'QUEUED',

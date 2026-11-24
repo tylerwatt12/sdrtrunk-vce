@@ -1,7 +1,7 @@
 'use strict';
 
 import { systemLabel, systemName, homeSystemName, systemIdentity } from '../core/system-labels.js?v=2';
-import { formatP25RadioIdentifier, parseP25RadioIdentifier, p25ServingSystemKey } from '../core/radio-labels.js?v=7';
+import { formatP25RadioIdentifier, parseP25RadioIdentifier, p25ServingSystemKey } from '../core/radio-labels.js?v=8';
 import { createTableOverflow } from '../core/table-overflow.js?v=2';
 
 const TILE_SIZE = 256;

@@ -77,7 +77,7 @@ class Element {
 async function main() {
   const { formatSourceName } = await import(pathToFileURL(path.join(path.dirname(applicationPath),
     'core/source-names.js')).href);
-  const { p25ServingSystemKey } = await import(pathToFileURL(path.join(path.dirname(applicationPath),
+  const { p25ServingSystemKey, p25RadioIdentityKnown } = await import(pathToFileURL(path.join(path.dirname(applicationPath),
     'core/radio-labels.js')).href);
   const { createFormWorkflow } = await import(pathToFileURL(path.join(path.dirname(applicationPath),
     'core/form-workflows.js')).href);
@@ -86,12 +86,13 @@ async function main() {
     activeUserPreferences: () => ({ presentation: { source_name_display: mode } }),
     formatSourceName,
     p25ServingSystemKey,
+    p25RadioIdentityKnown,
     scannerDetailMode: 'normal',
     scannerMatchedScanLists: () => '',
     liveIdentityActionLink: (row, kind, text) => ({ row, kind, text })
   };
   vm.createContext(context);
-  vm.runInContext(['sourceNameDisplayMode', 'liveAliasReferences', 'liveSourceName',
+  vm.runInContext(['protocol', 'protocolFamily', 'isP25', 'sourceNameDisplayMode', 'liveAliasReferences', 'liveSourceName',
     'liveAliasValue', 'liveIdentityRenderKey', 'scannerSourceAlias', 'scannerCallRenderKey']
     .map(functionSource).join('\n'), context);
 
@@ -112,6 +113,13 @@ async function main() {
     assert.equal(context.scannerSourceAlias(null), '');
   }
   mode = 'both';
+  const unknownRadio = { protocol: 'P25', source_id: 0,
+    source_alias: 'PREVIOUS CONFIGURED NAME', talker_alias: 'PREVIOUS OTA NAME' };
+  assert.equal(context.liveSourceName(unknownRadio), '');
+  assert.equal(context.scannerSourceAlias(unknownRadio), '');
+  assert.equal(context.liveSourceName({ ...unknownRadio, source_canonical_identity: {
+    wacn: 0xABCDE, system_id: 0x123, subscriber_id: 501 } }),
+  'PREVIOUS CONFIGURED NAME · PREVIOUS OTA NAME', 'Known full identity remains usable with a local zero.');
   assert.equal(context.scannerSourceAlias({ source_alias: 'Engine 4', talker_alias: ' engine 4 ' }), 'Engine 4');
   const multipleAliases = { ...call, source_aliases: [
     { alias_id: 1, alias_list_id: 2, name: 'Engine 4' },

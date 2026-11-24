@@ -2,7 +2,7 @@ import { createAudioCommand, createAudioTransport, createAudioTiming, createAudi
 import { systemLabel, systemName, systemIdentity, homeSystemName } from './system-labels.js?v=2';
 import { formatSourceName } from './source-names.js?v=1';
 import { formatHexDecimal, formatVoiceQuality } from './call-value-format.js?v=1';
-import { p25IdentityFacts, p25IdentifierText, p25ServingSystemKey } from './radio-labels.js?v=7';
+import { p25IdentityFacts, p25IdentifierText, p25RadioIdentityKnown, p25ServingSystemKey } from './radio-labels.js?v=8';
 import { callAudioDetailGroups } from './call-audio-details.js?v=7';
 import { createCallDisplayHangtimeField } from './call-display-settings.js?v=2';
 import { createActionWorkflow } from './action-workflows.js?v=1';
@@ -100,8 +100,10 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     ({ TALKGROUP: 'TGID', PATCH_GROUP: 'Patch', RADIO: 'Radio' })[String(form || '').toUpperCase()] || fallback;
   const sourceId = (call) => {
     const value = call?.source_id ?? call?.radio_id;
-    return value === undefined || value === null || value === '' ? value : radioIdentifier(call, value, 'source');
+    return radioIdentifier(call, value, 'source');
   };
+  const unknownSource = call => /^(P25|APCO25)/i.test(String(call?.protocol || call?.decoder || '')) &&
+    !p25RadioIdentityKnown(call, call?.source_id ?? call?.radio_id, 'source');
   const targetId = (call) => radioIdentifier(call, call?.target_id ?? call?.destination_radio_id ??
     call?.talkgroup_id ?? call?.group_id, 'target');
   const title = (call) => {
@@ -135,6 +137,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     }
   };
   const sourceName = (call) => {
+    if (unknownSource(call)) return 'Unknown radio';
     const name = formatSourceName(call?.source_alias || call?.radio_alias,
       call?.source_ota_alias || call?.source_ota_ta || call?.talker_alias || call?.ota_alias, getSourceNameDisplay());
     const id = sourceId(call);
@@ -142,6 +145,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   };
   const sourceSummary = (call) => {
     if (!call) return '';
+    if (unknownSource(call)) return 'Unknown radio';
     const alias = call.source_alias || call.radio_alias;
     const id = sourceId(call);
     const ota = call.source_ota_alias || call.source_ota_ta || call.talker_alias || call.ota_alias;
@@ -783,10 +787,12 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   function renderLiveDetails() {
     const displayed = current();
     const call = displayed || {};
+    const sourceUnknown = unknownSource(call);
     const options = { empty: !displayed, includeEmpty: true };
     panelHost.append(factList([
       ['Target', title(call), call.target_entity_ref], ['Target ID', targetId(call), call.target_entity_ref],
-      ['Source', sourceName(call), call.source_entity_ref], ['Source ID', sourceId(call), call.source_entity_ref],
+      ['Source', sourceName(call), sourceUnknown ? null : call.source_entity_ref],
+      ['Source ID', sourceId(call), sourceUnknown ? null : call.source_entity_ref],
       ['System', systemLabel(call), call.radio_system_entity_ref], ['Channel', call.channel, call.entity_ref],
       ['Started', date(call)], ['Duration', call.duration_ms !== undefined ? `${Number(call.duration_ms) / 1000}s` : null],
       ['Lists', (liveState.scanLists || []).filter((item) => (call._matchedScanListIds || call.scan_list_ids || [])
@@ -794,8 +800,9 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     ], options));
     group('Identity & aliases', [
       ['Target type', call.target_form], ['Target description', call.target_description], ['Target group', call.target_group],
-      ['Source type', call.source_form], ['Source description', call.source_description], ['Source group', call.source_group],
-      ['Talker Alias', call.talker_alias], ['Alias List', call.alias_list || call.alias_list_name],
+      ['Source type', call.source_form], ['Source description', sourceUnknown ? null : call.source_description],
+      ['Source group', sourceUnknown ? null : call.source_group],
+      ['Talker Alias', sourceUnknown ? null : call.talker_alias], ['Alias List', call.alias_list || call.alias_list_name],
       ['Playback target', call.playback_target?.label], ['Patch group', call.patch_group_id],
       ['Patch members', patchMembers(call)]
     ], options);

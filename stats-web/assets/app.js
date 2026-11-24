@@ -13,7 +13,7 @@ import { Controller as PageTitleController } from './core/page-title.js?v=3';
 import { href as entityRefHref } from './core/entity-ref.js?v=1';
 import { directListenEntryTarget } from './core/direct-listen-entry.js?v=1';
 import * as systemLabels from './core/system-labels.js?v=2';
-import { formatP25RadioIdentifier, formatP25GroupIdentifier, p25IdentityFacts, p25IdentifierText, formatP25QualifiedIdentifierText, p25ServingSystemKey } from './core/radio-labels.js?v=7';
+import { formatP25RadioIdentifier, formatP25GroupIdentifier, p25IdentityFacts, p25IdentifierText, p25RadioIdentityKnown, formatP25QualifiedIdentifierText, p25ServingSystemKey } from './core/radio-labels.js?v=8';
 import * as pageLifecycle from './core/page-lifecycle.js';
 import { installIconHints, setIconHintDetails } from './core/icon-hints.js?v=9';
 import { createFormWorkflow } from './core/form-workflows.js?v=6';
@@ -42,7 +42,7 @@ import {
 import { radioReferenceLocalityCache } from './features/radioreference-locality-cache.js?v=1';
 import { openRadioReferenceConnect, radioReferencePremiumSignup } from './features/radioreference-connect.js?v=3';
 import { createActivityCallPlayback } from './features/activity-call-playback.js?v=2';
-import { createRecordingsFeature } from './features/recordings.js?v=81';
+import { createRecordingsFeature } from './features/recordings.js?v=82';
 import { spectrumSearchIdentityFacts, spectrumSearchMapDraft, spectrumSearchProtocolLabel } from './features/spectrum-search-data.js?v=1';
 import { createDiscoveryRadioReferenceContext, createDiscoveryRadioReferenceWait, discoveryRadioReferencePending, discoverySnapshotIsCurrent, discoveryCleanupAlreadyClosed, createDiscoveryCompletion, createDiscoveryAliasListChoice, discoveryAliasImportMatch, discoveryAliasImportTargets, discoveryRadioReferenceResult, discoveryRadioReferenceSystemUrl, ALIAS_LIST_NAME_MAX_LENGTH, discoveryAliasListName, discoveryAliasImportResults, discoveryAliasImportForSelection, importDiscoveryAliases } from './features/discovery-radioreference.js?v=19';
 import { requestChannelAction, requestChannelAdminMutation } from './core/channel-actions.js?v=2';
@@ -51,12 +51,12 @@ import { createSpectrumDisplayPreferences } from './core/spectrum-display-prefer
 import { createSpectrumAutoRange, spectrumTraceValue } from './features/spectrum-auto-range.js?v=4';
 import { createChannelSignalAutoRange } from './features/channel-signal-auto-range.js?v=2';
 import { smoothSpectrumValues } from './features/spectrum-smoothing.js?v=1';
-import { createAudioDock } from './core/audio-dock.js?v=50';
+import { createAudioDock } from './core/audio-dock.js?v=51';
 import { createAudioCommand, createAudioTransport, createAudioTiming, createAudioVolume, audioPlaybackAction } from './core/audio-controls.js?v=2';
 import { formatPagingToneSummary } from './core/call-audio-details.js?v=7';
 import { createRemoteSupportWorkspace, remoteSupportDescription } from './features/remote-support.js?v=6';
 import { mountAccessWireframe } from './features/access-wireframe.js?v=2';
-import { WebCallPlayer } from './web-call-player.js?v=28';
+import { WebCallPlayer } from './web-call-player.js?v=29';
 
 let route = new URLSearchParams(window.location.search);
 const content = document.getElementById('content');
@@ -1775,7 +1775,8 @@ function radioIdentifierText(row, value, prefix = radioIdentityPrefix(row, value
   if (!isP25(row)) return identityNumber(row, value);
   const facts = p25IdentityFacts(row, prefix, 'radio');
   return p25IdentifierText(row, value, { prefix, kind: 'radio',
-    homeSystemName: facts && systemLabels.homeSystemName(row, prefix, facts.homeSystemKey) }) || identityNumber(row, value);
+    homeSystemName: facts && systemLabels.homeSystemName(row, prefix, facts.homeSystemKey) }) ||
+    (Number(value) === 0 ? '' : identityNumber(row, value));
 }
 
 function groupIdentityPrefix(row, value) {
@@ -8516,9 +8517,9 @@ async function prepareWorkspaceGuideSample(view, section, context) {
     const mapTour = view === 'map';
     const visualizerTour = view === 'network-visualizer';
     const [feature, presentation] = await Promise.all(mapTour ? [
-      import('./features/listen-map.js?v=16'), import('./guides/map-presentation.js?v=1')
+      import('./features/listen-map.js?v=17'), import('./guides/map-presentation.js?v=1')
     ] : visualizerTour ? [
-      import('./features/network-visualizer/index.js?v=73'), import('./guides/network-visualizer-presentation.js?v=2')
+      import('./features/network-visualizer/index.js?v=74'), import('./guides/network-visualizer-presentation.js?v=2')
     ] : topics ? [
       import('./features/alerts.js?v=25'), import('./guides/topics-presentation.js?v=1')
     ] : scanner ? [
@@ -12545,6 +12546,7 @@ function identifierTypeLabel(form) {
 }
 
 function scannerSourceAlias(call) {
+  if (isP25(call) && !p25RadioIdentityKnown(call, call?.source_id, 'source')) return '';
   return formatSourceName(call?.source_alias, call?.talker_alias, sourceNameDisplayMode());
 }
 
@@ -12789,11 +12791,12 @@ function renderScannerCall(host, state, channelMetadata, options = {}) {
     intro.append(wave);
   }
 
+  const sourceUnknown = isP25(call) && !p25RadioIdentityKnown(call, call.source_id, 'source');
   const source = node('section', 'scanner-source-row ui-listening-source ui-listening-source-emphasized');
   source.setAttribute('aria-label', 'Transmitting radio');
   const sourceFields = node('dl', 'ui-fact-list ui-fact-list-grid scanner-source-fields');
   const sourceAlias = scannerSourceAlias(call);
-  const sourceId = radioIdentifierText(call, call.source_id, 'source');
+  const sourceId = sourceUnknown ? 'Unknown radio' : radioIdentifierText(call, call.source_id, 'source');
   sourceFields.append(scannerField('Transmitting', sourceAlias || sourceId || '—', 0,
     open(sourceAlias ? 'source-alias' : 'source'), true, detailMode));
   const sourceEdit = !idle && scannerAliasEditButton('source', aliasContexts?.source, options.onAliasSaved);
@@ -12804,7 +12807,7 @@ function renderScannerCall(host, state, channelMetadata, options = {}) {
   }
   const groups = node('div', 'scanner-source-groups');
   if (detailLevel >= SCANNER_DETAIL_LEVELS.normal) {
-    [['Target group', call.target_group], ['Source group', call.source_group]].forEach(([label, value]) => {
+    [['Target group', call.target_group], ['Source group', sourceUnknown ? '' : call.source_group]].forEach(([label, value]) => {
       if (!value) return;
       const group = node('span', 'ui-pill scanner-group-value', value);
       group.setAttribute('aria-label', `${label}: ${value}`);
@@ -12824,8 +12827,8 @@ function renderScannerCall(host, state, channelMetadata, options = {}) {
         call.target_group, open('target-alias'), open('target'), detailMode);
       if (target) participants.append(target);
     }
-    const sourceDetails = scannerParticipant('Source', sourceAlias, sourceId, call.source_description,
-      call.source_group, open('source-alias'), open('source'), detailMode);
+    const sourceDetails = scannerParticipant('Source', sourceAlias, sourceId, sourceUnknown ? '' : call.source_description,
+      sourceUnknown ? '' : call.source_group, open('source-alias'), open('source'), detailMode);
     if (sourceDetails) participants.append(sourceDetails);
   }
   const networkSiteIdentity = scannerNetworkSiteIdentity(call);
@@ -14523,7 +14526,8 @@ function liveEventRadioRow(event, identifier) {
   if (String(identifier?.form || '').toUpperCase() !== 'RADIO') return null;
   const row = { protocol: identifier.protocol || event?.protocol,
     radio_system_key: p25ServingSystemKey(event), canonical_identity: identifier.canonical_identity,
-    observed_working_id: identifier.observed_working_id, home_system_name: identifier.home_system_name,
+    observed_working_id: identifier.observed_working_id, observed_local_id: identifier.observed_local_id,
+    home_system_name: identifier.home_system_name,
     home_system: identifier.home_system, home_system_name_source: identifier.home_system_name_source,
     home_catalog_name: identifier.catalog_name };
   return p25CanonicalSubscriber(row) ? row : null;
@@ -14551,6 +14555,9 @@ function liveEventIdentifierText(event, identifier) {
   const row = liveEventRadioRow(event, identifier);
   if (row) return radioIdentifierText(row, row.canonical_identity.subscriber_id);
   const form = String(identifier?.form || '').toUpperCase();
+  if (form === 'RADIO' && Number(identifier.text) === 0 &&
+      isP25({ protocol: identifier.protocol || event?.protocol }) &&
+      !p25RadioIdentityKnown(identifier, identifier.text)) return 'Unknown radio';
   const groupFacts = ['TALKGROUP', 'PATCH_GROUP'].includes(form) && p25IdentityFacts(identifier, '', 'talkgroup');
   const groupText = groupFacts ? groupIdentifierText({ ...identifier, protocol: 'P25',
     serving_system_key: p25ServingSystemKey(event), home_catalog_name: identifier.catalog_name },
@@ -19413,6 +19420,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   }
 
   function activityAliasLabel(row, prefix) {
+    if (prefix === 'source' && isP25(row) && !p25RadioIdentityKnown(row, row.source_id, prefix)) return '';
     const name = String(row?.[`${prefix}_alias`] || '').trim();
     const description = String(row?.[`${prefix}_alias_description`] || '').trim();
     if (description && name && description !== name) return `${description} (${name})`;
@@ -19470,7 +19478,8 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
     add('Source type', activityValues(rows, (row) => activityTokenLabel(row.source_form)));
     add('Source', activityValues(rows, (row) => radioIdentifierText(row, row.source_id, 'source')));
     add('Source alias', activityValues(rows, (row) => activityAliasLabel(row, 'source')));
-    add('Talker alias', activityValues(rows, (row) => row.talker_alias));
+    add('Talker alias', activityValues(rows, (row) => isP25(row) &&
+      !p25RadioIdentityKnown(row, row.source_id, 'source') ? '' : row.talker_alias));
     const measuredSignal = activityValues(rows, (row) => Number.isFinite(Number(row.signal_dbfs)) ?
       `${Number(row.signal_dbfs).toFixed(1)} dBFS` : '');
     add('Signal', measuredSignal.length ? measuredSignal :
@@ -20240,6 +20249,7 @@ function liveIdentityActionLink(row, kind, label) {
 
 function liveIdentifierAliasValue(row, kind) {
   const value = row?.[`${kind}_id`];
+  if (kind === 'source' && isP25(row) && !p25RadioIdentityKnown(row, value, kind)) return 'Unknown radio';
   const missing = value == null || value === '';
   const text = missing && !isP25(row) ? '' : partyIdentifierText(row, missing ? null : value, kind);
   if (!text) return '';
@@ -20247,6 +20257,7 @@ function liveIdentifierAliasValue(row, kind) {
 }
 
 function liveSourceName(row) {
+  if (isP25(row) && !p25RadioIdentityKnown(row, row?.source_id, 'source')) return '';
   const references = liveAliasReferences(row, 'source');
   const aliases = references.length ? references.map((reference) => reference.name) : row?.source_alias;
   return formatSourceName(aliases, row?.talker_alias, sourceNameDisplayMode());
@@ -20691,7 +20702,8 @@ function liveChannelsSection(onSelectionChange, options = {}) {
         return values.length ? Math.min(...values) : -1;
       } },
     { id: 'source', label: 'Source',
-      render: (row) => liveIdentityValue(row, 'source'), title: (row) => row.source_alias_description || '',
+      render: (row) => liveIdentityValue(row, 'source'), title: (row) => isP25(row) &&
+        !p25RadioIdentityKnown(row, row.source_id, 'source') ? '' : row.source_alias_description || '',
       sortValue: (row) => liveIdentitySortValue(row, 'source'),
       reconcileKey: (row) => liveIdentityRenderKey(row, 'source') },
     { id: 'target', label: 'Target',
@@ -21384,7 +21396,7 @@ function p25VisualizerDependencies(renderContext, overrides = {}) {
 
 async function renderP25Visualizer() {
   const renderContext = captureRenderContext();
-  p25VisualizerModulePromise ||= import('./features/network-visualizer/index.js?v=73');
+  p25VisualizerModulePromise ||= import('./features/network-visualizer/index.js?v=74');
   // The live scene does not wait for an optional label catalog or historical data.
   void loadActivityMessageTypes();
   const visualizerModule = await p25VisualizerModulePromise;
@@ -23951,6 +23963,7 @@ function activityTargetIdentifier(row, linked = true) {
 }
 
 function activitySourceAlias(row, linked = true) {
+  if (isP25(row) && !p25RadioIdentityKnown(row, row.source_radio_id, 'source')) return '';
   const alias = row.source_alias_name || '';
   if (!alias) return '';
   return !linked || specialIdentifierLabel(row, row.source_radio_id, 'radio', 'source') ?
@@ -23958,6 +23971,7 @@ function activitySourceAlias(row, linked = true) {
 }
 
 function activitySourceTalkerAlias(row, linked = true) {
+  if (isP25(row) && !p25RadioIdentityKnown(row, row.source_radio_id, 'source')) return '';
   const alias = String(row.source_talker_alias || '').trim();
   if (!alias) return '';
   return !linked || specialIdentifierLabel(row, row.source_radio_id, 'radio', 'source') ?
@@ -23978,12 +23992,14 @@ function activityTargetAlias(row, linked = true) {
 }
 
 function activityPartyName(row, kind) {
+  if (kind === 'source' && isP25(row) && !p25RadioIdentityKnown(row, row.source_radio_id, kind)) return '';
   return kind === 'source' ? formatSourceName(row.source_alias_name, row.source_talker_alias,
     sourceNameDisplayMode()) : String(row.target_alias_name || '').trim();
 }
 
 function activityPartyIdentifier(row, kind) {
   const value = kind === 'source' ? row.source_radio_id : row.target_id;
+  if (kind === 'source' && isP25(row) && !p25RadioIdentityKnown(row, value, kind)) return 'Unknown radio';
   const missing = value == null || value === '';
   if (missing && !isP25(row)) return '';
   return kind === 'source' || activityTargetKind(row) === 'radio' ?
@@ -23993,6 +24009,9 @@ function activityPartyIdentifier(row, kind) {
 
 function activityPartyValue(row, kind) {
   if (kind === 'target' && isAnalogChannel(row)) return '';
+  if (kind === 'source' && isP25(row) && !p25RadioIdentityKnown(row, row.source_radio_id, kind)) {
+    return identitySummaryValue('Unknown radio', '');
+  }
   const identifier = activityPartyIdentifier(row, kind);
   const value = kind === 'source' ? row.source_radio_id : row.target_id;
   const identityKind = kind === 'source' ? 'radio' : activityTargetKind(row);
@@ -32410,7 +32429,7 @@ async function renderAdminWebDiagnosticLog(renderContext) {
 
 async function renderListenMap() {
   const renderContext = captureRenderContext();
-  const { createListenMap } = await import('./features/listen-map.js?v=16');
+  const { createListenMap } = await import('./features/listen-map.js?v=17');
   if (!renderIsCurrent(renderContext)) return;
   const map = createListenMap({
     node, iconGlyph, iconButton, radioSystemLink,

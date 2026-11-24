@@ -33,7 +33,8 @@ function foreignP25System(servingSystemKey, wacn, systemId) {
   return Boolean(serving && (parseInt(serving[1], 16) !== wacn || parseInt(serving[2], 16) !== systemId));
 }
 
-function formatP25RadioIdentifier(identity, { servingSystemKey = '', homeSystemName = '', workingId = null } = {}) {
+function formatP25RadioIdentifier(identity, { servingSystemKey = '', homeSystemName = '', workingId = null,
+  showFullIdentity = false } = {}) {
   const wacn = integer(identity?.wacn, 0, 0xFFFFF);
   const systemId = integer(identity?.system_id, 0, 0xFFF);
   const subscriberId = integer(identity?.subscriber_id, 1, 0xFFFFFC);
@@ -44,7 +45,8 @@ function formatP25RadioIdentifier(identity, { servingSystemKey = '', homeSystemN
   const name = text(homeSystemName);
   const fullIdentity = `${wacn.toString(16).toUpperCase().padStart(5, '0')}.` +
     `${systemId.toString(16).toUpperCase().padStart(3, '0')}.${subscriberId}`;
-  const label = !foreignP25System(servingSystemKey, wacn, systemId) ? String(subscriberId) :
+  const label = showFullIdentity || integer(workingId, 0, 0xFFFFFC) === 0 ? fullIdentity :
+    !foreignP25System(servingSystemKey, wacn, systemId) ? String(subscriberId) :
     name ? `${name} · ${subscriberId}` : fullIdentity;
   return differentWorkingId ? `${label} (Working ID ${observedId})` : label;
 }
@@ -107,13 +109,21 @@ function p25IdentifierText(row, value, { prefix = '', kind = 'radio', homeSystem
   const owner = field('id') ?? field('native_id') ?? field(kind === 'radio' ? 'radio_native_id' : 'group_native_id') ??
     field(kind === 'radio' ? 'radio_id' : 'group_identity_id');
   // A directory row's own identity must never replace a different peer/member passed to a cell renderer.
-  if (value != null && Number(value) !== Number(owner) &&
-      Number(value) !== Number(canonicalId) && Number(value) !== Number(facts.observedId)) return '';
+  if (value != null && ![owner, canonicalId, facts.observedId, field('observed_local_id')]
+    .some(candidate => candidate != null && Number(value) === Number(candidate)) &&
+    !(kind === 'radio' && owner == null && integer(value, 0, 0xFFFFFC) === 0)) return '';
   const name = homeSystemName || field('home_system_name');
   const options = { servingSystemKey: p25ServingSystemKey(row, prefix), homeSystemName: name,
-    workingId: facts.observedId, localId: facts.observedId };
+    workingId: facts.observedId, localId: facts.observedId,
+    showFullIdentity: kind === 'radio' && [value, owner, facts.observedId, field('observed_local_id')]
+      .some(candidate => integer(candidate, 0, 0xFFFFFC) === 0) };
   return kind === 'radio' ? formatP25RadioIdentifier(facts.canonical, options) :
     formatP25GroupIdentifier(facts.canonical, options);
+}
+
+/** A zero/absent local number cannot own a name without a complete home identity. */
+function p25RadioIdentityKnown(row, value, prefix = '') {
+  return Boolean(p25IdentityFacts(row, prefix, 'radio')) || integer(value, 1, 0xFFFFFC) !== null;
 }
 
 // Legacy decoder text is rewritten only when its explicit ISSI/ROAM grammar supplies a complete home tuple.
@@ -145,4 +155,4 @@ function formatP25QualifiedIdentifierText(value, servingSystemKey = '', homeSyst
     });
 }
 
-export { formatP25RadioIdentifier, formatP25GroupIdentifier, p25IdentityFacts, p25IdentifierText, formatP25QualifiedIdentifierText, p25ServingSystemKey, parseP25RadioIdentifier };
+export { formatP25RadioIdentifier, formatP25GroupIdentifier, p25IdentityFacts, p25IdentifierText, p25RadioIdentityKnown, formatP25QualifiedIdentifierText, p25ServingSystemKey, parseP25RadioIdentifier };

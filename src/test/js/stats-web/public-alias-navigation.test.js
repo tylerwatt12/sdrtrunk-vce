@@ -42,6 +42,7 @@ let admin = false;
 const node = (...args) => new Element(...args);
 const context = {
   formatSourceName, sourceNameDisplayMode: () => 'talker_alias',
+  isP25: () => false,
   route, routeFoundation: routes, applicationRoutes: Object.fromEntries(routes.definitions.map(value => [value.id, value])),
   aliasAdminAllowed: () => admin,
   node, anchor: (label, href, className) => Object.assign(node('a', className, label), { href }),

@@ -1,5 +1,5 @@
 import { systemLabel, systemName, homeSystemName } from '../core/system-labels.js?v=2';
-import { formatP25RadioIdentifier, p25IdentityFacts, p25IdentifierText, p25ServingSystemKey } from '../core/radio-labels.js?v=7';
+import { formatP25RadioIdentifier, p25IdentityFacts, p25IdentifierText, p25RadioIdentityKnown, p25ServingSystemKey } from '../core/radio-labels.js?v=8';
 import { formatSourceName } from '../core/source-names.js?v=1';
 import { formatHexDecimal } from '../core/call-value-format.js?v=1';
 import { callAudioDetailGroups } from '../core/call-audio-details.js?v=7';
@@ -293,7 +293,7 @@ function recordingResultConstraints(row, reference, field = '') {
 
 function recordingRadioId(row, prefix, id) {
   if (!/^(?:APCO25|P25)(?:_|$)/i.test(String(row?.protocol || ''))) return id;
-  const identity = {
+  const identity = p25IdentityFacts(row, prefix, 'radio')?.canonical || {
     wacn: row?.[`${prefix}_home_wacn`],
     system_id: row?.[`${prefix}_home_system_id`],
     subscriber_id: row?.[`${prefix}_home_id`]
@@ -307,7 +307,7 @@ function recordingRadioId(row, prefix, id) {
     servingSystemKey: p25ServingSystemKey(row),
     homeSystemName: homeSystemName(row, prefix, homeKey),
     workingId: id
-  }) || id;
+  }) || (prefix === 'source' && Number(id) === 0 ? null : id);
 }
 
 function recordingGroupId(row, prefix, id) {
@@ -351,13 +351,20 @@ function recordingHasTalkgroup(row) {
 function recordingSourceReference(row) {
   if (Number(value(row, 'source_id', 'radio_id')) > 0) return row.source_entity_ref;
   const auxiliary = row?.auxiliary_identifiers?.find(item => item.kind === 'radio' && item.role === 'source');
-  return auxiliary ? { ...auxiliary, kind: 'radio', auxiliary: true } : row.source_entity_ref;
+  return auxiliary ? { ...auxiliary, kind: 'radio', auxiliary: true } :
+    recordingSourceUnknown(row) ? null : row.source_entity_ref;
+}
+
+function recordingSourceUnknown(row) {
+  return /^(P25|APCO25)/i.test(String(row?.protocol || '')) &&
+    !p25RadioIdentityKnown(row, value(row, 'source_id', 'radio_id'), 'source');
 }
 
 function sourceLabel(row, mode) {
   const auxiliary = row?.auxiliary_identifiers?.find(item => item.kind === 'radio' && item.role === 'source');
   if (!(Number(value(row, 'source_id', 'radio_id')) > 0) && auxiliary)
     return [auxiliary.ota_alias || auxiliary.alias, `${protocolLabel(auxiliary.protocol)} ${auxiliary.value}`].filter(Boolean).join(' · ');
+  if (recordingSourceUnknown(row)) return 'Unknown radio';
   const source = value(row, 'source_alias', 'radio_alias');
   const id = recordingRadioId(row, 'source', value(row, 'source_id', 'radio_id'));
   const ota = value(row, 'source_ota_alias', 'source_ota_ta', 'ota_alias', 'talker_alias');
@@ -365,6 +372,7 @@ function sourceLabel(row, mode) {
 }
 
 function sourceBrief(row, mode) {
+  if (recordingSourceUnknown(row)) return sourceLabel(row, mode);
   const id = recordingRadioId(row, 'source', value(row, 'source_id', 'radio_id'));
   return formatSourceName(value(row, 'source_alias', 'radio_alias'),
     value(row, 'source_ota_alias', 'source_ota_ta', 'ota_alias', 'talker_alias'), mode) ||
@@ -1366,12 +1374,13 @@ export function createRecordingsFeature(deps) {
     const group = value(row, 'call_type') === 'PATCH' ? 'Patch' : 'Talkgroup';
     const target = label(row);
     const source = sourceLabel(row, getSourceNameDisplay());
+    const unknownSource = recordingSourceUnknown(row);
     const savedChannel = value(row, 'channel_name', 'analog_channel_name') ||
       (row?.channel_entity_ref ? 'Open channel' : null);
     const groups = [
       ['', [
         ['Target', target, 'target_entity_ref'], ['Source', source, 'source_entity_ref'],
-        ['Latest OTA name', value(row, 'source_ota_alias', 'source_ota_ta', 'ota_alias', 'talker_alias'), 'source_entity_ref'],
+        ['Latest OTA name', unknownSource ? null : value(row, 'source_ota_alias', 'source_ota_ta', 'ota_alias', 'talker_alias'), 'source_entity_ref'],
         ['Radio system', systemLabel(row), 'radio_system_entity_ref'],
         ['Saved channel', savedChannel, 'channel_entity_ref'],
         ['Winning site', winningSite(row), 'site_entity_ref'], ['Also received on', receivedSites(row)],
@@ -1386,9 +1395,9 @@ export function createRecordingsFeature(deps) {
       ]],
       ['Source & target identities', [
         ['Source Radio ID', recordingRadioId(row, 'source', value(row, 'source_id', 'radio_id')), 'source_entity_ref'],
-        ['Source alias', value(row, 'source_alias', 'radio_alias'), 'source_entity_ref'],
-        ['Source group', value(row, 'source_group', 'radio_group')],
-        ['Source description', value(row, 'source_description', 'radio_description')],
+        ['Source alias', unknownSource ? null : value(row, 'source_alias', 'radio_alias'), 'source_entity_ref'],
+        ['Source group', unknownSource ? null : value(row, 'source_group', 'radio_group')],
+        ['Source description', unknownSource ? null : value(row, 'source_description', 'radio_description')],
         [`${group} ID`, recordingGroupId(row, 'target', value(row, 'talkgroup_id', 'group_id')), 'target_entity_ref'],
         [`${group} alias`, value(row, 'talkgroup_alias', 'group_alias', 'talkgroup_name'), 'target_entity_ref'],
         [`${group} group`, value(row, 'talkgroup_group', 'group_group')],
@@ -1563,7 +1572,7 @@ export function createRecordingsFeature(deps) {
       add('target-radio', 'Destination radio', label(call), call.target_entity_ref, 'target', value(call, 'destination_radio_description'));
     }
     add('radio', 'Source radio', sourceLabel(call, getSourceNameDisplay()), recordingSourceReference(call), 'source',
-      homeSystemName(call, 'source') || value(call, 'source_description', 'radio_description'));
+      recordingSourceUnknown(call) ? '' : homeSystemName(call, 'source') || value(call, 'source_description', 'radio_description'));
     add('system', 'System', systemLabel(call), call.radio_system_entity_ref, 'system');
     add('channel', 'Channel', value(call, 'channel_name', 'analog_channel_name'), call.channel_entity_ref, 'channel', frequency(call));
     const site = call.audio_from || call;

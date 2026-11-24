@@ -11,7 +11,7 @@ import {
   p25ActionCount,
   p25TopTalkgroups,
   mostActiveP25System
-} from './history.js?v=23';
+} from './history.js?v=24';
 import { createP25ActivityFeed } from './live.js?v=6';
 import { createP25CameraCoordinator } from './camera.js?v=5';
 import { createP25Renderer } from './renderer.js?v=19';

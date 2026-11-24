@@ -67,6 +67,7 @@ function checkApplicationPresentation({ summarizeBsi, bsiObservationFreshness })
     viewport: { startHz: 850_000_000, endHz: 854_000_000 },
     channelTagSet: (tags) => new Set(tags || []),
     isAnalogChannel: () => false,
+    isP25: () => false,
     partyIdentifierText: () => '',
     radioIdentifierText: () => '',
     decoderLabel: (decoder) => decoder || ''

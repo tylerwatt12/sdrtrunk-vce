@@ -7,11 +7,26 @@ const { pathToFileURL } = require('node:url');
 async function main() {
   const modulePath = path.resolve(process.argv[2] ||
     path.resolve(__dirname, '../../../../stats-web/assets/core/radio-labels.js'));
-  const { formatP25RadioIdentifier, formatP25GroupIdentifier, p25IdentityFacts, p25IdentifierText, formatP25QualifiedIdentifierText, p25ServingSystemKey, parseP25RadioIdentifier } =
+  const { formatP25RadioIdentifier, formatP25GroupIdentifier, p25IdentityFacts, p25IdentifierText, p25RadioIdentityKnown, formatP25QualifiedIdentifierText, p25ServingSystemKey, parseP25RadioIdentifier } =
     await import(pathToFileURL(modulePath).href);
   const home = { wacn: 0xBEE00, system_id: 0x348, subscriber_id: 4_326_018 };
   const local = { servingSystemKey: 'p25:bee00:348', homeSystemName: 'Home System' };
   const foreign = { servingSystemKey: 'p25:bee00:349', homeSystemName: 'Home System' };
+  const qualifiedZero = { protocol: 'P25', source_id: 0, source_canonical_identity: home,
+    source_home_system_name: 'Home System', serving_system_key: 'p25:bee00:348' };
+  assert.equal(p25IdentifierText(qualifiedZero, 0, { prefix: 'source' }), 'BEE00.348.4326018');
+  assert.equal(p25RadioIdentityKnown(qualifiedZero, 0, 'source'), true);
+  assert.equal(p25RadioIdentityKnown({ protocol: 'P25' }, 0, 'source'), false);
+  assert.equal(p25RadioIdentityKnown({ protocol: 'P25' }, null, 'source'), false);
+  assert.equal(p25RadioIdentityKnown({ source_canonical_identity: { ...home, subscriber_id: 0 } }, 0, 'source'), false);
+  assert.equal(p25IdentifierText({ native_id: 501, canonical_identity: home }, 0), '',
+    'An unrelated zero peer does not match a directory owner just because the working ID is absent.');
+  assert.equal(p25IdentifierText({ canonical_identity: home, observed_local_id: 0 }, home.subscriber_id),
+    'BEE00.348.4326018', 'Typed event observations also retain the complete home identity for local zero.');
+  assert.equal(p25IdentifierText({ canonical_identity: home, observed_working_id: 0 }, home.subscriber_id),
+    'BEE00.348.4326018', 'A zero working address also requires the complete home identity.');
+  assert.equal(formatP25QualifiedIdentifierText('ROAM 0(781824.840.4326018)', local.servingSystemKey),
+    'BEE00.348.4326018', 'Explicit legacy radio tuples retain the full identity when the local address is zero.');
   assert.deepEqual(parseP25RadioIdentifier('BEE00.348.4326018 (Working ID 501)'),
     { canonical_identity: home, observed_working_id: 501 });
   assert.deepEqual(parseP25RadioIdentifier('bee00.348.4326018'),
@@ -63,7 +78,9 @@ async function main() {
   assert.equal(formatP25RadioIdentifier({ wacn: 0, system_id: 0, subscriber_id: 501 }, {
     servingSystemKey: 'p25:00000:000'
   }), '501', 'Explicit zero home fields remain distinct from missing fields.');
-  for (const workingId of [null, undefined, '', ' ', 0, -1, 1.5, false, true, [], 0xFFFFFD]) {
+  assert.equal(formatP25RadioIdentifier(home, { ...local, workingId: 0 }), 'BEE00.348.4326018',
+    'An explicitly zero working address displays the complete known radio identity.');
+  for (const workingId of [null, undefined, '', ' ', -1, 1.5, false, true, [], 0xFFFFFD]) {
     assert.equal(formatP25RadioIdentifier(home, { ...local, workingId }), '4326018');
   }
   assert.equal(formatP25RadioIdentifier({ wacn: String(home.wacn), system_id: '840', subscriber_id: '4326018' }, {

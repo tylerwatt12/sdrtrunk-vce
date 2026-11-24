@@ -64,16 +64,16 @@ const systemLabels = vm.runInNewContext(labelsSource.replace(/^export .*;$/m, ''
 const radioLabelsSource = fs.readFileSync(path.resolve(__dirname,
   '../../../../stats-web/assets/core/radio-labels.js'), 'utf8');
 const radioLabels = vm.runInNewContext(radioLabelsSource.replace(/^export .*;$/m, '') +
-  '\n({formatP25RadioIdentifier, formatP25GroupIdentifier, p25IdentityFacts, p25IdentifierText, formatP25QualifiedIdentifierText, p25ServingSystemKey});');
+  '\n({formatP25RadioIdentifier, formatP25GroupIdentifier, p25IdentityFacts, p25IdentifierText, p25RadioIdentityKnown, formatP25QualifiedIdentifierText, p25ServingSystemKey});');
 const sourceNamesSource = fs.readFileSync(path.resolve(__dirname,
   '../../../../stats-web/assets/core/source-names.js'), 'utf8');
 const sourceNames = vm.runInNewContext(sourceNamesSource.replace(/^export /m, '') + '\n({formatSourceName});');
 
-function closingBrace(start) {
+function closingBrace(start, text = source) {
   let depth = 0;
   let quote = '';
-  for (let index = start; index < source.length; index += 1) {
-    const character = source[index];
+  for (let index = start; index < text.length; index += 1) {
+    const character = text[index];
     if (quote) {
       if (character === '\\') index += 1;
       else if (character === quote) quote = '';
@@ -86,11 +86,11 @@ function closingBrace(start) {
   throw new Error('Unclosed function');
 }
 
-function functionSource(name) {
-  const start = source.indexOf(`function ${name}(`);
+function functionSource(name, text = source) {
+  const start = text.indexOf(`function ${name}(`);
   assert.notEqual(start, -1, `Missing ${name}`);
-  const open = source.indexOf('{', start);
-  return source.slice(start, closingBrace(open) + 1);
+  const open = text.indexOf('{', start);
+  return text.slice(start, closingBrace(open, text) + 1);
 }
 
 const behavior = vm.runInNewContext(`(() => {
@@ -153,6 +153,7 @@ const behavior = vm.runInNewContext(`(() => {
   ${functionSource('scannerHex')}
   ${functionSource('scannerIsP25')}
   ${functionSource('scannerNetworkSiteIdentity')}
+  ${functionSource('scannerSourceAlias')}
   ${functionSource('identityKind')}
   ${functionSource('rowGroupIdentityKind')}
   ${functionSource('observedGroupIdentityProtocol')}
@@ -186,9 +187,9 @@ const behavior = vm.runInNewContext(`(() => {
   ${functionSource('liveEventMatchesQuery')}
   return { radioSystemLabel, trunkedSiteLabel, dashboardChannelContext,
     channelDirectoryRfIdentity, channelLocationIdentity, dmrChannelDetailRows,
-    scannerNetworkSiteIdentity, observedGroupIdentityKey, radioIdentifierText, groupIdentifierText, partyIdentifierText,
+    scannerNetworkSiteIdentity, scannerSourceAlias, isP25, observedGroupIdentityKey, radioIdentifierText, groupIdentifierText, partyIdentifierText,
     specialIdentifierLabel, activityIdentifier, activitySourceAlias, activitySourceTalkerAlias, activityTargetAlias, activityPartyValue,
-    activityIdentitySuggestion, activityIdentityInitialSelection, liveIdentifierAliasValue,
+    activityIdentitySuggestion, activityIdentityInitialSelection, liveIdentifierAliasValue, liveSourceName,
     liveEventRadioRow, liveEventIdentifierText, liveEventPartyText, liveEventDetailsText,
     liveEventMatchesQuery };
 })()`, { URLSearchParams, systemLabels, ...radioLabels, ...sourceNames });
@@ -225,7 +226,7 @@ assert.equal(behavior.radioIdentifierText({
     wacn: 0xBEE00, system_id: 0x348, subscriber_id: 0xFFFFFD
   }, target_id: 130_004, target_observed_working_id: 130_004
 }, 130_004), '130004');
-assert.equal(behavior.radioIdentifierText({ protocol: 'P25' }, 0), '0');
+assert.equal(behavior.radioIdentifierText({ protocol: 'P25' }, 0), '', 'Unknown radio zero is not a subscriber label.');
 assert.equal(behavior.radioIdentifierText({ protocol: 'P25' }, 0xFFFFFD), '16777213');
 assert.equal(behavior.radioIdentifierText({ protocol: 'P25' }, 0xFFFFFF), '16777215');
 for (const missing of [null, undefined, '', ' ']) {
@@ -239,7 +240,7 @@ assert.equal(behavior.radioIdentifierText({ protocol: 'P25', canonical_wacn: 0,
 assert.equal(behavior.radioIdentifierText({
   protocol: 'P25', canonical_identity: { wacn: 0xBEE00, system_id: 0x348, subscriber_id: 501 },
   observed_working_id: 0
-}, 501), '501', 'Zero must not be appended as an observed working ID.');
+}, 501), 'BEE00.348.501', 'A zero working address shows the full home identity without appending a Working ID 0.');
 assert.equal(behavior.radioIdentifierText({
   protocol: 'P25', canonical_identity: { wacn: 0xBEE00, system_id: 0x348, subscriber_id: 501 },
   observed_working_id: 0xFFFFFD
@@ -256,8 +257,9 @@ const dockSource = fs.readFileSync(path.resolve(__dirname,
 let sourceMode = 'talker_alias';
 const dock = vm.runInNewContext(`(() => {
   ${dockSource.slice(dockSource.indexOf('  const identityType ='), dockSource.indexOf('  const time ='))}
-  return { title, sourceName, sourceSummary, sourceId, targetId };
-})()`, { radioIdentifier: behavior.partyIdentifierText, ...sourceNames, getSourceNameDisplay: () => sourceMode });
+  return { title, sourceName, sourceSummary, sourceId, targetId, unknownSource };
+})()`, { radioIdentifier: behavior.partyIdentifierText, ...sourceNames, ...radioLabels,
+  getSourceNameDisplay: () => sourceMode });
 const dockCall = {
   protocol: 'P25', source_id: 130_001, source_form: 'RADIO', source_alias: 'Engine 42',
   source_canonical_identity: { wacn: 0xBEE00, system_id: 0x348, subscriber_id: 9_601_699 },
@@ -283,6 +285,30 @@ assert.equal(dock.title(dockCall), 'Radio 16777212 (Working ID 130002)');
 assert.equal(dock.title({ target_id: 1201, target_form: 'TALKGROUP' }), 'TGID 1201');
 assert.equal(dock.title({ destination_radio_id: 501 }), 'Radio 501');
 assert.equal(dock.sourceSummary({}), '', 'Missing source facts remain empty in the audio player.');
+const zeroCall = { protocol: 'P25', source_id: 0, source_form: 'RADIO',
+  source_alias: 'PREVIOUS CONFIGURED NAME', talker_alias: 'PREVIOUS OTA NAME' };
+assert.equal(dock.sourceName(zeroCall), 'Unknown radio');
+assert.equal(dock.sourceSummary(zeroCall), 'Unknown radio', 'No previous name is shown for an unknown radio.');
+assert.equal(behavior.liveSourceName(zeroCall), '');
+assert.equal(behavior.liveIdentifierAliasValue(zeroCall, 'source'), 'Unknown radio');
+assert.equal(behavior.activityPartyValue({ protocol: 'P25', source_radio_id: 0,
+  source_alias_name: 'PREVIOUS CONFIGURED NAME', source_talker_alias: 'PREVIOUS OTA NAME' }, 'source').primary,
+  'Unknown radio');
+const qualifiedZeroCall = { ...zeroCall, source_canonical_identity: {
+  wacn: 0xABCDE, system_id: 0x123, subscriber_id: 501 }, source_alias: '', talker_alias: 'OWNED NAME' };
+assert.equal(dock.sourceId(qualifiedZeroCall), 'ABCDE.123.501');
+assert.equal(dock.sourceSummary(qualifiedZeroCall), 'OWNED NAME · Radio ABCDE.123.501');
+assert.equal(behavior.liveIdentifierAliasValue(qualifiedZeroCall, 'source'), 'ABCDE.123.501');
+assert.equal(behavior.liveSourceName(qualifiedZeroCall), 'OWNED NAME');
+assert.equal(behavior.radioIdentifierText({ protocol: 'P25', native_id: 9001,
+  canonical_identity: qualifiedZeroCall.source_canonical_identity }, 0), '',
+  'An unrelated zero peer must not borrow a directory row owner identity.');
+assert.equal(behavior.liveEventPartyText({ protocol: 'P25', from_party: [{ form: 'RADIO',
+  protocol: 'APCO25', text: '0' }] }, 'from'), 'Unknown radio');
+assert.equal(behavior.liveEventPartyText({ protocol: 'P25', serving_system_key: 'p25:abcde:123',
+  from_party: [{ form: 'RADIO', protocol: 'APCO25', text: 'ABCDE.123.501',
+    canonical_identity: qualifiedZeroCall.source_canonical_identity, observed_local_id: 0 }] }, 'from'),
+  'ABCDE.123.501', 'Events preserve every home identity field when local address is zero.');
 assert.match(dockSource, /\['Target ID', targetId\(call\),/);
 assert.match(dockSource, /\['Source ID', sourceId\(call\),/);
 assert.match(dockSource, /JSON\.stringify\(\[source, panel, getSourceNameDisplay\(\),/,
@@ -311,8 +337,89 @@ const dockDetails = vm.runInNewContext(`(() => {
   }, renderIdle() { liveState = {}; panelHost.childNodes = []; renderLiveDetails(); return panelHost; } };
 })()`, { node: detailNode, ...radioLabels, ...systemLabels, ...callFormats, ...callAudioDetails,
   title: dock.title, sourceName: dock.sourceName, sourceId: dock.sourceId, targetId: dock.targetId,
+  unknownSource: dock.unknownSource,
   date: () => '', entityRefHref: reference => reference?.href || '' });
 const descendants = node => [node, ...node.children.flatMap(descendants)];
+const unknownDetails = dockDetails.render({ ...zeroCall, source_description: 'PREVIOUS DESCRIPTION',
+  source_group: 'PREVIOUS GROUP', source_entity_ref: { href: '/previous-radio' } });
+assert.match(unknownDetails.textContent, /Unknown radio/);
+assert.doesNotMatch(unknownDetails.textContent, /PREVIOUS/,
+  'Live player details cannot expose a previous radio’s alias, description or group.');
+assert.ok(!descendants(unknownDetails).some(node => node.href === '/previous-radio'),
+  'Unknown source details cannot navigate to a previous radio.');
+assert.match(dockDetails.render(qualifiedZeroCall).textContent, /OWNED NAME/,
+  'Known full identities retain their accepted name in the live player details.');
+
+// Render the production source sections, including their secondary description/group fields.
+const scannerSourceStart = source.indexOf('  const sourceUnknown = isP25(call)', source.indexOf('function renderScannerCall('));
+const scannerSourceEnd = source.indexOf('  const networkSiteIdentity =', scannerSourceStart);
+assert.ok(scannerSourceStart >= 0 && scannerSourceEnd > scannerSourceStart);
+const scannerSourceDetails = vm.runInNewContext(`(() => {
+  const SCANNER_DETAIL_LEVELS = { compact: 0, normal: 1, advanced: 2, engineer: 3 };
+  const scannerDetailMode = 'advanced';
+  ${functionSource('scannerDetailLevel')}
+  ${functionSource('scannerField')}
+  ${functionSource('scannerParticipant')}
+  return call => {
+    const detailMode = 'advanced', detailLevel = 2, idle = false, analog = false, aliasContexts = null, options = {};
+    const open = () => () => {};
+    ${source.slice(scannerSourceStart, scannerSourceEnd)}
+    const host = node('div'); host.append(source, participants); return host;
+  };
+})()`, { node: (...args) => Object.assign(detailNode(...args), { setAttribute() {}, addEventListener() {} }),
+  ...radioLabels, isP25: behavior.isP25, scannerSourceAlias: behavior.scannerSourceAlias,
+  radioIdentifierText: behavior.radioIdentifierText, partyIdentifierText: behavior.partyIdentifierText,
+  capabilityAllowed: () => false, ACCESS_CAPABILITIES: { RADIO: 'radio' }, scannerAliasEditButton: () => null });
+const staleSourceMetadata = { ...zeroCall, source_description: 'PREVIOUS DESCRIPTION',
+  source_group: 'PREVIOUS GROUP', source_alias_description: 'PREVIOUS ALIAS DESCRIPTION' };
+const ownedSourceMetadata = { ...qualifiedZeroCall, source_description: 'OWNED DESCRIPTION',
+  source_group: 'OWNED GROUP', source_alias_description: 'OWNED ALIAS DESCRIPTION' };
+const unknownScannerSource = scannerSourceDetails(staleSourceMetadata);
+assert.match(unknownScannerSource.textContent, /Unknown radio/);
+assert.doesNotMatch(unknownScannerSource.textContent, /PREVIOUS/,
+  'Scanner source details cannot reveal a previous radio through descriptions or group pills.');
+assert.match(scannerSourceDetails(ownedSourceMetadata).textContent, /ABCDE\.123\.501/);
+assert.match(scannerSourceDetails(ownedSourceMetadata).textContent, /OWNED DESCRIPTION/);
+assert.match(scannerSourceDetails({ ...staleSourceMetadata, protocol: 'NXDN' }).textContent, /PREVIOUS DESCRIPTION/,
+  'The unknown P25 source guard does not suppress another protocol’s source facts.');
+
+const carrierSourceDetails = vm.runInNewContext([
+  'activityValues', 'activityTokenLabel', 'targetIdentifierLabel', 'activityAliasLabel', 'activeCarrierFields'
+].map(name => functionSource(name)).join('\n') + '\nactiveCarrierFields;', {
+  ...radioLabels, isP25: behavior.isP25, isAnalogChannel: () => false,
+  radioIdentifierText: behavior.radioIdentifierText, partyIdentifierText: behavior.partyIdentifierText,
+  decoderLabel: value => value || '', TUNER_ACTIVITY_LABELS: { ACTIVE: 'Active' }
+});
+assert.doesNotMatch(JSON.stringify(carrierSourceDetails({ rows: [staleSourceMetadata] })), /PREVIOUS/,
+  'Spectrum carrier details cannot expose a previous source alias, description or talker alias.');
+assert.match(JSON.stringify(carrierSourceDetails({ rows: [ownedSourceMetadata] })), /OWNED NAME/);
+assert.match(JSON.stringify(carrierSourceDetails({ rows: [{ ...staleSourceMetadata, protocol: 'NXDN' }] })), /PREVIOUS OTA NAME/);
+const liveSourceColumnStart = source.indexOf("    { id: 'source', label: 'Source',\n      render: (row) => liveIdentityValue");
+const liveSourceColumnEnd = source.indexOf("    { id: 'target'", liveSourceColumnStart);
+assert.ok(liveSourceColumnStart >= 0 && liveSourceColumnEnd > liveSourceColumnStart);
+const liveSourceColumn = vm.runInNewContext('(' + source.slice(liveSourceColumnStart, liveSourceColumnEnd).trim().replace(/,$/, '') + ')', {
+  ...radioLabels, isP25: behavior.isP25
+});
+assert.equal(liveSourceColumn.title(staleSourceMetadata), '', 'An unknown source tooltip cannot reveal its previous description.');
+assert.equal(liveSourceColumn.title(ownedSourceMetadata), 'OWNED ALIAS DESCRIPTION');
+assert.equal(liveSourceColumn.title({ ...staleSourceMetadata, protocol: 'NXDN' }), 'PREVIOUS ALIAS DESCRIPTION');
+
+const recordingsSource = fs.readFileSync(path.resolve(__dirname, '../../../../stats-web/assets/features/recordings.js'), 'utf8');
+const recordingSourceEntities = vm.runInNewContext([
+  'value', 'recordingRadioId', 'recordingGroupId', 'label', 'recordingHasTalkgroup',
+  'recordingSourceReference', 'recordingSourceUnknown', 'sourceLabel', 'callEntities'
+].map(name => functionSource(name, recordingsSource)).join('\n') + '\ncallEntities;', {
+  ...radioLabels, ...systemLabels, ...sourceNames, getSourceNameDisplay: () => 'talker_alias',
+  frequency: () => '', winningSite: () => '', protocolLabel: value => value
+});
+const unknownRecordingSource = recordingSourceEntities(staleSourceMetadata).find(entity => entity.key === 'radio');
+assert.equal(unknownRecordingSource.text, 'Unknown radio');
+assert.equal(unknownRecordingSource.extra, '', 'Expanded recording source tiles cannot reveal the previous description.');
+const ownedRecordingSource = recordingSourceEntities(ownedSourceMetadata).find(entity => entity.key === 'radio');
+assert.match(ownedRecordingSource.text, /ABCDE\.123\.501/);
+assert.equal(ownedRecordingSource.extra, 'OWNED DESCRIPTION');
+assert.equal(recordingSourceEntities({ ...staleSourceMetadata, protocol: 'NXDN' }).find(entity => entity.key === 'radio').extra,
+  'PREVIOUS DESCRIPTION');
 const patchMemberFact = root => {
   const list = descendants(root).find(item => item.tag === 'dl' &&
     item.children.some(child => child.tag === 'dt' && child.textContent === 'Patch members'));
@@ -390,22 +497,24 @@ for (const protocol of ['P25', 'DMR', 'NXDN']) {
   for (const missing of [null, undefined, '']) {
     const row = { protocol, source_radio_id: missing, target_id: missing, target_kind: 'talkgroup' };
     for (const party of ['source', 'target']) {
-      assert.equal(behavior.activityPartyValue(row, party), '',
-        `${protocol} missing ${party} IDs must remain blank rather than becoming a special zero ID.`);
+      const unknownSource = protocol === 'P25' && party === 'source';
+      const unnamed = behavior.activityPartyValue(row, party);
+      assert.equal(unknownSource ? unnamed.primary : unnamed, unknownSource ? 'Unknown radio' : '',
+        `${protocol} missing ${party} IDs must not become a special zero ID.`);
       const named = behavior.activityPartyValue({ ...row, source_alias_name: 'Dispatch radio',
         target_alias_name: 'Dispatch group' }, party);
-      assert.equal(named.primary, party === 'source' ? 'Dispatch radio' : 'Dispatch group');
+      assert.equal(named.primary, unknownSource ? 'Unknown radio' : party === 'source' ? 'Dispatch radio' : 'Dispatch group');
       assert.equal(named.secondary, '', 'A supplied name without an ID does not fabricate an ID below it.');
     }
   }
 }
-for (const [protocol, sourceLabel, targetLabel] of [['P25', 'No Unit', 'No Talkgroup'],
+for (const [protocol, sourceLabel, targetLabel] of [['P25', 'Unknown radio', 'No Talkgroup'],
   ['DMR', 'Reserved', 'Reserved'], ['NXDN', 'No Unit', '0']]) {
   const row = { protocol, source_radio_id: 0, target_id: 0, target_kind: 'talkgroup' };
   for (const [party, expectedLabel] of [['source', sourceLabel], ['target', targetLabel]]) {
     const summary = behavior.activityPartyValue(row, party);
     assert.equal(summary.primary, expectedLabel, `${protocol} retains its actual zero-ID meaning.`);
-    assert.equal(summary.secondary, expectedLabel === '0' ? '' : '0',
+    assert.equal(summary.secondary, expectedLabel === '0' || expectedLabel === 'Unknown radio' ? '' : '0',
       'A reported zero ID remains visible without repeating an ordinary identifier.');
   }
 }
@@ -869,7 +978,7 @@ const tableCells = vm.runInNewContext([
   'identitySummaryValue', 'radioDisplayId', 'groupIdentityDisplayId', 'tableIdentityParts',
   'tableIdentityValue', 'radioIdentityValue', 'groupIdentityValue', 'radioIdentitySortValue',
   'groupIdentitySortValue', 'channelGroupIdentityColumns', 'channelRadioColumns'
-].map(functionSource).join('\n') + '\n({radioIdentityValue, groupIdentityValue, radioIdentitySortValue, ' +
+].map(name => functionSource(name)).join('\n') + '\n({radioIdentityValue, groupIdentityValue, radioIdentitySortValue, ' +
   'channelGroupIdentityColumns, channelRadioColumns});', {
   ...radioLabels, ...sourceNames, node: detailNode, valueNode: value => value,
   withDirectListenAction: value => value,

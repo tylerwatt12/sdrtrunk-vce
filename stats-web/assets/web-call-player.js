@@ -1,5 +1,5 @@
 import { systemLabel, systemName, homeSystemName } from './core/system-labels.js?v=2';
-import { p25IdentityFacts, p25IdentifierText } from './core/radio-labels.js?v=7';
+import { p25IdentityFacts, p25IdentifierText, p25RadioIdentityKnown } from './core/radio-labels.js?v=8';
 import { formatSourceName } from './core/source-names.js?v=1';
 import { createDirectListenSession, directListenTargetKey } from './core/direct-listen.js?v=1';
 import { createCallDisplayRetention, DEFAULT_CALL_DISPLAY_HANGTIME_SECONDS,
@@ -1406,7 +1406,9 @@ export class WebCallPlayer {
         `${call.target_alias}${targetIdentity ? ` · ${targetIdentity}` : ''}` :
         (targetIdentity || call.channel || 'Unknown target'));
     const sourceName = formatSourceName(call.source_alias, call.talker_alias, this.getSourceNameDisplay?.());
-    const source = sourceName ?
+    const unknownSource = /^(P25|APCO25)/i.test(String(call.protocol || call.decoder || '')) &&
+      !p25RadioIdentityKnown(call, call.source_id, 'source');
+    const source = unknownSource ? (sourceId || sourceName ? 'Unknown radio' : '') : sourceName ?
       `${sourceName}${sourceIdentity ? ` · ${sourceIdentity}` : ''}` : sourceIdentity;
     return `${target}${source ? ` ← ${source}` : ''}`;
   }

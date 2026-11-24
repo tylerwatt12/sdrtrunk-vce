@@ -468,7 +468,13 @@ async function main() {
       source_id: '', playback_target: {
         key: 'channel:p25-conventional', kind: 'channel', label: 'P25 Conventional'
       }
-    }), 'TGID 1201', 'A real conventional P25 talkgroup must remain visible in the call label');
+    }), 'TGID 1201', 'A real conventional P25 talkgroup remains visible when no source was supplied');
+    assert.equal(labels.callLabel({ protocol: 'P25', target_id: 77, source_id: 0,
+      source_alias: 'PREVIOUS CONFIGURED NAME', talker_alias: 'PREVIOUS OTA NAME' }),
+    'ID 77 ← Unknown radio', 'Unknown radio zero cannot display either previous name.');
+    assert.equal(labels.callLabel({ protocol: 'P25', target_id: 77, source_id: 0, source_form: 'RADIO',
+      source_canonical_identity: { wacn: 0xABCDE, system_id: 0x123, subscriber_id: 501 },
+      talker_alias: 'OWNED NAME' }), 'ID 77 ← OWNED NAME · ABCDE.123.501');
     assert.equal(labels.targetLabel({
       protocol: 'P25', target_id: 1201,
       playback_target: { key: 'channel:p25-conventional', kind: 'channel', label: 'P25 Conventional' }
