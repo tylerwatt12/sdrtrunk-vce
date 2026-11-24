@@ -8,21 +8,48 @@ async function checkDashboardData(appSource, functionBinding) {
     directory: { systems: [{ children: [] }], channels: [] } };
   const requests = [];
   let next = main;
+  const receiverTime = 1_800_000_000_000;
+  let clientTime = receiverTime - 86_400_000;
+  let elapsed = 100;
+  let dateHeader = new Date(receiverTime).toUTCString();
   const context = vm.createContext({
+    Date: { now: () => clientTime, parse: Date.parse }, performance: { now: () => elapsed },
     ACCESS_CAPABILITIES: { RADIO: 'radio' }, capabilityAllowed: () => true,
-    api: async (path) => { requests.push(path); return next; }
+    api: async (path, parameters, options) => {
+      requests.push(path);
+      options.onResponse({ headers: { get: () => dateHeader } });
+      // Body parsing time must count towards sample age, too.
+      elapsed += 25;
+      return next;
+    }
   });
   vm.runInContext(`async function loadMainDashboard(requestApi = api) ${functionBinding(appSource, 'loadMainDashboard')}`, context);
-  assert.strictEqual(await context.loadMainDashboard(), main);
+  let snapshot = await context.loadMainDashboard();
+  assert.strictEqual(snapshot.quality, main.quality);
+  assert.strictEqual(snapshot.directory, main.directory);
   assert.deepEqual(requests, ['/api/v1/dashboard/main']);
+  assert.equal(snapshot.receiverNow(), receiverTime + 25);
+  clientTime = receiverTime + 86_400_000;
+  elapsed += 45_000;
+  assert.equal(snapshot.receiverNow(), receiverTime + 45_025,
+    'Sample age advances even if the client wall clock changes or refreshes fail.');
+  dateHeader = new Date(receiverTime + 60_000).toUTCString();
+  snapshot = await context.loadMainDashboard();
+  assert.equal(snapshot.receiverNow(), receiverTime + 60_025, 'Each successful response replaces the time anchor.');
+  for (dateHeader of [null, 'invalid']) {
+    snapshot = await context.loadMainDashboard();
+    assert.equal(snapshot.receiverNow(), clientTime, 'Missing response time retains the prior local-time behavior.');
+  }
   for (const invalid of [null, {}, { quality: { current: [] }, directory: { systems: [{}], channels: [] } }]) {
     next = invalid;
     await assert.rejects(context.loadMainDashboard(), /Reload the page/);
   }
   context.capabilityAllowed = () => false;
   next = { quality: { current: [] } };
-  assert.strictEqual(await context.loadMainDashboard(), next,
+  assert.strictEqual((await context.loadMainDashboard()).quality, next.quality,
     'A dashboard-only visitor does not require radio directory data.');
+
+  main.receiverNow = () => receiverTime;
 
   const dataRequests = [];
   let current = true;
@@ -47,11 +74,13 @@ async function checkDashboardData(appSource, functionBinding) {
       if (failNext) { failNext = false; throw new Error('Temporarily unavailable'); }
       return main;
     },
-    renderNestedRadioDirectory: (_renderContext, directory, quality) => {
+    renderNestedRadioDirectory: (_renderContext, directory, quality, options) => {
       assert.strictEqual(directory, main.directory);
       assert.strictEqual(quality, main.quality.current);
-      return { update(next, rows) {
+      assert.strictEqual(options.now, main.receiverNow);
+      return { update(next, rows, now) {
         assert.strictEqual(next, directory); assert.strictEqual(rows, quality);
+        assert.strictEqual(now, main.receiverNow);
         directoryUpdates += 1; qualityUpdates += 1;
       }, failed() { failures += 1; } };
     },

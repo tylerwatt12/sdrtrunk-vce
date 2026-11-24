@@ -52,7 +52,7 @@ function checkMainDirectoryQuality(source, functionBinding) {
   });
   for (const [name, parameters] of Object.entries({ percentNumber: 'value', elapsedLabel: 'timestamp, now = Date.now()',
     signalChannelState: 'channel, now = Date.now()', radioDirectoryField: 'element, field',
-    radioDirectoryReading: "label, field, value, unit = ''", radioDirectorySiteRow: 'row, conventional = false, quality = null',
+    radioDirectoryReading: "label, field, value, unit = ''", radioDirectorySiteRow: 'row, conventional = false, quality = null, now = Date.now()',
     radioDirectoryLiveLink: 'children', radioDirectoryQualityOnly: 'currentQuality' })) {
     vm.runInContext(`function ${name}(${parameters}) ${functionBinding(source, name)}`, context);
   }
@@ -68,6 +68,21 @@ function checkMainDirectoryQuality(source, functionBinding) {
   assert.match(result.querySelector('.radio-directory-frequency').textContent, /851\.01250 MHz/);
   assert.match(result.textContent, /-48\.2 dBFS.*30s avg -49\.1.*99\.3%.*Healthy/);
   assert.equal(result.querySelector('meter').attributes.value, '99.3');
+  for (const offset of [-86_400_000, 86_400_000]) {
+    context.Date.now = () => now + offset;
+    result = context.radioDirectorySiteRow(row, false, quality, now);
+    assert.match(result.textContent, /Updated 2s ago.*-48\.2 dBFS.*99\.3%Healthy/,
+      'The response clock controls readings, status and age labels despite client clock skew.');
+  }
+  context.Date.now = () => now;
+  for (const observed of [now - 45_000, now + 2000]) {
+    result = context.radioDirectorySiteRow(row, false, { ...quality, last_observed_ms: observed }, now);
+    assert.equal(result.querySelector('meter').hidden, false);
+  }
+  for (const observed of [now - 45_001, now + 2001]) {
+    result = context.radioDirectorySiteRow(row, false, { ...quality, last_observed_ms: observed }, now);
+    assert.equal(result.querySelector('meter').hidden, true, 'Stale and future-dated samples remain rejected.');
+  }
   result = render(row, { ...quality, signal_dbfs: null, average_signal_dbfs: null });
   assert.match(result.textContent, /Signal—No samples.*99\.3%Healthy/,
     'Measured decoding proves reception even when no signal-strength reading is available.');

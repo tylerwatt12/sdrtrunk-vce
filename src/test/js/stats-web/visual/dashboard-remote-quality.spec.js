@@ -19,6 +19,54 @@ const directoryFor = rows => ({ systems: [{ radio_system_key: systemKey,
 }], channels: [] });
 const site = (page, configurationId) => page.locator(`[data-directory-row-key="${configurationId}"]`);
 
+for (const [offset, theme, width] of [[-86_400_000, 'light', 1280], [86_400_000, 'dark', 390]]) {
+  test(`Overview quality uses receiver time with client clock offset ${offset}`, async ({ page }) => {
+    await page.clock.install({ time: sampleTime });
+    const fixture = await installSiteStyleApplication(page, theme);
+    await page.setViewportSize({ width, height: 900 });
+    await page.clock.setSystemTime(sampleTime + offset);
+    let fail = false;
+    let serverTime = sampleTime;
+    let requests = 0;
+    await page.route('**/api/v1/dashboard/main', route => {
+      requests++;
+      if (fail) return route.fulfill({ status: 503, json: { error: { message: 'Update unavailable.' } } });
+      const rows = [qualityRow(channelId, channelName, { remote_origin: null,
+        last_observed_ms: serverTime - 2000, signal_dbfs: -51, average_signal_dbfs: -52 }),
+      qualityRow(id(2), 'Old sample', { last_observed_ms: serverTime - 45_001 }),
+      qualityRow(id(3), 'Future sample', { last_observed_ms: serverTime + 3000 })];
+      return route.fulfill({ headers: { Date: new Date(serverTime).toUTCString() },
+        json: { data: { quality: { current: rows }, directory: directoryFor(rows) } } });
+    });
+    await page.goto('/app.html?view=dashboard');
+    const row = site(page, channelId);
+    await expect(row).toContainText('Updated 2s ago');
+    await expect(row.getByRole('group', { name: 'Signal', exact: true })).toContainText('-51.0 dBFS');
+    await expect(row.locator('.radio-directory-quality-state')).toHaveText('Healthy');
+    await expect(row.locator('meter')).toHaveJSProperty('value', 99.3);
+    for (const configurationId of [id(2), id(3)]) {
+      await expect(site(page, configurationId).locator('.radio-directory-quality-state')).toHaveText('Out of date');
+      await expect(site(page, configurationId).locator('meter')).toBeHidden();
+    }
+    // Failed polls must age the last response, rather than making its samples fresh again.
+    fail = true;
+    await page.clock.fastForward(46_000);
+    await expect.poll(() => requests).toBeGreaterThan(1);
+    await expect(row.locator('.radio-directory-quality-state')).toHaveText('Out of date');
+    await expect(row.locator('meter')).toBeHidden();
+    // A new successful response establishes its own receiver time after a client clock change.
+    await page.clock.setSystemTime(sampleTime - offset);
+    serverTime += 60_000;
+    fail = false;
+    await page.clock.fastForward(5_100);
+    await expect(row.locator('.radio-directory-quality-state')).toHaveText('Healthy');
+    await expect(row.locator('meter')).toHaveJSProperty('value', 99.3);
+    await expect(row).toContainText('Updated 2s ago');
+    expect(fixture.pageErrors).toEqual([]);
+    expect(fixture.unexpected).toEqual([]);
+  });
+}
+
 for (const [theme, viewport] of [['light', { width: 1280, height: 900 }],
   ['dark', { width: 390, height: 844 }]]) {
   test(`Main grouped rows integrate real quality readings in ${theme}`, async ({ page }, testInfo) => {
