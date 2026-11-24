@@ -1,6 +1,7 @@
 const { expect, test } = require('@playwright/test');
 const { readFileSync } = require('node:fs');
 const { resolve } = require('node:path');
+const { expectContrast } = require('./fixtures/contrast-audit.cjs');
 const { expectFormWorkflowGeometry, expectStableFormWorkflowInsets,
   captureFormWorkflowEvidence } = require('./fixtures/form-workflow-geometry.cjs');
 const app = readFileSync(resolve(__dirname, '../../../../..', 'stats-web/assets/app.js'), 'utf8');
@@ -10,9 +11,9 @@ const helpersSource = app.slice(app.indexOf('function closeReadOnlyModal('), app
   app.slice(app.indexOf('const METRIC_ICONS ='), app.indexOf('function searchBar('));
 
 async function install(page, theme = 'light', empty = false, radioReferenceAllowed = true, aliasCount = 60,
-  provider = 'BROADCASTIFY_CALL') {
+  provider = 'BROADCASTIFY_CALL', healthReports = false) {
   await page.goto(`/design-system.html?theme=${theme}`);
-  await page.evaluate(async ({helpersSource, theme, empty, radioReferenceAllowed, aliasCount, provider}) => {
+  await page.evaluate(async ({helpersSource, theme, empty, radioReferenceAllowed, aliasCount, provider, healthReports}) => {
     const { createStreamingWorkspace } = await import('/assets/features/streaming.js');
     const { openRadioReferenceConnect } = await import('/assets/features/radioreference-connect.js');
     const browsingWorkflows = await import('/assets/core/browsing-workflows.js');
@@ -133,11 +134,13 @@ async function install(page, theme = 'light', empty = false, radioReferenceAllow
       {key:'system_id',label:'System ID',type:'number',minimum:1,maximum:2147483647},
       {key:'maximum_recording_age',label:'Maximum recording age (ms)',type:'number',minimum:0,maximum:86400000,advanced:true}
     ];
+    if (healthReports) fields.push({key:'health_reports',label:'Send node health reports',type:'boolean'});
     let otherName='Regional Archive';
     let editRevision='destination-edit-1', assignmentRevision='assignments-1';
     const providerLabel=provider==='RADIORESOLVE'?'RadioResolve':provider==='BROADCASTIFY_CALL_SITE'?'Broadcastify Call Site':'Broadcastify Calls';
     let definition={configuration_id:'destination',provider,settings:{name:'County Calls',enabled:true,
       host:'https://example.com/calls',system_id:42,maximum_recording_age:600000},configured_credentials:['api_key']};
+    if (healthReports) definition.settings.health_reports = true;
     const status={configuration_id:'destination',name:'County Calls',provider,provider_label:providerLabel,
       enabled:true,state:'CONNECTED',state_label:'Connected',queued:3,sent:128,aged_off:0,duplicate_rejected:4,errors:0,last_error:null,attention:false};
     let assignments=new Set([1,51]);
@@ -219,7 +222,7 @@ async function install(page, theme = 'light', empty = false, radioReferenceAllow
       formatNumber:value=>new Intl.NumberFormat('en-US').format(value),href:(view,params)=>`/?${new URLSearchParams({view,...params})}`,signal:abort.signal});
     window.streamingTest.refresh=workspace.refresh;
     shell.append(header,workspace.element);document.body.append(shell);
-  }, {helpersSource,theme,empty,radioReferenceAllowed,aliasCount,provider});
+  }, {helpersSource,theme,empty,radioReferenceAllowed,aliasCount,provider,healthReports});
   await expect(page.getByRole('button',{name:'Add destination',exact:true})).toBeVisible();
 }
 
@@ -329,6 +332,42 @@ for(const theme of ['light']) for(const mobile of [false,true]) {
     await expect(page.getByRole('button',{name:'County Calls',exact:true})).toBeFocused();
   });
 }
+
+for (const [theme, viewport, provider] of [
+  ['light', { width: 1440, height: 1000 }, 'BROADCASTIFY_CALL'],
+  ['dark', { width: 320, height: 700 }, 'BROADCASTIFY_CALL_SITE']
+]) test(`node health reporting stays reviewable and saves an opt-out in ${theme}`, async ({ page }, testInfo) => {
+  await page.setViewportSize(viewport);
+  await install(page, theme, false, true, 60, provider, true);
+  await page.getByRole('button', { name: 'County Calls', exact: true }).click();
+  const modal = page.getByRole('dialog');
+  const reports = modal.getByRole('checkbox', { name: 'Send node health reports', exact: true });
+  await expect(reports).toBeChecked();
+  await expect(modal.getByText('Every 5 minutes, sends Broadcastify reception and call totals, configured names, site identifiers and frequencies.',
+    { exact: true })).toBeVisible();
+  const field = reports.locator('..').locator('..');
+  await field.scrollIntoViewIfNeeded();
+  const geometry = await field.evaluate(element => {
+    const bounds = element.getBoundingClientRect();
+    return [...element.children].map(child => {
+      const box = child.getBoundingClientRect();
+      return { left: box.left - bounds.left, right: bounds.right - box.right };
+    });
+  });
+  for (const bounds of geometry) {
+    expect(bounds.left).toBeGreaterThanOrEqual(0);
+    expect(bounds.right).toBeGreaterThanOrEqual(0);
+  }
+  await expectContrast(page, { rootSelector: '.streaming-editor-modal' });
+  await page.screenshot({ path: testInfo.outputPath(`node-health-${theme}.png`), fullPage: true });
+  await reports.focus();
+  await reports.press('Space');
+  await modal.getByRole('button', { name: 'Save and reconnect', exact: true }).click();
+  await expect(modal.locator('.streaming-editor')).not.toHaveClass(/is-dirty/);
+  const writes = await page.evaluate(() => window.streamingTest.calls.filter(([, options]) => options.method === 'PUT'));
+  expect(writes.at(-1)[1].body.settings).toEqual({ health_reports: false });
+  await expect(reports).not.toBeChecked();
+});
 
 test('partial settings preserve saved credentials and stale edits remain reviewable',async({page})=>{
   await install(page);await page.getByRole('button',{name:'County Calls',exact:true}).click();

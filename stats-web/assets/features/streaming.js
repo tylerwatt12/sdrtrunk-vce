@@ -341,7 +341,9 @@ export function createStreamingWorkspace(deps) {
       let control;
       if (field.type === 'boolean') {
         const toggle = uiToggleField(field.label, initial === true, field.label,
-          field.key === 'ignore_certificate_errors' ? 'Disables certificate validation for this destination.' : '');
+          field.key === 'ignore_certificate_errors' ? 'Disables certificate validation for this destination.' :
+            field.key === 'health_reports' ?
+              'Every 5 minutes, sends Broadcastify reception and call totals, configured names, site identifiers and frequencies.' : '');
         control = toggle.querySelector('input'); target.append(toggle);
       } else if (field.key === 'alias_list_id' || field.key === 'channel_configuration_id') {
         const sites = options.sites || [];
