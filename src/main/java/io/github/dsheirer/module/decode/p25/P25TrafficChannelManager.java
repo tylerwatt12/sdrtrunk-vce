@@ -2504,7 +2504,8 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                 tracker.setDetails(PHASE_1_ENCRYPTED_CALL_IGNORED);
             }
 
-            tallyNotAllocated(tracker, needsAllocation, skipEncryptedAllocation, isDataChannelGrant);
+            tallyNotAllocated(tracker, needsAllocation, skipEncryptedAllocation,
+                shouldIgnoreDataCall(isDataChannelGrant, decodeEventType));
             broadcast(tracker, timestamp);
 
             //Even though we have a tracked event, the initial channel grant may have been rejected.  Check to see if there
@@ -2657,7 +2658,8 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                 tracker.setDetails(PHASE_2_ENCRYPTED_CALL_IGNORED);
             }
 
-            tallyNotAllocated(tracker, needsAllocation, skipEncryptedAllocation, isDataChannelGrant);
+            tallyNotAllocated(tracker, needsAllocation, skipEncryptedAllocation,
+                shouldIgnoreDataCall(isDataChannelGrant, decodeEventType));
             broadcast(tracker, timestamp);
 
             //Even though we have a tracked event, the initial channel grant may have been rejected.  Check to see if there
@@ -2819,7 +2821,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
      * traffic channel is counted when one is requested (startAndTally), or when none is free.
      */
     private void tallyNotAllocated(P25TrafficChannelEventTracker tracker, boolean needsAllocation,
-                                   boolean skipEncrypted, boolean dataGrant)
+                                   boolean skipEncrypted, boolean ignoredData)
     {
         if(!needsAllocation)
         {
@@ -2829,7 +2831,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
         {
             tally(tracker, CallOutcome.ENCRYPTED);
         }
-        else if(mIgnoreDataCalls && dataGrant)
+        else if(ignoredData)
         {
             tally(tracker, CallOutcome.DATA);
         }
