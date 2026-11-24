@@ -217,7 +217,8 @@ public class ChannelHealth
         long open = mOpenMs + (mOpenedAt > 0 ? Math.max(0, now - mOpenedAt) : 0);
 
         return new Totals(mInfo, mProtocol, mFrequency, Collections.unmodifiableMap(new TreeMap<>(mIdentity)), mGood,
-            mBad, mSyncLossMeasured ? mSyncLossSym : null, locked, mCallsCounted ? mCalls.totals() : null, running, mOpens, mCloses, open);
+            mBad, mSyncLossMeasured ? mSyncLossSym : null, locked, mCallsCounted ? mCalls.totals() : null, running,
+            mOpens, mCloses, open);
     }
 
     /**

@@ -2672,11 +2672,6 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
     }
 
     /**
-     * Indicates if a standard parent channel supports live trunked control-channel quality.  DMR and NXDN use the
-     * same decoder for conventional and trunked operation, so their monitor can run before trunking is observed;
-     * {@link ChannelActivityModel} only attaches those measurements after an actual trunked site session exists.
-     */
-    /**
      * Indicates whether node health reports measure a channel: a standard (not traffic) channel this node receives
      * itself.  A channel mirrored from another node is that node's to report.
      */
@@ -2686,6 +2681,11 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
             !(channel.getSourceConfiguration() instanceof SourceConfigRemote);
     }
 
+    /**
+     * Indicates if a standard parent channel supports live trunked control-channel quality.  DMR and NXDN use the
+     * same decoder for conventional and trunked operation, so their monitor can run before trunking is observed;
+     * {@link ChannelActivityModel} only attaches those measurements after an actual trunked site session exists.
+     */
     static boolean supportsControlChannelQuality(Channel channel)
     {
         DecoderType decoderType = channel != null && channel.getDecodeConfiguration() != null ?

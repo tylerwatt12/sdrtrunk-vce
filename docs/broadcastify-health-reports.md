@@ -52,4 +52,4 @@ We recommend leaving them on.
 ## The format
 
 The report format is shared with Trunk Recorder Pro and SDRTrunk:
-[node health report, version 1](https://github.com/TrunkRecorder/trunk-recorder-pro/blob/main/docs/api/node-health.md).
+[node health report, version 1](https://github.com/blantonl/bcfy-calls-node-health/blob/main/node-health.md).

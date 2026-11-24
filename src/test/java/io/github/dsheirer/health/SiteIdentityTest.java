@@ -96,7 +96,8 @@ public class SiteIdentityTest
         assertEquals(Map.of("site", 12, "ran", 5), health.totals(0).identity());
     }
 
-    private static NXDNNetworkConfigurationSnapshot nxdn(Integer ran, NXDNNetworkConfigurationSnapshot.Location location,
+    private static NXDNNetworkConfigurationSnapshot nxdn(Integer ran,
+                                                         NXDNNetworkConfigurationSnapshot.Location location,
                                                          Integer typeDSite)
     {
         return new NXDNNetworkConfigurationSnapshot("NXDN", "TYPE_C", ran, location, typeDSite, null, null, null,
