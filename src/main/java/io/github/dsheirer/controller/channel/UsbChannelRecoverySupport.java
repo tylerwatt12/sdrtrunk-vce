@@ -150,6 +150,8 @@ final class UsbChannelRecoverySupport implements UsbTunerRecoveryListener
                 Intent intent = mIntents.get(assignment.id());
                 if(intent == null || intent.channel() != assignment.channel() ||
                     intent.incarnation() != assignment.processingIncarnation()) continue;
+                DiscoveredUSBTuner actual = mOperations.currentUsbTuner(assignment.channel());
+                if(actual != null && actual != tuner) continue;
                 if(intent.tuner() == tuner && !current(intent))
                 {
                     mIntents.remove(assignment.id(), intent);
@@ -158,8 +160,7 @@ final class UsbChannelRecoverySupport implements UsbTunerRecoveryListener
                 // Rotating channels can have moved to another USB tuner since their initial start.
                 Intent pending = new Intent(intent.channel(), tuner, intent.incarnation(),
                     tuner.getRecoveryCancellationGeneration(), true, 0, 0);
-                mIntents.put(assignment.id(), pending);
-                interrupted.add(assignment);
+                if(mIntents.replace(assignment.id(), intent, pending)) interrupted.add(assignment);
             }
         }
         // Never hold the channel start monitor while P25/NXDN stop callbacks notify their traffic managers.

@@ -126,6 +126,24 @@ class UsbChannelRecoverySupportTest
         assertEquals(1, h.started.size(), "A later source error must not recreate canceled run intent");
     }
 
+    @Test void staleFormerOwnerAssignmentCannotOverwriteANewerUsbRotation()
+    {
+        Harness h = new Harness();
+        FakeUsb former = h.usb("a");
+        FakeUsb current = h.usb("b");
+        Channel channel = h.running("Rotating control", former, true);
+        h.assignmentsSnapshotHook = () -> {
+            h.active.put(channel, current);
+            h.support.sourceAssigned(channel, current.getId(), channel.getProcessingIncarnation());
+        };
+        h.support.tunerUnavailable(former);
+        assertSame(current, h.active.get(channel));
+        assertFalse(h.support.isPending(channel.getConfigurationId()));
+        h.support.tunerUnavailable(current);
+        h.support.tunerAvailable(current);
+        assertEquals(List.of(channel), h.started);
+    }
+
     @Test void staleIncarnationAndReplacementConfigurationCannotBeRestarted()
     {
         Harness h = new Harness();
@@ -212,6 +230,7 @@ class UsbChannelRecoverySupportTest
         boolean failStart;
         CountDownLatch startEntered;
         CountDownLatch releaseStart;
+        Runnable assignmentsSnapshotHook;
 
         FakeUsb usb(String id) { FakeUsb usb = new FakeUsb(id); tuners.put(id, usb); return usb; }
         FakeSource source(FakeUsb usb) { return new FakeSource(usb.getId()); }
@@ -227,9 +246,14 @@ class UsbChannelRecoverySupportTest
         @Override public DiscoveredUSBTuner currentUsbTuner(Channel channel) { return active.get(channel); }
         @Override public List<TunerChannelAssignment> assignments(String identity)
         {
-            return active.entrySet().stream().filter(entry -> entry.getValue().getId().equals(identity))
+            List<TunerChannelAssignment> snapshot = active.entrySet().stream()
+                .filter(entry -> entry.getValue().getId().equals(identity))
                 .map(entry -> ChannelProcessingManager.tunerChannelAssignment(entry.getKey(), 155_100_000L,
                     entry.getKey().getProcessingIncarnation())).toList();
+            Runnable hook = assignmentsSnapshotHook;
+            assignmentsSnapshotHook = null;
+            if(hook != null) hook.run();
+            return snapshot;
         }
         @Override public boolean isProcessing(Channel channel) { return active.containsKey(channel); }
         @Override public boolean isStopping(Channel channel) { return false; }
