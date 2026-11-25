@@ -1254,11 +1254,35 @@ public final class ApplicationMigrationService
     }
 
     /** A failed replacement restores its exact supported source; it need not already be the new current format. */
-    private static void validateSupportedRestoredDatabase(Path database) throws IOException,SQLException
+    static void validateSupportedRestoredDatabase(Path database) throws IOException,SQLException
     {
         if(io.github.dsheirer.database.ConfigurationHistoryDatabase.isPairedConfiguration(database))
         {
-            validateGlobalDatabase(database);
+            try(Connection connection = openReadOnly(database))
+            {
+                if(DatabaseFormatCatalog.inspect(connection).version() == DatabaseFormatCatalog.CURRENT_VERSION)
+                {
+                    validateGlobalDatabase(database);
+                    return;
+                }
+            }
+            // Restoration validates each saved role against its own supported version, without migrating or
+            // starting the restored receiver. Pair identity, integrity, foreign keys and bounded configuration
+            // remain strict; current-format validation would incorrectly require an upgrade of this backup.
+            io.github.dsheirer.database.ConfigurationHistoryDatabase.validatePairIdentity(database);
+            for(Path file: List.of(database, io.github.dsheirer.database.ActivityDatabasePath.forConfiguration(database)))
+            {
+                try(Connection connection = openReadOnly(file))
+                {
+                    SdrTrunkDatabaseStartup.requireMainTrackDatabase(connection);
+                    var restored = DatabaseFormatCatalog.inspect(connection);
+                    requireIntegrity(connection);
+                    requireForeignKeysValid(connection);
+                    if(file.equals(database))
+                        ConfigurationSnapshotValidator.validateForStartup(new ConfigurationRepository(database)
+                            .loadRestoredLegacyConfiguration(connection, restored.version()));
+                }
+            }
             return;
         }
         try(Connection connection=openReadOnly(database))
@@ -1267,11 +1291,12 @@ public final class ApplicationMigrationService
             DatabaseFormatCatalog.DetectedFormat restored=DatabaseFormatCatalog.inspect(connection);
             requireIntegrity(connection);
             requireForeignKeysValid(connection);
-            // These monolithic formats already have the complete channel/Alias configuration contract understood
-            // by the current loader. Earlier registered formats retain their frozen catalog configuration checks
-            // and require their supported adjacent update before this build can receive.
+            // These monolithic formats have the channel/Alias contract understood by the frozen legacy reader.
+            // They do not have later fields such as the format-77 audio-order preference. Earlier registered
+            // formats retain their frozen catalog checks and require an adjacent update before receiving.
             if(restored.version()>=45)
-                ConfigurationSnapshotValidator.validateForStartup(new ConfigurationRepository(database).load(connection));
+                ConfigurationSnapshotValidator.validateForStartup(new ConfigurationRepository(database)
+                    .loadRestoredLegacyConfiguration(connection, restored.version()));
         }
     }
 

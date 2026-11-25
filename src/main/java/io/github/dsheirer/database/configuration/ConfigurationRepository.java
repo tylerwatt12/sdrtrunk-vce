@@ -293,6 +293,17 @@ public final class ConfigurationRepository
             channels.channels(), channels.broadcastConfigurations());
     }
 
+    /** Reads a restored legacy backup without assuming fields introduced after its exact frozen format. */
+    public ConfigurationSnapshot loadRestoredLegacyConfiguration(Connection connection, int version)
+        throws IOException, SQLException
+    {
+        ChannelAndBroadcastConfiguration channels =
+            mChannelAndBroadcastStore.loadRestoredLegacyConfiguration(connection, version);
+        AliasConfigurationSnapshot aliases = loadAliasConfiguration(connection);
+        return new ConfigurationSnapshot(aliases.definitions(), aliases.aliases(), aliases.scanLists(),
+            channels.channels(), channels.broadcastConfigurations());
+    }
+
     /** Frozen split-stage snapshot, read before the attached post-format-69 transaction commits. */
     public ConfigurationSnapshot loadFormat69Configuration(Connection connection) throws IOException, SQLException
     {

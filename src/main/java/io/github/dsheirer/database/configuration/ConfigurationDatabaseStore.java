@@ -120,6 +120,20 @@ public class ConfigurationDatabaseStore
         return loadLegacyChannels(connection, 62);
     }
 
+    /** Frozen pre-77 contract used only to validate an exactly admitted restored legacy backup. */
+    ChannelAndBroadcastConfiguration loadRestoredLegacyConfiguration(Connection connection, int version)
+        throws SQLException, IOException
+    {
+        if(version < 45 || version > 76)
+            throw new SQLException("Restored legacy configuration requires a supported format from 45 through 76");
+        var admitted = io.github.dsheirer.database.upgrade.DatabaseFormatCatalog.inspect(connection);
+        if(admitted.version() != version || (version >= 63) !=
+            io.github.dsheirer.database.ConfigurationHistoryDatabase.isPairedConfiguration(connection))
+            throw new SQLException("The restored configuration does not have its exact supported version and role");
+        return new ChannelAndBroadcastConfiguration(loadLegacyChannels(connection, version),
+            loadBroadcastConfigurations(connection));
+    }
+
     /** Reads the committed format-69 extraction while its attached upgrade is still uncommitted. */
     ChannelAndBroadcastConfiguration loadFormat69Configuration(Connection connection) throws SQLException, IOException
     {
