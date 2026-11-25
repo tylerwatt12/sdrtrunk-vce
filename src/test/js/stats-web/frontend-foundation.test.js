@@ -2356,6 +2356,15 @@ async function main() {
     [104, 94, 86], {}, 400), [220, 94, 86]);
   assert.deepEqual(tableDefaults.fittedWidths('channel-frequencies-p25', compactColumns,
     [130, 94, 86], { descriptor: 130 }, 400), [220, 94, 86]);
+  const bsiColumns = [{ id: 'descriptor' }, { id: 'callsign' }, { id: 'tags' }, { id: 'downlink' }];
+  const bsiWidths = bsiColumns.map(column => tableDefaults.width('channel-frequencies-p25', column));
+  assert.ok(bsiWidths[1] <= 140, 'BSI starts compact for its short callsign');
+  const fittedBsi = tableDefaults.fittedWidths('channel-frequencies-p25', bsiColumns, bsiWidths, {}, 1600);
+  assert.equal(fittedBsi[1], bsiWidths[1], 'Extra panel space does not expand the BSI value');
+  assert.equal(fittedBsi[3], bsiWidths[3], 'Neighboring numeric frequency keeps its compact width');
+  const customBsi = tableDefaults.fittedWidths('channel-frequencies-p25', bsiColumns,
+    [bsiWidths[0], 260, bsiWidths[2], bsiWidths[3]], { callsign: 260 }, 1600);
+  assert.equal(customBsi[1], 260, 'An explicitly resized BSI column remains the user\'s choice');
   assert.deepEqual(tableDefaults.fittedWidths('channel-frequency-bands',
     [{ id: 'band' }, { id: 'base' }], [48, 94], {}, 400), [48, 352]);
   assert.deepEqual(tableDefaults.fittedWidths('channel-frequency-bands',

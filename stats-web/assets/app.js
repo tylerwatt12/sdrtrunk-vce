@@ -7,7 +7,7 @@ import { createMessageTypeCatalog } from './core/message-types.js?v=1';
 import { systemCallTitle, callCountDateRows, CALL_COUNT_HELP } from './core/call-count-labels.js?v=1';
 import { Controller as UserPreferenceController } from './core/user-preferences.js?v=4';
 import * as tableLayouts from './core/table-layout.js?v=7';
-import * as tableDefaults from './core/table-defaults.js?v=38';
+import * as tableDefaults from './core/table-defaults.js?v=39';
 import { createTableOverflow } from './core/table-overflow.js?v=2';
 import { Controller as PageTitleController } from './core/page-title.js?v=3';
 import { href as entityRefHref } from './core/entity-ref.js?v=1';
@@ -2134,17 +2134,9 @@ function bsiEvidenceText(observation, includeCallsign = false) {
 function bsiCallsigns(row) {
   const summary = summarizeBsi(row.bsi);
   if (!summary.callsign) return '';
-  const container = node('div', 'live-event-stack');
-  const heading = node('div', 'ui-badge-group');
-  heading.append(callsignLink(summary.callsign));
-  if (summary.conflict) {
-    const warning = badge('Conflict', 'ui-pill-warning');
-    warning.dataset.uiHint = 'Control and voice callsigns disagree. Compare the reception times below.';
-    heading.append(warning);
-  }
-  container.append(heading);
-  for (const observation of summary.observations) {
-    container.append(node('div', 'muted', bsiEvidenceText(observation, summary.conflict)));
+  const container = node('div', 'ui-badge-group');
+  for (const callsign of new Set(summary.observations.map(observation => observation.callsign))) {
+    container.append(callsignLink(callsign));
   }
   return container;
 }

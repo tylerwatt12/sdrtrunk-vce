@@ -8,12 +8,12 @@ const { expectContrast } = require('./fixtures/contrast-audit.cjs');
 const now = Date.parse('2026-11-14T18:00:00Z');
 const observation = (source, callsign, minutes) => ({ source, callsign,
   lastHeardMs: minutes === null ? null : now - minutes * 60000 });
-const matching = [observation('control', 'WTEST77', 20), observation('voice', 'WTEST77', 5)];
+const matching = [observation('control', 'WTEST777', 20), observation('voice', 'WTEST777', 5)];
 const rows = [
   { descriptor: '0-1', downlink_hz: 851012500, bsi: matching },
   { descriptor: '0-5', downlink_hz: 851037500, bsi: [observation('voice', 'WTEST88', 90)] },
   { descriptor: '0-21', downlink_hz: 851137500, bsi: [observation('control', 'WTEST99', null)] },
-  { descriptor: '0-25', downlink_hz: 851162500, bsi: [observation('control', 'WTEST77', 20),
+  { descriptor: '0-25', downlink_hz: 851162500, bsi: [observation('control', 'WTEST777', 20),
     observation('voice', 'WTEST88', 10)] },
   { descriptor: '0-29', downlink_hz: 851187500, bsi: [] }
 ].map(row => ({ ...row, current_tags: ['BSI'], tags: ['BSI'], observation_count: 12 }));
@@ -41,9 +41,8 @@ for (const theme of ['light', 'dark']) {
         return route.fallback();
       });
       await page.goto(`/app.html?view=channel&configuration_id=${channelId}&tab=info`);
-      await expect(page.getByRole('link', { name: 'WTEST77', exact: true })).toHaveCount(1);
-      await expect(page.locator('#content')).toContainText('Control · Fresh · Last heard');
-      await expect(page.locator('#content')).toContainText('Voice · Fresh · Last heard');
+      await expect(page.getByRole('link', { name: 'WTEST777', exact: true })).toHaveCount(1);
+      await expect(page.locator('#content')).not.toContainText('Last heard');
       await expect(page.locator('#content')).not.toContainText('Conflict');
       await expectNoHorizontalOverflow(page);
       await expectContrast(page, { rootSelector: '#content' });
@@ -52,20 +51,43 @@ for (const theme of ['light', 'dark']) {
       await page.goto(`/app.html?view=channel&configuration_id=${channelId}&tab=frequencies`);
       const tableRows = page.locator('tbody tr');
       await expect(tableRows).toHaveCount(rows.length);
-      await expect(tableRows.nth(0).getByRole('link', { name: 'WTEST77', exact: true })).toHaveCount(1);
-      await expect(tableRows.nth(0)).toContainText('Control · Fresh · Last heard');
-      await expect(tableRows.nth(0)).toContainText('Voice · Fresh · Last heard');
-      await expect(tableRows.nth(1)).toContainText('Voice · Historical · Last heard');
-      await expect(tableRows.nth(2)).toContainText('Control · Last heard unknown');
-      await expect(tableRows.nth(3)).toContainText('Conflict');
-      await expect(tableRows.nth(3)).toContainText('Control: WTEST77');
-      await expect(tableRows.nth(3)).toContainText('Voice: WTEST88');
+      const table = page.locator('table[data-table-type="channel-frequencies-p25"]');
+      const bsiCells = table.locator('tbody [data-column="callsign"]');
+      await expect(bsiCells.nth(0)).toHaveText('WTEST777');
+      await expect(bsiCells.nth(1)).toHaveText('WTEST88');
+      await expect(bsiCells.nth(2)).toHaveText('WTEST99');
+      await expect(bsiCells.nth(3).getByRole('link', { name: 'WTEST777', exact: true })).toHaveCount(1);
       await expect(tableRows.nth(3).getByRole('link', { name: 'WTEST88', exact: true })).toHaveCount(1);
-      await expect(tableRows.nth(4)).not.toContainText('Conflict');
-      await expect(page.locator('#content .ui-pill-warning')).toHaveCount(1);
+      await expect(bsiCells.nth(4)).toBeEmpty();
+      expect((await bsiCells.allTextContents()).join(' ')).not.toMatch(/Control|Voice|Last heard|Conflict|Fresh|Historical/);
+      await expect(bsiCells.locator('[data-ui-hint], [title]')).toHaveCount(0);
+      await expect(table.locator('thead [data-column="callsign"]')).toHaveCSS('width', '112px');
+      await expect(table.locator('thead [data-column="downlink"]')).toHaveCSS('width', '94px');
+      const valueGeometry = await bsiCells.nth(0).getByRole('link').evaluate(element => {
+        const range = document.createRange();
+        range.selectNodeContents(element);
+        const cell = element.closest('td');
+        return { lines: range.getClientRects().length, overflow: cell.scrollWidth > cell.clientWidth + 1 };
+      });
+      expect(valueGeometry).toEqual({ lines: 1, overflow: false });
       await expectNoHorizontalOverflow(page);
       await expectContrast(page, { rootSelector: '#content' });
       await page.screenshot({ path: testInfo.outputPath('channel-frequencies.png'), fullPage: true });
+      if (theme === 'light' && size === 'desktop') {
+        await page.setViewportSize({ width: 1920, height: 1000 });
+        const header = table.locator('thead [data-column="callsign"]');
+        await expect(header).toHaveCSS('width', '112px');
+        const saved = page.waitForResponse(response => response.request().method() === 'PUT' &&
+          new URL(response.url()).pathname === '/api/v1/me/preferences');
+        await header.locator('.column-resizer').focus();
+        await header.locator('.column-resizer').press('ArrowRight');
+        expect((await saved).ok()).toBe(true);
+        await page.reload();
+        await expect(header).toHaveCSS('width', '122px');
+        await table.locator('xpath=ancestor::section[1]').getByRole('button', { name: 'Choose table columns' }).click();
+        await page.getByRole('button', { name: 'Reset this table', exact: true }).click();
+        await expect(header).toHaveCSS('width', '112px');
+      }
       expect(state.pageErrors).toEqual([]);
     });
   }

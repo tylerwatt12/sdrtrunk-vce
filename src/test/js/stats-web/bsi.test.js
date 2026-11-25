@@ -80,22 +80,23 @@ function checkApplicationPresentation({ summarizeBsi, bsiObservationFreshness })
   assert.equal(matchedNodes.filter((element) => element.tag === 'a').length, 1,
     'Matching control/voice evidence renders one linked carrier callsign');
   assert.equal(matched.textContent.match(/WKSD533/g).length, 1);
-  assert.match(matched.textContent, /Control · Historical · Last heard time-1000/);
-  assert.match(matched.textContent, /Voice · Fresh · Last heard time-9999000/);
-  assert.equal(matchedNodes.some((element) => element.textContent === 'Conflict'), false);
+  assert.equal(matched.textContent, 'WKSD533', 'The BSI value contains only the confirmed callsign');
+  assert.equal(matchedNodes.some((element) => Object.keys(element.dataset).length), false,
+    'Removed reception annotations are not moved into hidden hints');
 
   const conflicting = behavior.bsiCallsigns({ bsi: [control, { ...voice, callsign: 'WPTZ770' }] });
   const conflictNodes = descendants(conflicting);
   assert.equal(conflictNodes.filter((element) => element.tag === 'a')[0].textContent, 'WPTZ770');
-  assert.equal(conflictNodes.filter((element) => element.textContent === 'Conflict').length, 1,
-    'A real retained cross-source difference has one visible conflict flag');
-  assert.match(conflicting.textContent, /Control: WKSD533/);
-  assert.match(conflicting.textContent, /Voice: WPTZ770/);
+  assert.deepEqual(conflictNodes.filter((element) => element.tag === 'a').map((element) => element.textContent),
+    ['WPTZ770', 'WKSD533'], 'Both distinct known callsigns remain linked, newest evidence first');
+  assert.equal(conflicting.textContent, 'WPTZ770WKSD533');
   assert.equal(behavior.bsiCallsigns({ bsi: [] }), '');
   assert.equal(behavior.bsiCallsigns({}), '');
   assert.equal(behavior.bsiCallsigns({ bsi: [{ ...control, callsign: ' ' }] }), '');
-  assert.match(behavior.bsiCallsigns({ bsi: [{ ...control, lastHeardMs: null }] }).textContent,
-    /Control · Last heard unknown/, 'Unknown legacy reception time stays unknown in the actual cell');
+  assert.equal(behavior.bsiCallsigns({ bsi: [{ ...control, lastHeardMs: null }] }).textContent,
+    'WKSD533', 'Unknown reception time adds no subtitle or invented freshness');
+  assert.deepEqual(control, { source: 'control', callsign: 'WKSD533', lastHeardMs: 1000 },
+    'Simplifying the value does not alter retained source or reception facts');
 
   const frequency = 851_137_500;
   const row = (extra = {}) => ({ frequency_hz: frequency, status: 'CALL', bsi: [control, voice], ...extra });
