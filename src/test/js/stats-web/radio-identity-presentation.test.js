@@ -287,13 +287,23 @@ assert.equal(dock.title({ destination_radio_id: 501 }), 'Radio 501');
 assert.equal(dock.sourceSummary({}), '', 'Missing source facts remain empty in the audio player.');
 const zeroCall = { protocol: 'P25', source_id: 0, source_form: 'RADIO',
   source_alias: 'PREVIOUS CONFIGURED NAME', talker_alias: 'PREVIOUS OTA NAME' };
-assert.equal(dock.sourceName(zeroCall), 'Unknown radio');
-assert.equal(dock.sourceSummary(zeroCall), 'Unknown radio', 'No previous name is shown for an unknown radio.');
+assert.equal(dock.sourceName(zeroCall), '');
+assert.equal(dock.sourceSummary(zeroCall), '', 'No previous name is shown for an unknown radio.');
 assert.equal(behavior.liveSourceName(zeroCall), '');
-assert.equal(behavior.liveIdentifierAliasValue(zeroCall, 'source'), 'Unknown radio');
+assert.equal(behavior.liveIdentifierAliasValue(zeroCall, 'source'), '');
 assert.equal(behavior.activityPartyValue({ protocol: 'P25', source_radio_id: 0,
-  source_alias_name: 'PREVIOUS CONFIGURED NAME', source_talker_alias: 'PREVIOUS OTA NAME' }, 'source').primary,
-  'Unknown radio');
+  source_alias_name: 'PREVIOUS CONFIGURED NAME', source_talker_alias: 'PREVIOUS OTA NAME' }, 'source'), '');
+for (const sourceId of [null, undefined, '', 0]) {
+  const missingCall = { ...zeroCall, source_id: sourceId };
+  assert.equal(dock.sourceName(missingCall), '', 'A missing P25 source adds no repeated placeholder.');
+  assert.equal(dock.sourceSummary(missingCall), '', 'Missing source names stay suppressed.');
+  assert.equal(behavior.liveIdentifierAliasValue(missingCall, 'source'), '');
+  assert.equal(behavior.activityPartyValue({ protocol: 'P25', source_radio_id: sourceId,
+    source_alias_name: 'PREVIOUS CONFIGURED NAME', source_talker_alias: 'PREVIOUS OTA NAME' }, 'source'), '');
+}
+assert.equal(dock.sourceSummary({ ...zeroCall, source_id: 501,
+  source_alias: 'OWNED CONFIGURED NAME', talker_alias: 'OWNED OTA NAME' }), 'OWNED OTA NAME · Radio 501',
+  'A known numeric source retains its owned name and identifier.');
 const qualifiedZeroCall = { ...zeroCall, source_canonical_identity: {
   wacn: 0xABCDE, system_id: 0x123, subscriber_id: 501 }, source_alias: '', talker_alias: 'OWNED NAME' };
 assert.equal(dock.sourceId(qualifiedZeroCall), 'ABCDE.123.501');
@@ -304,7 +314,7 @@ assert.equal(behavior.radioIdentifierText({ protocol: 'P25', native_id: 9001,
   canonical_identity: qualifiedZeroCall.source_canonical_identity }, 0), '',
   'An unrelated zero peer must not borrow a directory row owner identity.');
 assert.equal(behavior.liveEventPartyText({ protocol: 'P25', from_party: [{ form: 'RADIO',
-  protocol: 'APCO25', text: '0' }] }, 'from'), 'Unknown radio');
+  protocol: 'APCO25', text: '0' }] }, 'from'), '');
 assert.equal(behavior.liveEventPartyText({ protocol: 'P25', serving_system_key: 'p25:abcde:123',
   from_party: [{ form: 'RADIO', protocol: 'APCO25', text: 'ABCDE.123.501',
     canonical_identity: qualifiedZeroCall.source_canonical_identity, observed_local_id: 0 }] }, 'from'),
@@ -342,7 +352,7 @@ const dockDetails = vm.runInNewContext(`(() => {
 const descendants = node => [node, ...node.children.flatMap(descendants)];
 const unknownDetails = dockDetails.render({ ...zeroCall, source_description: 'PREVIOUS DESCRIPTION',
   source_group: 'PREVIOUS GROUP', source_entity_ref: { href: '/previous-radio' } });
-assert.match(unknownDetails.textContent, /Unknown radio/);
+assert.doesNotMatch(unknownDetails.textContent, /Unknown radio/);
 assert.doesNotMatch(unknownDetails.textContent, /PREVIOUS/,
   'Live player details cannot expose a previous radio’s alias, description or group.');
 assert.ok(!descendants(unknownDetails).some(node => node.href === '/previous-radio'),
@@ -375,7 +385,8 @@ const staleSourceMetadata = { ...zeroCall, source_description: 'PREVIOUS DESCRIP
 const ownedSourceMetadata = { ...qualifiedZeroCall, source_description: 'OWNED DESCRIPTION',
   source_group: 'OWNED GROUP', source_alias_description: 'OWNED ALIAS DESCRIPTION' };
 const unknownScannerSource = scannerSourceDetails(staleSourceMetadata);
-assert.match(unknownScannerSource.textContent, /Unknown radio/);
+assert.doesNotMatch(unknownScannerSource.textContent, /Unknown radio/);
+assert.match(unknownScannerSource.textContent, /—/, 'Scanner uses its existing empty-field mark.');
 assert.doesNotMatch(unknownScannerSource.textContent, /PREVIOUS/,
   'Scanner source details cannot reveal a previous radio through descriptions or group pills.');
 assert.match(scannerSourceDetails(ownedSourceMetadata).textContent, /ABCDE\.123\.501/);
@@ -413,8 +424,7 @@ const recordingSourceEntities = vm.runInNewContext([
   frequency: () => '', winningSite: () => '', protocolLabel: value => value
 });
 const unknownRecordingSource = recordingSourceEntities(staleSourceMetadata).find(entity => entity.key === 'radio');
-assert.equal(unknownRecordingSource.text, 'Unknown radio');
-assert.equal(unknownRecordingSource.extra, '', 'Expanded recording source tiles cannot reveal the previous description.');
+assert.equal(unknownRecordingSource, undefined, 'Expanded recordings omit an unknown source tile and its previous description.');
 const ownedRecordingSource = recordingSourceEntities(ownedSourceMetadata).find(entity => entity.key === 'radio');
 assert.match(ownedRecordingSource.text, /ABCDE\.123\.501/);
 assert.equal(ownedRecordingSource.extra, 'OWNED DESCRIPTION');
@@ -499,22 +509,22 @@ for (const protocol of ['P25', 'DMR', 'NXDN']) {
     for (const party of ['source', 'target']) {
       const unknownSource = protocol === 'P25' && party === 'source';
       const unnamed = behavior.activityPartyValue(row, party);
-      assert.equal(unknownSource ? unnamed.primary : unnamed, unknownSource ? 'Unknown radio' : '',
+      assert.equal(unnamed, '',
         `${protocol} missing ${party} IDs must not become a special zero ID.`);
       const named = behavior.activityPartyValue({ ...row, source_alias_name: 'Dispatch radio',
         target_alias_name: 'Dispatch group' }, party);
-      assert.equal(named.primary, unknownSource ? 'Unknown radio' : party === 'source' ? 'Dispatch radio' : 'Dispatch group');
-      assert.equal(named.secondary, '', 'A supplied name without an ID does not fabricate an ID below it.');
+      assert.equal(unknownSource ? named : named.primary, unknownSource ? '' : party === 'source' ? 'Dispatch radio' : 'Dispatch group');
+      if (!unknownSource) assert.equal(named.secondary, '', 'A supplied name without an ID does not fabricate an ID below it.');
     }
   }
 }
-for (const [protocol, sourceLabel, targetLabel] of [['P25', 'Unknown radio', 'No Talkgroup'],
+for (const [protocol, sourceLabel, targetLabel] of [['P25', '', 'No Talkgroup'],
   ['DMR', 'Reserved', 'Reserved'], ['NXDN', 'No Unit', '0']]) {
   const row = { protocol, source_radio_id: 0, target_id: 0, target_kind: 'talkgroup' };
   for (const [party, expectedLabel] of [['source', sourceLabel], ['target', targetLabel]]) {
     const summary = behavior.activityPartyValue(row, party);
-    assert.equal(summary.primary, expectedLabel, `${protocol} retains its actual zero-ID meaning.`);
-    assert.equal(summary.secondary, expectedLabel === '0' || expectedLabel === 'Unknown radio' ? '' : '0',
+    assert.equal(expectedLabel ? summary.primary : summary, expectedLabel, `${protocol} retains its actual zero-ID meaning.`);
+    assert.equal(expectedLabel ? summary.secondary : '', expectedLabel === '0' || expectedLabel === '' ? '' : '0',
       'A reported zero ID remains visible without repeating an ordinary identifier.');
   }
 }

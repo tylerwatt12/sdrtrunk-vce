@@ -1,7 +1,7 @@
 // Temporary observations for the production Scanner. The real player supplies
 // target selection, queue order, Hold, Avoid, Pause, Stop, and Replay behavior.
 // Only its receiver feed and audio transport are replaced with inert memory data.
-import { WebCallPlayer } from '../web-call-player.js?v=25';
+import { WebCallPlayer } from '../web-call-player.js?v=30';
 import { defaults, validate } from '../core/preference-schema.js?v=9';
 import { createDirectListenSession } from '../core/direct-listen.js?v=1';
 

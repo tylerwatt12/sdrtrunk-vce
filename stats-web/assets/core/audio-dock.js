@@ -137,7 +137,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     }
   };
   const sourceName = (call) => {
-    if (unknownSource(call)) return 'Unknown radio';
+    if (unknownSource(call)) return '';
     const name = formatSourceName(call?.source_alias || call?.radio_alias,
       call?.source_ota_alias || call?.source_ota_ta || call?.talker_alias || call?.ota_alias, getSourceNameDisplay());
     const id = sourceId(call);
@@ -145,7 +145,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   };
   const sourceSummary = (call) => {
     if (!call) return '';
-    if (unknownSource(call)) return 'Unknown radio';
+    if (unknownSource(call)) return '';
     const alias = call.source_alias || call.radio_alias;
     const id = sourceId(call);
     const ota = call.source_ota_alias || call.source_ota_ta || call.talker_alias || call.ota_alias;

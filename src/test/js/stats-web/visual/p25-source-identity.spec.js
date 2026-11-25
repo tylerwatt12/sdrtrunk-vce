@@ -25,7 +25,8 @@ for (const presentation of [
       await openAudioApp(page, { calls: [call], theme: presentation.theme, feedCallsEnabled: false });
       await page.locator('.recordings-call-info').first().click();
       const actions = page.getByRole('dialog', { name: 'Call actions', exact: true });
-      await expect(actions).toContainText(known ? 'ABCDE.123.501' : 'Unknown radio');
+      if (known) await expect(actions).toContainText('ABCDE.123.501');
+      await expect(actions).not.toContainText('Unknown radio');
       await expect(actions).not.toContainText('PREVIOUS OTA NAME');
       await expect(actions).not.toContainText('PREVIOUS CONFIGURED NAME');
       await actions.getByRole('button', { name: /^Play once/ }).click();
@@ -34,7 +35,8 @@ for (const presentation of [
       await dock.locator('.audio-dock-compact-copy').click();
       await expect(dock).toHaveAttribute('data-state', 'full');
       await selectAudioPanel(dock, 'Details');
-      await expect(dock).toContainText(known ? 'ABCDE.123.501' : 'Unknown radio');
+      if (known) await expect(dock).toContainText('ABCDE.123.501');
+      await expect(dock).not.toContainText('Unknown radio');
       await expect(dock).not.toContainText('Radio 0');
       await expect(dock).not.toContainText('PREVIOUS OTA NAME');
       await expect(dock).not.toContainText('PREVIOUS CONFIGURED NAME');
@@ -62,10 +64,12 @@ for (const presentation of [
       await dock.locator('#audio-dock-size-handle:visible, #audio-dock-slim-expand:visible').press('End');
       await expect(dock).toHaveAttribute('data-state', 'full');
       await dock.getByRole('button', { name: 'Listen live', exact: true }).click();
-      await expect(dock).toContainText(known ? 'OWNED OTA NAME' : 'Unknown radio');
+      if (known) await expect(dock).toContainText('OWNED OTA NAME');
+      await expect(dock).not.toContainText('Unknown radio');
       await selectAudioPanel(dock, 'Details');
       await dock.locator('summary').filter({ hasText: 'Identity & aliases' }).click();
-      await expect(dock).toContainText(known ? 'ABCDE.123.501' : 'Unknown radio');
+      if (known) await expect(dock).toContainText('ABCDE.123.501');
+      await expect(dock).not.toContainText('Unknown radio');
       await expect(dock).not.toContainText('PREVIOUS');
       await expect(dock).not.toContainText('Radio 0');
       await expectNoHorizontalOverflow(page);

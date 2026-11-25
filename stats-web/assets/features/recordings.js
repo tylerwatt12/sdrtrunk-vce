@@ -364,7 +364,7 @@ function sourceLabel(row, mode) {
   const auxiliary = row?.auxiliary_identifiers?.find(item => item.kind === 'radio' && item.role === 'source');
   if (!(Number(value(row, 'source_id', 'radio_id')) > 0) && auxiliary)
     return [auxiliary.ota_alias || auxiliary.alias, `${protocolLabel(auxiliary.protocol)} ${auxiliary.value}`].filter(Boolean).join(' · ');
-  if (recordingSourceUnknown(row)) return 'Unknown radio';
+  if (recordingSourceUnknown(row)) return '';
   const source = value(row, 'source_alias', 'radio_alias');
   const id = recordingRadioId(row, 'source', value(row, 'source_id', 'radio_id'));
   const ota = value(row, 'source_ota_alias', 'source_ota_ta', 'ota_alias', 'talker_alias');

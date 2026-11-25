@@ -1408,7 +1408,7 @@ export class WebCallPlayer {
     const sourceName = formatSourceName(call.source_alias, call.talker_alias, this.getSourceNameDisplay?.());
     const unknownSource = /^(P25|APCO25)/i.test(String(call.protocol || call.decoder || '')) &&
       !p25RadioIdentityKnown(call, call.source_id, 'source');
-    const source = unknownSource ? (sourceId || sourceName ? 'Unknown radio' : '') : sourceName ?
+    const source = unknownSource ? '' : sourceName ?
       `${sourceName}${sourceIdentity ? ` · ${sourceIdentity}` : ''}` : sourceIdentity;
     return `${target}${source ? ` ← ${source}` : ''}`;
   }

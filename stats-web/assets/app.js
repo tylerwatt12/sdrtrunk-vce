@@ -42,7 +42,7 @@ import {
 import { radioReferenceLocalityCache } from './features/radioreference-locality-cache.js?v=1';
 import { openRadioReferenceConnect, radioReferencePremiumSignup } from './features/radioreference-connect.js?v=3';
 import { createActivityCallPlayback } from './features/activity-call-playback.js?v=2';
-import { createRecordingsFeature } from './features/recordings.js?v=82';
+import { createRecordingsFeature } from './features/recordings.js?v=83';
 import { spectrumSearchIdentityFacts, spectrumSearchMapDraft, spectrumSearchProtocolLabel } from './features/spectrum-search-data.js?v=1';
 import { createDiscoveryRadioReferenceContext, createDiscoveryRadioReferenceWait, discoveryRadioReferencePending, discoverySnapshotIsCurrent, discoveryCleanupAlreadyClosed, createDiscoveryCompletion, createDiscoveryAliasListChoice, discoveryAliasImportMatch, discoveryAliasImportTargets, discoveryRadioReferenceResult, discoveryRadioReferenceSystemUrl, ALIAS_LIST_NAME_MAX_LENGTH, discoveryAliasListName, discoveryAliasImportResults, discoveryAliasImportForSelection, importDiscoveryAliases } from './features/discovery-radioreference.js?v=19';
 import { requestChannelAction, requestChannelAdminMutation } from './core/channel-actions.js?v=2';
@@ -51,12 +51,12 @@ import { createSpectrumDisplayPreferences } from './core/spectrum-display-prefer
 import { createSpectrumAutoRange, spectrumTraceValue } from './features/spectrum-auto-range.js?v=4';
 import { createChannelSignalAutoRange } from './features/channel-signal-auto-range.js?v=2';
 import { smoothSpectrumValues } from './features/spectrum-smoothing.js?v=1';
-import { createAudioDock } from './core/audio-dock.js?v=51';
+import { createAudioDock } from './core/audio-dock.js?v=52';
 import { createAudioCommand, createAudioTransport, createAudioTiming, createAudioVolume, audioPlaybackAction } from './core/audio-controls.js?v=2';
 import { formatPagingToneSummary } from './core/call-audio-details.js?v=7';
 import { createRemoteSupportWorkspace, remoteSupportDescription } from './features/remote-support.js?v=6';
 import { mountAccessWireframe } from './features/access-wireframe.js?v=2';
-import { WebCallPlayer } from './web-call-player.js?v=29';
+import { WebCallPlayer } from './web-call-player.js?v=30';
 
 let route = new URLSearchParams(window.location.search);
 const content = document.getElementById('content');
@@ -8523,7 +8523,7 @@ async function prepareWorkspaceGuideSample(view, section, context) {
     ] : topics ? [
       import('./features/alerts.js?v=25'), import('./guides/topics-presentation.js?v=1')
     ] : scanner ? [
-      Promise.resolve(null), import('./guides/scanner-presentation.js?v=6')
+      Promise.resolve(null), import('./guides/scanner-presentation.js?v=7')
     ] : main ? [
       Promise.resolve(null), import('./guides/main-presentation.js?v=1')
     ] : live ? [
@@ -12796,7 +12796,7 @@ function renderScannerCall(host, state, channelMetadata, options = {}) {
   source.setAttribute('aria-label', 'Transmitting radio');
   const sourceFields = node('dl', 'ui-fact-list ui-fact-list-grid scanner-source-fields');
   const sourceAlias = scannerSourceAlias(call);
-  const sourceId = sourceUnknown ? 'Unknown radio' : radioIdentifierText(call, call.source_id, 'source');
+  const sourceId = sourceUnknown ? '' : radioIdentifierText(call, call.source_id, 'source');
   sourceFields.append(scannerField('Transmitting', sourceAlias || sourceId || '—', 0,
     open(sourceAlias ? 'source-alias' : 'source'), true, detailMode));
   const sourceEdit = !idle && scannerAliasEditButton('source', aliasContexts?.source, options.onAliasSaved);
@@ -14557,7 +14557,7 @@ function liveEventIdentifierText(event, identifier) {
   const form = String(identifier?.form || '').toUpperCase();
   if (form === 'RADIO' && Number(identifier.text) === 0 &&
       isP25({ protocol: identifier.protocol || event?.protocol }) &&
-      !p25RadioIdentityKnown(identifier, identifier.text)) return 'Unknown radio';
+      !p25RadioIdentityKnown(identifier, identifier.text)) return '';
   const groupFacts = ['TALKGROUP', 'PATCH_GROUP'].includes(form) && p25IdentityFacts(identifier, '', 'talkgroup');
   const groupText = groupFacts ? groupIdentifierText({ ...identifier, protocol: 'P25',
     serving_system_key: p25ServingSystemKey(event), home_catalog_name: identifier.catalog_name },
@@ -20249,7 +20249,7 @@ function liveIdentityActionLink(row, kind, label) {
 
 function liveIdentifierAliasValue(row, kind) {
   const value = row?.[`${kind}_id`];
-  if (kind === 'source' && isP25(row) && !p25RadioIdentityKnown(row, value, kind)) return 'Unknown radio';
+  if (kind === 'source' && isP25(row) && !p25RadioIdentityKnown(row, value, kind)) return '';
   const missing = value == null || value === '';
   const text = missing && !isP25(row) ? '' : partyIdentifierText(row, missing ? null : value, kind);
   if (!text) return '';
@@ -23999,7 +23999,7 @@ function activityPartyName(row, kind) {
 
 function activityPartyIdentifier(row, kind) {
   const value = kind === 'source' ? row.source_radio_id : row.target_id;
-  if (kind === 'source' && isP25(row) && !p25RadioIdentityKnown(row, value, kind)) return 'Unknown radio';
+  if (kind === 'source' && isP25(row) && !p25RadioIdentityKnown(row, value, kind)) return '';
   const missing = value == null || value === '';
   if (missing && !isP25(row)) return '';
   return kind === 'source' || activityTargetKind(row) === 'radio' ?
@@ -24010,7 +24010,7 @@ function activityPartyIdentifier(row, kind) {
 function activityPartyValue(row, kind) {
   if (kind === 'target' && isAnalogChannel(row)) return '';
   if (kind === 'source' && isP25(row) && !p25RadioIdentityKnown(row, row.source_radio_id, kind)) {
-    return identitySummaryValue('Unknown radio', '');
+    return '';
   }
   const identifier = activityPartyIdentifier(row, kind);
   const value = kind === 'source' ? row.source_radio_id : row.target_id;

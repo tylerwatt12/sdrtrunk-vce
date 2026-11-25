@@ -471,7 +471,12 @@ async function main() {
     }), 'TGID 1201', 'A real conventional P25 talkgroup remains visible when no source was supplied');
     assert.equal(labels.callLabel({ protocol: 'P25', target_id: 77, source_id: 0,
       source_alias: 'PREVIOUS CONFIGURED NAME', talker_alias: 'PREVIOUS OTA NAME' }),
-    'ID 77 ← Unknown radio', 'Unknown radio zero cannot display either previous name.');
+    'ID 77', 'Unknown radio zero is omitted without displaying either previous name.');
+    for (const sourceId of [null, undefined, '']) {
+      assert.equal(labels.callLabel({ protocol: 'P25', target_id: 77, source_id: sourceId,
+        source_alias: 'PREVIOUS CONFIGURED NAME', talker_alias: 'PREVIOUS OTA NAME' }), 'ID 77',
+      'An absent source omits its arrow and does not revive a previous alias.');
+    }
     assert.equal(labels.callLabel({ protocol: 'P25', target_id: 77, source_id: 0, source_form: 'RADIO',
       source_canonical_identity: { wacn: 0xABCDE, system_id: 0x123, subscriber_id: 501 },
       talker_alias: 'OWNED NAME' }), 'ID 77 ← OWNED NAME · ABCDE.123.501');
