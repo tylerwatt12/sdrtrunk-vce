@@ -22,13 +22,14 @@ class StatsWebChannelsUiContractTest
     void usesOneModernCatalogForChannelAdministrators() throws Exception
     {
         String source = source();
-        String setup = function(source, "async function renderChannelSetup(options = null)");
-        String catalog = function(source, "async function renderModernChannelCatalog(renderContext, revealId = null)");
+        String setup = function(source, "async function renderChannelSetup()");
+        String catalog = function(source, "async function renderModernChannelCatalog(renderContext)");
         String configurationRequest = function(source,
             "async function requestChannelConfigurationJson(path, options = {})");
         String columns = function(source, "function channelAdminColumns(");
+        String processing = function(source, "function channelProcessingPresentation(row)");
 
-        assertTrue(setup.contains("renderModernChannelCatalog(renderContext, typeof options?.revealId === 'string' ? options.revealId : null)"));
+        assertTrue(setup.contains("await renderModernChannelCatalog(renderContext)"));
         assertFalse(source.contains("function renderRadioSystems()"));
         assertTrue(catalog.contains("requestChannelConfigurationJson('/api/v1/admin/channels'"));
         assertTrue(catalog.contains("requestChannelConfigurationJson('/api/v1/admin/channels/protocols'"));
@@ -41,13 +42,17 @@ class StatsWebChannelsUiContractTest
         assertTrue(catalog.contains("tableController.reconcileRows"));
         assertTrue(catalog.contains("layoutMenuHost: tools"));
         assertTrue(catalog.contains("type: 'channel-catalog-admin-v3'"));
-        assertTrue(catalog.contains("const pageSize = 20"));
+        assertTrue(catalog.contains("state.visibleRows = filteredRows()"));
         assertTrue(catalog.contains("bare: true"));
         assertTrue(catalog.contains("creationActions.append(newChannelButton)"));
         assertTrue(catalog.contains("creationActions.append(findSystemsButton)"));
-        assertTrue(columns.contains("row.processing_state === 'RUNNING'"));
+        assertTrue(columns.contains("channelProcessingPresentation(row)"));
+        assertTrue(processing.contains("row?.processing_state === 'RUNNING'"));
+        assertTrue(processing.contains("row?.processing_state === 'RECOVERING'"));
+        assertTrue(processing.contains("label: 'Reconnecting', tone: 'warning'"));
         assertFalse(columns.contains("if (editable)"));
-        assertTrue(columns.contains("id: 'status', label: 'State', render: (row) => uiStatus("));
+        assertTrue(columns.contains("id: 'status', label: 'State', render: (row) => {"));
+        assertTrue(columns.contains("return uiStatus(state.label, state.tone)"));
         assertTrue(columns.contains("fullLabel: 'Auto start'"));
         assertTrue(columns.contains("row.alias_list_name"));
         assertTrue(columns.contains("row.editable !== false"));
@@ -72,7 +77,7 @@ class StatsWebChannelsUiContractTest
     void groupsChannelsByProtocolWithoutTheOldTopologySelector() throws Exception
     {
         String source = source();
-        String catalog = function(source, "async function renderModernChannelCatalog(renderContext, revealId = null)");
+        String catalog = function(source, "async function renderModernChannelCatalog(renderContext)");
         String protocolGroup = function(source, "function channelProtocolGroup(row)");
         String protocolOrder = function(source, "function channelProtocolOrder(left, right)");
         String table = function(source, "function table(rows, columns, emptyText = 'No rows', options = {})");
@@ -115,7 +120,7 @@ class StatsWebChannelsUiContractTest
     void usesTheSharedHeaderOffsetForStickyChannelActions() throws Exception
     {
         String source = source();
-        String catalog = function(source, "async function renderModernChannelCatalog(renderContext, revealId = null)");
+        String catalog = function(source, "async function renderModernChannelCatalog(renderContext)");
         String stickyOffset = function(source, "function installStickyHeaderOffset()");
         String css = StatsWebStylesheetTestSupport.readAll();
 

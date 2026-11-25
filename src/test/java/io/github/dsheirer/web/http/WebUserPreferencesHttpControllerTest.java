@@ -85,7 +85,7 @@ class WebUserPreferencesHttpControllerTest
             assertEquals("light", initial.at("/preferences/appearance/theme").textValue());
             assertTrue(initial.at("/preferences/appearance/hue").isNull());
             assertTrue(initial.at("/preferences/playback/selected_scan_list_ids").isArray());
-            assertEquals(15, initial.at("/preferences/version").intValue());
+            assertEquals(16, initial.at("/preferences/version").intValue());
             assertEquals("queue", initial.at("/preferences/playback/recording_click_mode").textValue());
             assertTrue(initial.at("/preferences/guides/automatic_page_guides").booleanValue());
             assertEquals("normal", initial.at("/preferences/presentation/live_row_density").textValue());

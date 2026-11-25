@@ -208,9 +208,28 @@ public final class CurrentFormatTestDatabase
             }
             query = String.join(" UNION ALL ", roles);
         }
-        else if(table.equals("configuration_channel")) query = "SELECT c.*, (SELECT reset_at_ms FROM " +
-            "activity.receiver_channel_statistics_reset r WHERE r.configuration_id=c.configuration_id) " +
-            "AS analog_activity_reset_ms FROM main.configuration_channel c";
+        else if(table.equals("configuration_channel"))
+        {
+            var columns = new java.util.ArrayList<String>();
+            try(var statement = connection.createStatement();
+                var rows = statement.executeQuery("PRAGMA main.table_info(configuration_channel)"))
+            {
+                while(rows.next())
+                {
+                    String name = rows.getString("name");
+                    if(name.equals("use_auto_start_order_for_audio"))
+                    {
+                        try(var check = connection.createStatement(); var values = check.executeQuery(
+                            "SELECT use_auto_start_order_for_audio FROM main.configuration_channel"))
+                        { while(values.next()) addedAudioOrderPreference(table, values, 1); }
+                    }
+                    else columns.add("c.\"" + name.replace("\"", "\"\"") + "\"");
+                }
+            }
+            query = "SELECT " + String.join(",", columns) + ", (SELECT reset_at_ms FROM " +
+                "activity.receiver_channel_statistics_reset r WHERE r.configuration_id=c.configuration_id) " +
+                "AS analog_activity_reset_ms FROM main.configuration_channel c";
+        }
         else
         {
             boolean configuration = io.github.dsheirer.database.ConfigurationHistorySchema.CONFIGURATION_TABLES.contains(table)
@@ -305,6 +324,19 @@ public final class CurrentFormatTestDatabase
                 org.junit.jupiter.api.Assertions.assertEquals("ok", rows.getString(1), role);
             }
         }
+    }
+
+    /** A later opt-in field is checked for its declared default before comparing every original channel value. */
+    static boolean addedAudioOrderPreference(String table, ResultSet rows, int column) throws SQLException
+    {
+        if(!table.equals("configuration_channel") ||
+            !rows.getMetaData().getColumnName(column).equals("use_auto_start_order_for_audio")) return false;
+        Object value = rows.getObject(column);
+        org.junit.jupiter.api.Assertions.assertTrue(value instanceof Integer || value instanceof Long,
+            "Historical audio-order preference must be a non-null integer");
+        org.junit.jupiter.api.Assertions.assertEquals(0L, ((Number)value).longValue(),
+            "Existing channels must remain opted out of audio-order preference");
+        return true;
     }
 
     /** Later declared additions are checked independently, rather than compared as historical columns. */

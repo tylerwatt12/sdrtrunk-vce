@@ -389,8 +389,8 @@ class StatsWebInteractionUiContractTest
         assertTrue(directory.contains("radioDirectoryEmbeddedPanel('systems', wrapper)"));
         assertTrue(directory.contains("snapshot.systems.forEach((parent)"));
         assertTrue(directory.contains("parent.children.filter((row)"));
-        assertTrue(directory.contains("update(updated, quality)"));
-        assertTrue(directory.contains("directory = updated; currentQuality = quality"));
+        assertTrue(directory.contains("update(updated, quality, now = receiverNow)"));
+        assertTrue(directory.contains("directory = updated; currentQuality = quality; receiverNow = now"));
         assertFalse(directory.contains("await api("));
         assertTrue(directory.contains("radioDirectoryConventionalGroups(conventionalRows)"));
         assertTrue(directory.contains("exportCsvLink('signal-health')"));
@@ -703,14 +703,19 @@ class StatsWebInteractionUiContractTest
     {
         String source = source();
         String callsign = function(source, "function callsignLink(value)");
+        String bsi = function(source, "function bsiCallsigns(row)");
         String neighbor = function(source, "function neighborSiteLink(row)");
         String trunkedNeighbors = function(source, "function trunkedChannelNeighborColumns(channel)");
         assertTrue(callsign.contains("externalAnchor(callsign"));
         assertTrue(callsign.contains("encodeURIComponent(callsign)"));
         assertTrue(source.contains("['BSI', bsiCallsigns(channel)]"));
         assertTrue(source.contains("render: bsiCallsigns"));
-        assertTrue(function(source, "function bsiCallsigns(row)").contains("callsignLink(summary.callsign)"));
-        assertTrue(function(source, "function bsiCallsigns(row)").contains("bsiEvidenceText(observation, summary.conflict)"));
+        assertTrue(bsi.contains("node('div', 'ui-badge-group')"));
+        assertTrue(bsi.contains("new Set(summary.observations.map(observation => observation.callsign))"));
+        assertTrue(bsi.contains("container.append(callsignLink(callsign))"));
+        assertFalse(bsi.contains("bsiEvidenceText"));
+        assertFalse(bsi.contains("summary.conflict"));
+        assertFalse(bsi.contains("uiHint"));
         assertTrue(neighbor.contains("entityRefHref(row?.entity_ref)"));
         assertFalse(neighbor.contains("neighbor_guid"));
         assertFalse(neighbor.contains("href('site'"));

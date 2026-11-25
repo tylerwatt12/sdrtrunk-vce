@@ -44,7 +44,8 @@ class StatsWebRadioInformationArchitectureUiContractTest
         assertFalse(routes.contains("id: 'hardware'"));
         assertFalse(app.contains("if (view === 'channels' || view === 'radio-systems')"));
         assertFalse(app.contains("if (view === 'identities')"));
-        assertTrue(app.contains("renderNestedRadioDirectory(renderContext, visibleDirectory, snapshot.quality.current, options)"));
+        assertTrue(app.contains("renderNestedRadioDirectory(renderContext, visibleDirectory, snapshot.quality.current,"));
+        assertTrue(app.contains("{ ...options, now: snapshot.receiverNow }"));
         assertFalse(app.contains("editable ? 'Channels' : 'Radio Directory'"));
         assertFalse(app.contains("if (editable) columns.push"));
     }

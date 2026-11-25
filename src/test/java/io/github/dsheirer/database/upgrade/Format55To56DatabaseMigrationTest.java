@@ -368,7 +368,8 @@ class Format55To56DatabaseMigrationTest
                     List<String> row = new ArrayList<>();
                     for(int column = 1; column <= rows.getMetaData().getColumnCount(); column++)
                     {
-                        if(CurrentFormatTestDatabase.addedHistoryColumn(table, rows, column)) continue;
+                        if(CurrentFormatTestDatabase.addedHistoryColumn(table, rows, column) ||
+                            CurrentFormatTestDatabase.addedAudioOrderPreference(table, rows, column)) continue;
                         if("source_call_uuid".equals(rows.getMetaData().getColumnName(column)) ||
                             table.equals("receiver_activity_event") && "duration_ms".equals(rows.getMetaData().getColumnName(column)))
                         { assertNull(rows.getObject(column)); continue; }

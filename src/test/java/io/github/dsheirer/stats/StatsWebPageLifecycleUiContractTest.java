@@ -141,7 +141,7 @@ class StatsWebPageLifecycleUiContractTest
         assertOrdered(mainRefresh, "const snapshot = await loadMainDashboard(requestApi);",
             "if (!renderIsCurrent(renderContext)) return;");
         assertTrue(mainRefresh.contains("if (refreshing || !renderIsCurrent(renderContext)) return;"));
-        assertTrue(mainRefresh.contains("directory.update(updated.directory, updated.quality.current)"));
+        assertTrue(mainRefresh.contains("directory.update(updated.directory, updated.quality.current, updated.receiverNow)"));
         assertTrue(mainRefresh.contains("}, 5_000)"));
         assertOrdered(channelSignal, "await load(rangeControl.buttons, true);",
             "if (renderIsCurrent(renderContext)) pageInterval(load, 30_000);");

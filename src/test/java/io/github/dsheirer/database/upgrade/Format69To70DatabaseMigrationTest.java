@@ -193,7 +193,8 @@ class Format69To70DatabaseMigrationTest
                     StringBuilder row = new StringBuilder();
                     for(int index = 1; index <= values.getMetaData().getColumnCount(); index++)
                     {
-                        if(CurrentFormatTestDatabase.addedHistoryColumn(table, values, index)) continue;
+                        if(CurrentFormatTestDatabase.addedHistoryColumn(table, values, index) ||
+                            CurrentFormatTestDatabase.addedAudioOrderPreference(table, values, index)) continue;
                         Object value = values.getObject(index);
                         if(upgradedPreferences && table.equals("web_user"))
                         {

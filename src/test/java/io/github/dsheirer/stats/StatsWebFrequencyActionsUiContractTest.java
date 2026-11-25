@@ -166,7 +166,7 @@ class StatsWebFrequencyActionsUiContractTest
     void channelSetupOwnsTrunkedSearchWithItsOwnReceiverLease() throws Exception
     {
         String source = Files.readString(APP_JAVASCRIPT);
-        String channels = block(source, "async function renderModernChannelCatalog(renderContext, revealId = null)");
+        String channels = block(source, "async function renderModernChannelCatalog(renderContext)");
         String search = Files.readString(Path.of("stats-web", "assets", "features", "spectrum-search.js"));
 
         assertTrue(channels.contains("capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_TUNERS)"));

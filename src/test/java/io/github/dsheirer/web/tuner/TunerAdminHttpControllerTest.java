@@ -75,7 +75,7 @@ class TunerAdminHttpControllerTest
             assertEquals("Roof antenna", nicknames.get(id));
             var inventory = MAPPER.readTree(fixture.send(TunerAdminHttpController.PATH, "GET", null).body());
             assertEquals("Roof antenna", inventory.at("/data/tuners/1/nickname").asText());
-            assertEquals("physical", inventory.at("/data/tuners/1/name").asText());
+            assertEquals("Test", inventory.at("/data/tuners/1/name").asText());
             assertEquals(DiscoveredTuner.OperatorState.LIVE, fixture.mPhysical.getOperatorState());
             assertFalse(fixture.mPhysical.hasTuner(), "naming cannot initialize receiver hardware");
             assertEquals(0, manager.mRescanRequests);

@@ -35,7 +35,8 @@ class StatsWebDashboardUiContractTest
         assertTrue(dashboard.indexOf("{ id: 'calls', label: 'Call Statistics'") <
             dashboard.indexOf("{ id: 'activity', label: 'Radio Activity'"));
         assertTrue(dashboard.contains("if (tab === 'health')"));
-        assertTrue(dashboard.contains("renderNestedRadioDirectory(renderContext, visibleDirectory, snapshot.quality.current, options)"));
+        assertTrue(dashboard.contains("renderNestedRadioDirectory(renderContext, visibleDirectory, snapshot.quality.current,"));
+        assertTrue(dashboard.contains("{ ...options, now: snapshot.receiverNow }"));
         assertTrue(dashboard.contains("if (tab === 'activity')"));
         assertTrue(dashboard.contains("await renderDashboardActivity(renderContext, options)"));
         assertTrue(dashboard.contains("const snapshot = await loadMainDashboard(requestApi)"));
@@ -238,7 +239,7 @@ class StatsWebDashboardUiContractTest
         assertFalse(source.contains("function signalHealthSection("));
         assertFalse(source.contains("function updateSignalCurrentTile("));
         String row = function(source,
-            "function radioDirectorySiteRow(row, conventional = false, quality = null)");
+            "function radioDirectorySiteRow(row, conventional = false, quality = null, now = Date.now())");
         assertTrue(row.contains("row.name || 'Unnamed channel'"));
         assertTrue(row.contains("row.site || row.site_name"));
         assertTrue(row.contains("capabilityAllowed(ACCESS_CAPABILITIES.RADIO)"));

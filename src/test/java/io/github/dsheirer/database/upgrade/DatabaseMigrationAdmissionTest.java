@@ -32,8 +32,12 @@ class DatabaseMigrationAdmissionTest
             var admitted = DatabaseFormatCatalog.inspectForMigration(counted);
             var report = DatabaseMigrationChain.migrate(counted, admitted, false, ignored -> {});
             DatabaseFormatCatalog.requireCurrent(counted);
-            assertEquals(report.steps().size() + 2, scans.get(),
-                "One initial main-schema admission, each exact adjacent target, and one final strict admission");
+            // The frozen format-62 reader independently admits its exact source before configuration extraction.
+            // This is one bounded sqlite_master read; it performs no retained-history query or count.
+            int frozenReaderAdmissions = (int)report.steps().stream()
+                .filter(step -> step.sourceVersion() == 62).count();
+            assertEquals(report.steps().size() + 2 + frozenReaderAdmissions, scans.get(),
+                "One initial admission, each exact target, one frozen-reader guard and one final admission");
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, report.target().version());
             connection.rollback();
         }

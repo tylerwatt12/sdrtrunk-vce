@@ -508,7 +508,8 @@ class MigrationContentTest
                     {
                         String column = rows.getMetaData().getColumnName(index);
                         if(addedFormat63Column(table,column)) continue;
-                        if(CurrentFormatTestDatabase.addedHistoryColumn(table, rows, index)) continue;
+                        if(CurrentFormatTestDatabase.addedHistoryColumn(table, rows, index) ||
+                            CurrentFormatTestDatabase.addedAudioOrderPreference(table, rows, index)) continue;
                         if(List.of("p25_site_channel", "p25_site_channel_summary").contains(table) &&
                             column.equals("callsign"))
                         {

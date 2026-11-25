@@ -495,7 +495,8 @@ class ConfigurationOnlyDatabaseSnapshotTest
     {
         ConfigurationDatabaseStore store = new ConfigurationDatabaseStore(database);
         java.util.List<io.github.dsheirer.controller.channel.Channel> channels;
-        try(Connection connection = open(database)) { channels = store.loadChannels(connection); }
+        try(Connection connection = open(database))
+        { channels = version == 62 ? store.loadFormat62Channels(connection) : store.loadChannels(connection); }
         if(version >= 63) store.restoreInterruptedP25Bindings(channels);
         return channels.stream().filter(channel -> configurationId.equals(channel.getConfigurationId()))
             .findFirst().orElseThrow().getP25SiteIdentity();
