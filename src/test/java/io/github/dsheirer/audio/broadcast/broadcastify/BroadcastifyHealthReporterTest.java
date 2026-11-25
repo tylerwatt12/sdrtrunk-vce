@@ -35,11 +35,19 @@ import io.github.dsheirer.alias.AliasListFamily;
 import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
 import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
+import io.github.dsheirer.controller.channel.Channel;
+import io.github.dsheirer.health.CallOutcome;
 import io.github.dsheirer.health.ChannelHealth;
 import io.github.dsheirer.health.HealthHistory;
+import io.github.dsheirer.health.HealthRegistry;
 import io.github.dsheirer.health.HealthSnapshot;
 import io.github.dsheirer.health.NodeReporter;
+import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
+import io.github.dsheirer.module.decode.p25.P25TrafficChannelManager;
+import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
 import io.github.dsheirer.protocol.Protocol;
+import io.github.dsheirer.source.config.SourceConfigRemote;
+import io.github.dsheirer.source.config.SourceConfigTuner;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.net.http.HttpClient;
@@ -242,6 +250,90 @@ public class BroadcastifyHealthReporterTest
         assertEquals("Downtown", report.getAsJsonArray("sites").get(0).getAsJsonObject().get("name").getAsString());
         assertEquals(0, report.getAsJsonObject("window").get("seq").getAsInt());
         assertTrue(report.getAsJsonObject("window").has("gap"), "20 minutes since the start: the longest window");
+    }
+
+    @Test
+    void remote_source_registration_cannot_advance_the_local_report_baseline() throws Exception
+    {
+        HealthRegistry registry = HealthRegistry.getInstance();
+        Channel local = healthChannel("Local control", DOWNTOWN_CHANNEL, false);
+        Channel remote = healthChannel("Mirrored control", "6f1d0c52-0000-4000-8000-000000009003", true);
+        P25TrafficChannelManager localManager = new P25TrafficChannelManager(local);
+        P25TrafficChannelManager remoteManager = null;
+        try
+        {
+            ChannelHealth measured = registry.existingChannel(local);
+            measured.setCollecting(true, SINCE);
+            measured.started(SINCE);
+            HealthHistory localOnly = new HealthHistory();
+            HealthHistory mixed = new HealthHistory();
+            for(long time = SINCE; time <= SINCE + 1_200_000; time += 10_000)
+            {
+                if(time == SINCE + 900_000)
+                {
+                    remoteManager = new P25TrafficChannelManager(remote);
+                    remoteManager.processNetworkConfigurationIdentity(new P25SiteIdentity(1, 2, 3, 4), null, time);
+                }
+                measured.control("p25", true, time);
+                measured.getCalls().count(CallOutcome.RECORDED);
+                List<ChannelHealth.Totals> localTotals = List.of(measured.totals(time));
+                localOnly.add(new HealthSnapshot(time, SINCE, localTotals, List.of()));
+                List<ChannelHealth.Totals> mixedTotals = new ArrayList<>(localTotals);
+                ChannelHealth mirror = registry.existingChannel(remote);
+                if(mirror != null)
+                {
+                    //The snapshot worker activates all registered channels selected by this alias destination.
+                    if(!mirror.isCollecting()) mirror.setCollecting(true, time);
+                    mixedTotals.add(mirror.totals(time));
+                }
+                mixed.add(new HealthSnapshot(time, SINCE, mixedTotals, List.of()));
+            }
+
+            BroadcastifyHealthReporter expected = reporter(schedule(71));
+            BroadcastifyHealthReporter actual = reporter(schedule(71));
+            //Exercise check()'s production collection-baseline branch without starting scheduler threads.
+            var startedAt = BroadcastifyHealthReporter.class.getDeclaredField("mStartedAt");
+            startedAt.setAccessible(true);
+            startedAt.setLong(expected, SINCE);
+            startedAt.setLong(actual, SINCE);
+            expected.check(localOnly);
+            actual.check(mixed);
+
+            assertEquals(2, mReceived.size());
+            assertEquals(mReceived.get(0), mReceived.get(1),
+                "A late mirror must preserve the complete local payload, its window and pending call totals");
+            JsonObject report = mReceived.get(1);
+            assertEquals(90, report.getAsJsonArray("sites").get(0).getAsJsonObject()
+                .getAsJsonObject("calls").get("recorded").getAsInt());
+        }
+        finally
+        {
+            if(remoteManager != null) remoteManager.stop();
+            localManager.stop();
+            registry.retire(remote);
+            registry.retire(local);
+        }
+    }
+
+    private static Channel healthChannel(String name, String configurationId, boolean remote)
+    {
+        Channel channel = new Channel(name);
+        channel.setConfigurationId(configurationId);
+        channel.setAliasListId(DOWNTOWN);
+        DecodeConfigP25Phase1 decoder = new DecodeConfigP25Phase1();
+        decoder.setTrafficChannelPoolSize(1);
+        channel.setDecodeConfiguration(decoder);
+        if(remote)
+        {
+            channel.setSourceConfiguration(new SourceConfigRemote());
+        }
+        else
+        {
+            SourceConfigTuner tuner = new SourceConfigTuner();
+            tuner.setFrequency(851_000_000);
+            channel.setSourceConfiguration(tuner);
+        }
+        return channel;
     }
 
     @Test

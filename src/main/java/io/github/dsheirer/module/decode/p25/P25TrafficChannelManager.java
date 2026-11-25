@@ -297,7 +297,8 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
         mParentChannel = parentChannel;
         mWuidConfigurationId = parentChannel.getConfigurationId();
         mGrantAllocationEnabled = !(parentChannel.getSourceConfiguration() instanceof SourceConfigRemote);
-        mHealth = HealthRegistry.getInstance().channel(parentChannel);
+        //A mirrored channel is measured by its sender. It must not enter this node's reporting scope or windows.
+        mHealth = mGrantAllocationEnabled ? HealthRegistry.getInstance().channel(parentChannel) : null;
         mCallTally = mGrantAllocationEnabled ? HealthRegistry.getInstance().calls(parentChannel) : null;
         mVoiceDecryptionModuleLoaded = Objects.requireNonNull(voiceDecryptionModuleLoaded);
         mBandplanOverrideRegistry = bandplanOverrideRegistry != null ? bandplanOverrideRegistry :
@@ -821,10 +822,13 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             mStabilizedRuntimeIdentity = identity;
 
             //The site's identity, as node health reports give it: what its control channel says it is, confirmed.
-            mHealth.identity("wacn", identity.wacn());
-            mHealth.identity("sysId", identity.system());
-            mHealth.identity("rfss", identity.rfss());
-            mHealth.identity("site", identity.site());
+            if(mHealth != null)
+            {
+                mHealth.identity("wacn", identity.wacn());
+                mHealth.identity("sysId", identity.system());
+                mHealth.identity("rfss", identity.rfss());
+                mHealth.identity("site", identity.site());
+            }
         }
 
         if(wuidLeaseMinutes != null && (wuidLeaseMinutes == P25IdentityResolver.NO_EXPIRY_LEASE_MINUTES ||
