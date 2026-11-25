@@ -929,10 +929,16 @@ retention is independent. Writes use the existing background writer and never ru
 
 The adjacent migration rewrites only the two compact channel tables while removing duplicated callsign columns,
 transfers known BSI-tag times without guessing missing ones, and renames CWID tags and the bundled Alias icon to BSI.
-It preserves call tables, their indexes and planner statistics. Temporary journal/workspace follows affected compact
-pages, with no additional database copy; capacity admission currently retains the existing conservative full-file
-bound for this new step. Tests cover exact prior/current signatures, preservation, rollback/retry, source separation,
-stale/cached/blank evidence and the indexed owner/frequency lookup.
+It preserves call tables, their indexes and planner statistics. Admitted paired upgrades containing only this step
+and bounded configuration changes reserve eight times the allocated pages of the four affected channel/tag tables
+and their indexes, plus twice the configuration footprint, 64 MiB settings/schema slack and twice any existing
+Activity journal/WAL bytes. This operational allowance covers changed-page rollback/COW, new BSI and tag rows, and
+the ordered-insert sort; the separate 5 GiB free-space headroom is unchanged. Each named `dbstat` equality selects
+that compact b-tree before traversing its pages, including overflow. It does not visit detailed-event or unrelated
+index pages, count historical rows, or create another database copy. Plans with genuine history conversions or
+unavailable page statistics retain the conservative complete-pair allowance. Tests cover exact prior/current
+signatures, preservation, rollback/retry, source separation, stale/cached/blank evidence, indexed owner/frequency
+lookup, compact-inventory growth and independence from detailed-event growth.
 
 
 ### P25 denial reasons (application format 74)

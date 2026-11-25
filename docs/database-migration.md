@@ -420,8 +420,12 @@ being silently lost. CWID tags and the bundled Alias icon selection become BSI. 
 The transaction preserves every call, counter, setting, recording and unaffected history index. It rewrites only
 the compact channel tables while removing their old callsign columns, creates the small BSI owner table, and updates
 the matching format markers. Its cost scales with channel inventory, not retained calls. There is no additional
-recovery copy or Activity-event scan. The existing conservative owned-migration workspace allowance applies to this
-new step. Format 72 remains a frozen populated source, and runtime startup validates without conversion.
+recovery copy or Activity-event scan. For admitted paired plans containing only this conversion and bounded
+configuration changes, workspace follows the four affected compact tables and their indexes, configuration, and
+existing journals. Page sizing visits only those named compact b-trees, without counting rows or reading detailed
+events. The allowance covers rollback, new BSI and tag pages, and sorting, with free-space headroom separate.
+Other history conversions and unavailable page statistics retain the conservative complete-pair allowance.
+Format 72 remains a frozen populated source, and runtime startup validates without conversion.
 
 The format 73-to-74 step adds optional raw P25 denial reasons and their vendor-specific selection flag to the
 existing detailed Activity row. Historical events keep both fields unknown; no reason is reconstructed from labels,

@@ -195,7 +195,14 @@ class ApplicationDatabaseMigratorInPlaceTest
                 " '$.appearance.theme','dark') WHERE id=3");
             assertTrue(Files.size(Path.of(database + "-wal")) > 0);
             ApplicationDatabaseMigrator.migrateInPlace(database, ignored -> { },
-                () -> SqliteDatabaseSnapshot.create(database, backup));
+                () ->
+                {
+                    SqliteDatabaseSnapshot.create(database, backup);
+                    // Keep the committed WAL producer open through the locked snapshot, then release its handles
+                    // before conversion activates new database filenames on platforms that prohibit open-file moves.
+                    statement.close();
+                    writer.close();
+                });
             assertEquals("30", format(backup));
             assertEquals("dark", scalar(backup,
                 "SELECT json_extract(preferences_json,'$.appearance.theme') FROM web_user WHERE id=3"));

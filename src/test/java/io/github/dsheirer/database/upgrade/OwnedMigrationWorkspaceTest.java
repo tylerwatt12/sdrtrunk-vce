@@ -5,6 +5,8 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import io.github.dsheirer.database.ActivityDatabasePath;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
+import java.io.IOException;
+import java.io.RandomAccessFile;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.DriverManager;
@@ -101,6 +103,68 @@ class OwnedMigrationWorkspaceTest
             database, MigrationContent.CONFIGURATION_ONLY, configurationPlan));
         assertArrayEquals(configuration, Files.readAllBytes(database));
         assertArrayEquals(activity, Files.readAllBytes(history));
+    }
+
+    @Test void bsiUpgradeBudgetsCompactInventoryWithoutChargingForDetailedEventGrowth() throws Exception
+    {
+        Path database = Format71TestDatabase.create(temporary.resolve("bsi-events.sqlite"));
+        Path history = ActivityDatabasePath.forConfiguration(database);
+        long compact = ApplicationMigrationService.requiredOwnedMigrationWorkspace(database, MigrationContent.FULL);
+        assertTrue(compact >= 64L * 1024 * 1024 + 2 * Files.size(database));
+        byte[] configuration = Files.readAllBytes(database);
+        growDetailedEvents(history);
+        byte[] activity = Files.readAllBytes(history);
+        assertEquals(compact, ApplicationMigrationService.requiredOwnedMigrationWorkspace(database, MigrationContent.FULL),
+            "Adding retained calls cannot enlarge a compact BSI conversion's workspace");
+        assertArrayEquals(configuration, Files.readAllBytes(database));
+        assertArrayEquals(activity, Files.readAllBytes(history));
+        growBsiInventory(history);
+        assertTrue(ApplicationMigrationService.requiredOwnedMigrationWorkspace(database, MigrationContent.FULL) > compact,
+            "The genuine compact-table rewrite, tag growth and BSI sort still need workspace");
+    }
+
+    @Test void bsiWorkspaceReadsOnlyNamedCompactTreesAndRefusesUnreadableAffectedPages() throws Exception
+    {
+        Path database = Format71TestDatabase.create(temporary.resolve("bsi-corrupt-pages.sqlite"));
+        Path history = ActivityDatabasePath.forConfiguration(database);
+        var plan = ApplicationMigrationService.readStartupPlan(database);
+        long expected = ApplicationMigrationService.requiredOwnedMigrationWorkspace(database, MigrationContent.FULL, plan);
+        corruptLeaf(history, "receiver_activity_event");
+        byte[] damagedEvents = Files.readAllBytes(history);
+        assertEquals(expected, ApplicationMigrationService.requiredOwnedMigrationWorkspace(database, MigrationContent.FULL, plan),
+            "Named dbstat traversal must not visit or certify unrelated detailed Activity pages");
+        assertArrayEquals(damagedEvents, Files.readAllBytes(history));
+        corruptLeaf(history, "p25_site_channel_summary");
+        byte[] damagedCompact = Files.readAllBytes(history);
+        assertThrows(IOException.class, () -> ApplicationMigrationService.requiredOwnedMigrationWorkspace(
+            database, MigrationContent.FULL, plan));
+        assertArrayEquals(damagedCompact, Files.readAllBytes(history));
+    }
+
+    @Test void bsiWorkspaceIncludesCommittedActivityWalButDoesNotCheckpointIt() throws Exception
+    {
+        Path database = Format71TestDatabase.create(temporary.resolve("bsi-wal.sqlite"));
+        Path history = ActivityDatabasePath.forConfiguration(database);
+        long compact = ApplicationMigrationService.requiredOwnedMigrationWorkspace(database, MigrationContent.FULL);
+        try(var connection = DriverManager.getConnection("jdbc:sqlite:" + history);
+            var statement = connection.createStatement())
+        {
+            statement.execute("PRAGMA journal_mode=WAL");
+            statement.execute("PRAGMA wal_autocheckpoint=0");
+            statement.executeUpdate("UPDATE receiver_activity_event SET observed_at_ms=observed_at_ms+1");
+            Path wal = Path.of(history + "-wal");
+            assertTrue(Files.size(wal) > 0);
+            byte[] configuration = Files.readAllBytes(database), activity = Files.readAllBytes(history);
+            byte[] committedWal = Files.readAllBytes(wal);
+            assertEquals(compact + 2 * Files.size(wal),
+                ApplicationMigrationService.requiredOwnedMigrationWorkspace(database, MigrationContent.FULL),
+                "Existing checkpoint/COW work is budgeted separately from unrelated retained database pages");
+            assertArrayEquals(configuration, Files.readAllBytes(database));
+            assertArrayEquals(activity, Files.readAllBytes(history));
+            assertArrayEquals(committedWal, Files.readAllBytes(wal));
+            try(var rows = statement.executeQuery("PRAGMA journal_mode"))
+            { assertTrue(rows.next()); assertEquals("wal", rows.getString(1)); }
+        }
     }
 
     @Test void boundedCurrentPreferenceRepairUsesConfigurationButNoOpNeedsNoMigrationWorkspace() throws Exception
@@ -263,5 +327,37 @@ class OwnedMigrationWorkspaceTest
                 "SELECT " + names + " FROM receiver_activity_event CROSS JOIN copies " +
                 "WHERE receiver_activity_event.id=(SELECT min(id) FROM receiver_activity_event)");
         }
+    }
+
+    private static void growBsiInventory(Path history) throws SQLException
+    {
+        try(var connection = DriverManager.getConnection("jdbc:sqlite:" + history);
+            var statement = connection.createStatement())
+        {
+            statement.execute("PRAGMA foreign_keys=ON");
+            statement.executeUpdate("INSERT OR IGNORE INTO p25_site_snapshot(channel_id,first_seen_ms,last_seen_ms," +
+                "observation_count,protocol) SELECT id,1,2,1,'APCO25' FROM receiver_channel ORDER BY id LIMIT 1");
+            statement.executeUpdate("WITH RECURSIVE n(i) AS (VALUES(1) UNION ALL SELECT i+1 FROM n WHERE i<2000) " +
+                "INSERT INTO p25_site_channel_summary(channel_id,channel_key,descriptor,downlink_hz,first_seen_ms," +
+                "last_seen_ms,observation_count,callsign) SELECT (SELECT channel_id FROM p25_site_snapshot LIMIT 1)," +
+                "'workspace-'||i||printf('%01024d',i),printf('%04096d',i),100000000+i,1,2,1,'TEST' FROM n");
+        }
+    }
+
+    private static void corruptLeaf(Path database, String table) throws Exception
+    {
+        long page;
+        int pageSize;
+        try(var connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            var statement = connection.createStatement();
+            var query = connection.prepareStatement("SELECT pageno FROM dbstat WHERE name=? AND pagetype='leaf' LIMIT 1"))
+        {
+            try(var rows = statement.executeQuery("PRAGMA page_size"))
+            { assertTrue(rows.next()); pageSize = rows.getInt(1); }
+            query.setString(1, table);
+            try(var rows = query.executeQuery()) { assertTrue(rows.next()); page = rows.getLong(1); }
+        }
+        try(var bytes = new RandomAccessFile(database.toFile(), "rw"))
+        { bytes.seek((page - 1) * pageSize); bytes.write(0); }
     }
 }

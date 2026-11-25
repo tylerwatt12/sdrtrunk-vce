@@ -64,6 +64,9 @@ import org.sqlite.SQLiteConfig;
 public final class ApplicationMigrationService
 {
     private static final long FREE_SPACE_MARGIN_BYTES = 64L * 1024L * 1024L;
+    private static final int BSI_COMPACT_WORKSPACE_MULTIPLIER = 8;
+    private static final List<String> BSI_MIGRATION_TABLES = List.of("p25_site_channel", "p25_site_channel_summary",
+        "p25_site_channel_tag", "p25_site_channel_tag_summary");
     private static final DateTimeFormatter BACKUP_TIME = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
     private static final String JMBE_DIRECTORY = "jmbe";
     private static final String MODULES_DIRECTORY = "modules";
@@ -728,9 +731,81 @@ public final class ApplicationMigrationService
             // Formats 70 and 71 update only Activity's small metadata row; retained event/index pages are untouched.
             return safeAdd(safeMultiply(sqliteFileFootprint(normalized), 2), FREE_SPACE_MARGIN_BYTES);
         }
+        if(content == MigrationContent.FULL && plan.source().version() >= 69 && plan.source().version() <= 72 &&
+            plan.steps().stream().anyMatch(ApplicationMigrationService::changesCarrierBsi) &&
+            plan.steps().stream().allMatch(step -> changesOnlyBoundedProfileData(step) || changesCarrierBsi(step)))
+        {
+            Path history = ActivityDatabasePath.forConfiguration(normalized);
+            long compactPages = carrierBsiPageFootprint(history);
+            if(compactPages >= 0)
+            {
+                // BSI rewrites compact channel rows, creates its smaller projection, sorts their insert and briefly
+                // retains both old/new tags. Cover rollback/COW pages, growth and sort work without charging for
+                // unrelated events or indexes. Existing Activity journals can require checkpoint/recovery COW work.
+                long configuration = safeAdd(safeMultiply(sqliteFileFootprint(normalized), 2), FREE_SPACE_MARGIN_BYTES);
+                long compact = safeMultiply(compactPages, BSI_COMPACT_WORKSPACE_MULTIPLIER);
+                return safeAdd(safeAdd(configuration, compact), safeMultiply(sqliteSidecarFootprint(history), 2));
+            }
+        }
         // Legacy configuration-only in-place conversion still deletes history in a transaction. Unknown steps
         // must not inherit a cheaper estimate from their names or from a currently sparse partial index.
         return safeMultiply(sqliteFootprint(normalized), 2);
+    }
+
+    private static boolean changesCarrierBsi(DatabaseMigrationChain.StepPreflight step)
+    {
+        return step.sourceVersion() == 72 && step.targetVersion() == 73 && "carrier-bsi-v1".equals(step.id());
+    }
+
+    /**
+     * Visits only affected compact b-tree pages, including their overflow and index pages. SQLite's dbstat name
+     * equality selects the root before traversal; a whole-dbstat aggregate would walk unrelated retained history.
+     * Returns -1 when that optional module is unavailable, retaining the conservative whole-pair allowance.
+     */
+    private static long carrierBsiPageFootprint(Path history) throws IOException
+    {
+        try(Connection connection = openLiveReadOnly(history);
+            var objects = connection.prepareStatement("SELECT name FROM sqlite_schema WHERE tbl_name IN (?,?,?,?) " +
+                "AND type IN ('table','index') AND rootpage>0 ORDER BY name");
+            var pages = connection.prepareStatement("SELECT pgsize,pagetype FROM dbstat WHERE name=?"))
+        {
+            for(int index = 0; index < BSI_MIGRATION_TABLES.size(); index++)
+                objects.setString(index + 1, BSI_MIGRATION_TABLES.get(index));
+            long total = 0;
+            int tables = 0;
+            try(var names = objects.executeQuery())
+            {
+                while(names.next())
+                {
+                    String name = names.getString(1);
+                    if(BSI_MIGRATION_TABLES.contains(name)) tables++;
+                    pages.setString(1, name);
+                    boolean found = false;
+                    try(var rows = pages.executeQuery())
+                    {
+                        while(rows.next())
+                        {
+                            found = true;
+                            long bytes = rows.getLong(1);
+                            String type = rows.getString(2);
+                            if(bytes <= 0 || !("internal".equals(type) || "leaf".equals(type) || "overflow".equals(type)))
+                                throw new IOException("Cannot size unreadable compact BSI migration pages.");
+                            total = safeAdd(total, bytes);
+                        }
+                    }
+                    if(!found) throw new IOException("Cannot find compact BSI migration page statistics.");
+                }
+            }
+            if(tables != BSI_MIGRATION_TABLES.size())
+                throw new IOException("Cannot find the admitted compact BSI migration tables.");
+            return total;
+        }
+        catch(SQLException failure)
+        {
+            if(failure.getErrorCode() == 1 && failure.getMessage() != null &&
+                failure.getMessage().contains("no such table: dbstat")) return -1;
+            throw new IOException("Could not inspect compact BSI migration pages.", failure);
+        }
     }
 
     static boolean changesOnlyBoundedProfileData(DatabaseMigrationChain.StepPreflight step)
@@ -1940,7 +2015,12 @@ public final class ApplicationMigrationService
     private static long sqliteFileFootprint(Path database) throws IOException
     {
         if(!Files.isRegularFile(database)) return 0;
-        long size = Files.size(database);
+        return safeAdd(Files.size(database), sqliteSidecarFootprint(database));
+    }
+
+    private static long sqliteSidecarFootprint(Path database) throws IOException
+    {
+        long size = 0;
         for(String suffix : List.of("-wal", "-journal"))
         {
             Path sidecar = Path.of(database + suffix);

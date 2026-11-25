@@ -142,8 +142,8 @@ class Format70To71DatabaseMigrationTest
         long workspace = ApplicationMigrationService.requiredOwnedMigrationWorkspace(configuration, MigrationContent.FULL, retirement);
         assertEquals(2 * Files.size(configuration) + 64L * 1024 * 1024, workspace);
         long fullWorkspace = ApplicationMigrationService.requiredOwnedMigrationWorkspace(configuration, MigrationContent.FULL);
-        assertEquals(2 * (Files.size(configuration) + Files.size(history)), fullWorkspace,
-            "The later BSI conversion keeps the conservative whole-pair allowance");
+        assertTrue(fullWorkspace > workspace,
+            "The later BSI conversion budgets its genuine compact inventory in addition to configuration");
         try(var connection = open(history); var statement = connection.createStatement())
         {
             statement.executeUpdate("WITH RECURSIVE n(value) AS (SELECT 1 UNION ALL SELECT value+1 FROM n WHERE value<5000) " +
@@ -151,9 +151,9 @@ class Format70To71DatabaseMigrationTest
                 "SELECT (SELECT channel_id FROM receiver_activity_event LIMIT 1),1000000+value,2,7,0 FROM n");
         }
         assertEquals(workspace, ApplicationMigrationService.requiredOwnedMigrationWorkspace(configuration, MigrationContent.FULL, retirement));
-        assertEquals(2 * (Files.size(configuration) + Files.size(history)),
-            ApplicationMigrationService.requiredOwnedMigrationWorkspace(configuration, MigrationContent.FULL));
-        assertTrue(ApplicationMigrationService.requiredOwnedMigrationWorkspace(configuration, MigrationContent.FULL) > fullWorkspace);
+        assertEquals(fullWorkspace,
+            ApplicationMigrationService.requiredOwnedMigrationWorkspace(configuration, MigrationContent.FULL),
+            "Unrelated detailed-event growth cannot increase the BSI conversion's workspace");
     }
 
     private static void assertNoOp(Path configuration) throws Exception

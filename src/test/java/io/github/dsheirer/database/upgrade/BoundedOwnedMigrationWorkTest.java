@@ -74,7 +74,33 @@ class BoundedOwnedMigrationWorkTest
         assertNearlyConstant(tinyWork, grownWork);
     }
 
+    @Test
+    void carrierBsiAndPreviousPublishedNightlyChainHaveHistoryIndependentWork() throws Exception
+    {
+        // BSI legitimately rewrites compact site inventory, so it is not classified as configuration-only.
+        // Its work must nevertheless remain independent of detailed-event history, both alone and in the full route.
+        for(int source: List.of(71, 72))
+        {
+            int target = source == 71 ? 77 : 73;
+            Path tiny = fixture(source, directory.resolve("bsi-chain-" + source + "/tiny/source.sqlite"));
+            Path grown = copyPair(tiny, directory.resolve("bsi-chain-" + source + "/grown/source.sqlite"));
+            growEvents(grown);
+            var ids = DatabaseMigrationChain.steps().stream().filter(step ->
+                step.sourceVersion() >= source && step.targetVersion() <= target).map(step -> step.id()).toList();
+            assertEquals(source == 71 ? 6 : 1, ids.size());
+            int tinyWork = migrateAndMeasure(tiny, source, target, ids, false);
+            int grownWork = migrateAndMeasure(grown, source, target, ids, false);
+            assertNearlyConstant(tinyWork, grownWork);
+        }
+    }
+
     private int migrateAndMeasure(Path database, int sourceVersion, int targetVersion, String id,
+                                  boolean repairPreferences) throws Exception
+    {
+        return migrateAndMeasure(database, sourceVersion, targetVersion, List.of(id), repairPreferences);
+    }
+
+    private int migrateAndMeasure(Path database, int sourceVersion, int targetVersion, List<String> ids,
                                   boolean repairPreferences) throws Exception
     {
         int work;
@@ -99,14 +125,14 @@ class BoundedOwnedMigrationWorkTest
                 var source = DatabaseFormatCatalog.inspectForMigration(connection);
                 assertEquals(sourceVersion, source.version());
                 var plan = DatabaseMigrationChain.planInPlace(connection, source);
-                assertTrue(plan.steps().stream().anyMatch(step -> step.id().equals(id)));
+                assertTrue(plan.steps().stream().map(DatabaseMigrationChain.StepPreflight::id).toList().containsAll(ids));
                 if(repairPreferences)
                 {
-                    assertEquals(List.of(id), plan.steps().stream().map(DatabaseMigrationChain.StepPreflight::id).toList());
+                    assertEquals(ids, plan.steps().stream().map(DatabaseMigrationChain.StepPreflight::id).toList());
                     assertTrue(plan.steps().stream().allMatch(ApplicationMigrationService::changesOnlyBoundedProfileData));
                 }
                 var report = DatabaseMigrationChain.migrate(connection, source, false, ignored -> {}, ignored -> {}, targetVersion);
-                assertEquals(repairPreferences ? List.of() : List.of(id), report.steps().stream().map(
+                assertEquals(repairPreferences ? List.of() : ids, report.steps().stream().map(
                     DatabaseMigrationChain.StepReport::id).toList());
                 // The owned wrapper repairs current preferences after its chain, before final exact admission.
                 if(repairPreferences) assertTrue(ApplicationDatabaseMigrator.repairCurrentPortablePreferences(connection) > 0);
