@@ -92,10 +92,10 @@ public class P25TrafficChannelEventTracker
     /** Retains a tentative outcome; only the final outcome reaches the monotonic report counters. */
     public void tally(CallTally tally, CallOutcome outcome)
     {
-        if(tally != null && outcome != null)
+        if(tally != null && outcome != null && tally.isEnabled())
         {
             mCallOutcome = outcome;
-            if(mPendingCall == null)
+            if(mPendingCall == null || mPendingCall.generation() != tally.generation())
             {
                 mPendingCall = tally.pending(outcome, mLastObservationTimestamp, CONTROL_CONTINUATION_THRESHOLD_MS);
             }

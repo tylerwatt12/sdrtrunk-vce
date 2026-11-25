@@ -130,4 +130,33 @@ class NodeHealthReportingRegressionTest
         assertEquals(receipt + 500_000 + 7_200_000, reporter.getNextAt(), "explicit long Retry-After is honored");
     }
 
+    @Test
+    void demand_collection_starts_at_its_first_real_baseline_even_after_an_empty_startup_snapshot()
+    {
+        ChannelHealth health = site();
+        HealthSnapshot empty = new HealthSnapshot(START, START, List.of(), List.of());
+        HealthSnapshot activated = snapshot(health, START + 10_000);
+        HealthSnapshot later = snapshot(health, START + 300_000);
+        HealthHistory history = new HealthHistory();
+        history.add(empty);
+        history.add(activated);
+        history.add(later);
+        NodeReporter reporter = new NodeReporter(73);
+        reporter.beginCollected(empty);
+        reporter.isDue(activated);
+        reporter.beginCollected(activated);
+        reporter.isDue(later);
+        NodeReporter.Window window = reporter.window(history);
+        assertNotNull(window);
+        assertEquals(activated.timeMs(), window.startMs());
+        assertTrue(window.gap());
+        reporter.delivered(null);
+        HealthSnapshot newlyEnabledSource = snapshot(health, START + 310_000);
+        history.add(newlyEnabledSource);
+        reporter.beginCollected(newlyEnabledSource);
+        history.add(snapshot(health, START + 600_000));
+        assertEquals(newlyEnabledSource.timeMs(), reporter.window(history).startMs());
+        assertTrue(reporter.window(history).gap());
+    }
+
 }

@@ -52,6 +52,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.function.LongSupplier;
+import java.util.function.Predicate;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -98,6 +99,8 @@ public class BroadcastifyHealthReporter
     private final LongSupplier mClock;
     private final Map<String,Destination> mDestinations = new LinkedHashMap<>();
     private volatile NodeReporter mReporter;
+    private volatile List<Destination> mDestinationSnapshot = List.of();
+    private volatile long mStartedAt = Long.MIN_VALUE;
     private ScheduledFuture<?> mFuture;
     private boolean mToldKeys;
     private boolean mToldNotServing;
@@ -184,6 +187,7 @@ public class BroadcastifyHealthReporter
     synchronized void add(BroadcastifyCallConfiguration configuration, AliasModel aliasModel)
     {
         mDestinations.put(configuration.getConfigurationId(), new Destination(configuration, aliasModel));
+        mDestinationSnapshot = List.copyOf(mDestinations.values());
         Destination first = mDestinations.values().iterator().next();
 
         if(!mToldKeys && !Objects.equals(first.configuration().getApiKey(), configuration.getApiKey()))
@@ -197,7 +201,7 @@ public class BroadcastifyHealthReporter
         if(mReporter.isStopped())
         {
             NodeReporter reporter = new NodeReporter(String.valueOf(mSystemId));
-            reporter.begin(HealthRegistry.getInstance().getHistory().latest());
+            reporter.beginCollected(HealthRegistry.getInstance().getHistory().latest());
             mReporter = reporter;
         }
     }
@@ -209,12 +213,13 @@ public class BroadcastifyHealthReporter
     synchronized boolean remove(BroadcastifyCallConfiguration configuration)
     {
         mDestinations.remove(configuration.getConfigurationId());
+        mDestinationSnapshot = List.copyOf(mDestinations.values());
         return mDestinations.isEmpty();
     }
 
-    private synchronized List<Destination> destinations()
+    private List<Destination> destinations()
     {
-        return new ArrayList<>(mDestinations.values());
+        return mDestinationSnapshot;
     }
 
     /**
@@ -233,7 +238,9 @@ public class BroadcastifyHealthReporter
         if(mFuture == null)
         {
             //Starts the snapshots, if they haven't: the node's reports start at the latest.
-            mReporter.begin(HealthRegistry.getInstance().retainHistory().latest());
+            mStartedAt = System.currentTimeMillis();
+            mReporter.beginCollected(null);
+            HealthRegistry.getInstance().retainScope(this, this::coverage);
             mFuture = REPORTING.scheduleWithFixedDelay(this::check, CHECK_INTERVAL_MS, CHECK_INTERVAL_MS,
                 TimeUnit.MILLISECONDS);
         }
@@ -245,7 +252,7 @@ public class BroadcastifyHealthReporter
         {
             mFuture.cancel(true);
             mFuture = null;
-            HealthRegistry.getInstance().releaseHistory();
+            HealthRegistry.getInstance().releaseHistory(this);
         }
     }
 
@@ -263,6 +270,33 @@ public class BroadcastifyHealthReporter
         }
 
         return false;
+    }
+
+    /** Worker-only membership snapshot: scan routing once and then use fixed set lookups for every channel. */
+    Predicate<ChannelHealth.ChannelInfo> coverage()
+    {
+        Set<Long> aliasLists = new HashSet<>();
+        Set<String> siteChannels = new HashSet<>();
+        for(Destination destination: destinations())
+        {
+            BroadcastifyCallConfiguration configuration = destination.configuration();
+            if(configuration instanceof BroadcastifyCallSiteConfiguration site)
+            {
+                if(site.getChannelConfigurationId() != null && site.resolveAliasList(destination.aliasModel()).isPresent())
+                    siteChannels.add(site.getChannelConfigurationId());
+            }
+            else if(configuration.getConfigurationId() != null && !configuration.getConfigurationId().isBlank())
+            {
+                for(Alias alias: destination.aliasModel().getAliases())
+                {
+                    if(alias.getAliasListId() > Alias.UNASSIGNED_ID &&
+                        alias.hasBroadcastConfiguration(configuration.getConfigurationId()))
+                        aliasLists.add(alias.getAliasListId());
+                }
+            }
+        }
+        return info -> (info.configurationId() != null && siteChannels.contains(info.configurationId())) ||
+            aliasLists.contains(info.aliasListId());
     }
 
     /**
@@ -314,9 +348,19 @@ public class BroadcastifyHealthReporter
             List<Destination> destinations = destinations();
             HealthSnapshot now = history.latest();
 
-            if(destinations.isEmpty() || now == null)
+            if(destinations.isEmpty() || now == null || now.timeMs() < mStartedAt)
             {
                 return;
+            }
+
+            if(mStartedAt != Long.MIN_VALUE)
+            {
+                long collectedSince = mStartedAt;
+                for(ChannelHealth.Totals totals: now.channels())
+                {
+                    if(feeds(totals.info())) collectedSince = Math.max(collectedSince, totals.collectionSinceMs());
+                }
+                reporter.beginCollected(history.atOrAfter(collectedSince));
             }
 
             if(reporter.isStopped())

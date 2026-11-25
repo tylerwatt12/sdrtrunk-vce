@@ -66,7 +66,7 @@ public class NodeReport
 
         for(ChannelHealth.Totals a: now.channels())
         {
-            if(!feeds.test(a.info()))
+            if(!feeds.test(a.info()) || !a.collecting())
             {
                 continue;
             }
@@ -192,6 +192,12 @@ public class NodeReport
                 return true;
             }
             ChannelHealth.Totals baseline = window.base() != null ? window.base().channel(current.info().channelId()) : null;
+            if(feeds.test(current.info()) && current.collecting() &&
+                ((baseline != null && baseline.collectionEpoch() != current.collectionEpoch()) ||
+                    window.startMs() < current.collectionSinceMs()))
+            {
+                return true;
+            }
             if(feeds.test(current.info()) && baseline != null && !baseline.timingComplete())
             {
                 return true;

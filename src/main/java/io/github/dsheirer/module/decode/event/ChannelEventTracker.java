@@ -383,10 +383,10 @@ public abstract class ChannelEventTracker<T extends DecodeEvent>
     /** Retains a tentative outcome; only the final outcome reaches the monotonic report counters. */
     public void tally(CallTally tally, CallOutcome outcome)
     {
-        if(tally != null && outcome != null)
+        if(tally != null && outcome != null && tally.isEnabled())
         {
             mCallOutcome = outcome;
-            if(mPendingCall == null)
+            if(mPendingCall == null || mPendingCall.generation() != tally.generation())
             {
                 mPendingCall = tally.pending(outcome, Math.max(getEvent().getTimeStart(), getEvent().getTimeEnd()), STALE_EVENT_THRESHOLD_MS);
             }

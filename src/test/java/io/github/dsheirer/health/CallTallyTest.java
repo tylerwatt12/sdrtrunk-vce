@@ -188,4 +188,87 @@ class CallTallyTest
         assertTrue(firstPastHorizon > tailLoss);
         assertEquals(firstPastHorizon, tally.totals(330_000).losses(), "complete intervals can resume");
     }
+    @Test
+    void packed_timestamps_roundtrip_zero_negative_and_supported_extremes_for_every_outcome()
+    {
+        long[] times = {0, -100_000, CallTally.MIN_TIMESTAMP, CallTally.MAX_TIMESTAMP - 20_000};
+        for(CallOutcome outcome: CallOutcome.values())
+        {
+            for(long timestamp: times)
+            {
+                CallTally tally = new CallTally();
+                CallTally.Pending call = tally.pending(outcome, timestamp, 3_000);
+                assertNotNull(call);
+                call.observe(null, timestamp + 1_000);
+                assertEquals(0, tally.totals(timestamp + 4_000).started());
+                assertEquals(1, tally.totals(timestamp + 4_001).get(outcome));
+                assertEquals(0, tally.totals().losses());
+                call.finish();
+                assertEquals(1, tally.getStarted());
+            }
+            CallTally atMaximum = new CallTally();
+            atMaximum.pending(outcome, CallTally.MAX_TIMESTAMP, 3_000).finish();
+            assertEquals(1, atMaximum.get(outcome));
+        }
+    }
+
+    @Test
+    void unrepresentable_timestamp_is_lost_observer_data_and_does_not_throw_on_producer()
+    {
+        CallTally tally = new CallTally();
+        assertNull(tally.pending(CallOutcome.RECORDED, Long.MIN_VALUE, 3_000));
+        assertNull(tally.pending(CallOutcome.RECORDED, Long.MAX_VALUE, 3_000));
+        CallTally.Pending call = tally.pending(CallOutcome.RECORDED, 1_000, 3_000);
+        call.observe(null, Long.MAX_VALUE);
+        assertEquals(3, tally.totals().losses());
+        call.finish();
+        assertEquals(1, tally.get(CallOutcome.RECORDED));
+    }
+
+    @Test
+    void disabled_collection_allocates_no_ring_and_reenable_prepares_a_fresh_generation() throws Exception
+    {
+        CallTally tally = new CallTally();
+        var field = CallTally.class.getDeclaredField("mPending");
+        field.setAccessible(true);
+        var ring = (java.util.concurrent.atomic.AtomicReference<?>)field.get(tally);
+        assertNull(ring.get(), "direct fixture ring stays lazy before its first call");
+        tally.count(CallOutcome.RECORDED);
+        CallTally.Pending old = tally.pending(CallOutcome.NO_SOURCE, 1_000, 3_000);
+        long generation = tally.generation();
+        tally.setEnabled(false);
+        assertFalse(tally.isEnabled());
+        assertNull(ring.get());
+        assertNull(tally.pending(CallOutcome.RECORDED, 2_000, 3_000));
+        old.observe(CallOutcome.RECORDED, 2_000);
+        old.finish();
+        tally.count(CallOutcome.NO_SOURCE);
+        assertEquals(1, tally.getStarted());
+        tally.setEnabled(true);
+        assertTrue(tally.generation() > generation);
+        assertNotNull(ring.get(), "worker prepares storage before a production decoder callback");
+        CallTally.Totals baseline = tally.totals();
+        old.finish();
+        old.observe(CallOutcome.RECORDED, 3_000);
+        assertEquals(baseline, tally.totals(), "a retired handle cannot write into the new generation");
+        tally.pending(CallOutcome.RECORDED, 3_000, 3_000).finish();
+        assertEquals(2, tally.getStarted());
+        assertEquals(0, tally.totals().losses());
+    }
+
+    @Test
+    void timestamp_refreshes_keep_the_same_atomic_state_holder() throws Exception
+    {
+        CallTally tally = new CallTally();
+        CallTally.Pending call = tally.pending(CallOutcome.RECORDED, 1_000, 3_000);
+        var field = call.getClass().getDeclaredField("mState");
+        field.setAccessible(true);
+        Object state = field.get(call);
+        for(int index = 1; index <= 100_000; index++) call.observe(null, 1_000L + index);
+        assertSame(state, field.get(call));
+        assertInstanceOf(java.util.concurrent.atomic.AtomicLong.class, state);
+        assertEquals(0, tally.totals(101_000).started());
+        call.finish();
+        assertEquals(1, tally.getStarted());
+    }
 }

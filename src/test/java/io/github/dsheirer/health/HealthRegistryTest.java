@@ -32,6 +32,7 @@ class HealthRegistryTest
         try
         {
             assertSame(history, registry.retainHistory());
+            registry.snapshot();
             assertNotNull(history.latest());
             assertTrue(registry.isSamplingForTest());
             registry.retainHistory();
@@ -59,6 +60,7 @@ class HealthRegistryTest
         ChannelHealth before = registry.channel(original);
         before.started(1_000);
         before.stopped(2_000);
+        registry.retainHistory();
         registry.snapshot();
         assertNotNull(registry.existingChannel(original), "A stopped current receiver remains reportable");
         Channel replacement = channel("After edit", original.getPersistedConfigurationId());
@@ -69,6 +71,7 @@ class HealthRegistryTest
         assertEquals(1, registry.getHistory().latest().channels().size());
         assertEquals("After edit", registry.getHistory().latest().channels().getFirst().info().name());
         assertNull(registry.existingChannel(original), "Reading late metadata must not register obsolete totals");
+        registry.releaseHistory();
     }
 
     @Test
@@ -78,6 +81,7 @@ class HealthRegistryTest
         Channel channel = channel("Current saved receiver", "123e4567-e89b-12d3-a456-426614174002");
         AtomicReference<List<Channel>> configured = new AtomicReference<>(List.of(channel));
         registry.setConfiguredChannelsSupplier(configured::get);
+        registry.retainHistory();
         ChannelHealth health = registry.channel(channel);
         health.started(1_000);
         health.stopped(2_000);
@@ -88,6 +92,7 @@ class HealthRegistryTest
         registry.snapshot();
         assertNull(registry.existingChannel(channel));
         assertTrue(registry.getHistory().latest().channels().isEmpty());
+        registry.releaseHistory();
     }
 
     private static Channel channel(String name, String configurationId)
@@ -132,6 +137,48 @@ class HealthRegistryTest
         if(failure.get() != null) throw new AssertionError(failure.get());
         assertNull(registry.existingChannel(channel));
         assertFalse(registry.isSamplingForTest());
+    }
+
+    @Test
+    void only_union_of_enabled_provider_scopes_collects_and_duplicate_owner_retain_is_idempotent()
+    {
+        HealthRegistry registry = new HealthRegistry();
+        Channel one = channel("One", "123e4567-e89b-12d3-a456-426614174011");
+        Channel two = channel("Two", "123e4567-e89b-12d3-a456-426614174012");
+        ChannelHealth a = registry.channel(one);
+        ChannelHealth b = registry.channel(two);
+        assertFalse(a.isCollecting());
+        assertFalse(b.isCollecting());
+        Object first = new Object();
+        Object shared = new Object();
+        try
+        {
+            registry.retainHistory(first, info -> info.channelId() == one.getChannelID());
+            registry.retainHistory(first, info -> info.channelId() == one.getChannelID());
+            registry.snapshot();
+            assertTrue(a.isCollecting());
+            assertFalse(b.isCollecting());
+            assertEquals(1, registry.getHistory().latest().channels().size());
+            long generation = a.collectionEpoch();
+            registry.retainHistory(shared, info -> info.channelId() == one.getChannelID());
+            registry.releaseHistory(first);
+            registry.snapshot();
+            assertTrue(a.isCollecting());
+            assertEquals(generation, a.collectionEpoch(), "shared subscribers do not restart accounting");
+            registry.releaseHistory(shared);
+            assertFalse(a.isCollecting());
+            assertFalse(registry.isSamplingForTest(), "duplicate retain did not leave an active reader");
+            registry.retainHistory(first, info -> info.channelId() == two.getChannelID());
+            registry.snapshot();
+            assertFalse(a.isCollecting());
+            assertTrue(b.isCollecting());
+            assertEquals(1, registry.getHistory().latest().channels().size());
+        }
+        finally
+        {
+            registry.releaseHistory(first);
+            registry.releaseHistory(shared);
+        }
     }
 
 }

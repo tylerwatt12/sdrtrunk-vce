@@ -21,6 +21,7 @@ package io.github.dsheirer.health;
 
 import java.util.EnumMap;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicLongArray;
@@ -28,216 +29,303 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.atomic.AtomicReferenceArray;
 
 /**
- * Monotonic totals of settled calls. An active call keeps its tentative outcome separately until it ends or goes
- * quiet; a later successful allocation can therefore never subtract from a previously reported failure.
- *
- * Producers perform fixed atomic operations only. Snapshot/expiry work belongs to the reporting worker, never a
- * decoder callback. The pending-call ring is bounded; saturation loses observer data and marks the affected report
- * window incomplete rather than delaying reception or presenting missing observations as zero calls.
+ * Monotonic settled-call totals with bounded, non-blocking producer operations. Pending outcomes and timestamps use
+ * one atomic word, so traffic refreshes allocate nothing and cannot race expiry into a silently stale outcome.
+ * Snapshots alone perform collection scans and take the private reader lock. Disabled collection does neither.
  */
 public class CallTally
 {
     static final int MAX_PENDING = 4096;
-    // P25 continuation is 10s, NXDN/DMR are 3s, unresolved P25 grants are 5s.
     static final long MAX_QUIET_MS = 10_000;
+    private static final CallOutcome[] OUTCOMES = CallOutcome.values();
+    // Seven outcomes use codes 1..7; zero is reserved for explicit completion. Bit 3 records quiet expiry.
+    private static final int STATE_BITS = 4;
+    private static final long OUTCOME_MASK = 7L;
+    private static final long EXPIRED_BIT = 8L;
+    private static final long FINISHED = 0L;
+    static final long MIN_TIMESTAMP = Long.MIN_VALUE >> STATE_BITS;
+    static final long MAX_TIMESTAMP = Long.MAX_VALUE >> STATE_BITS;
     private final Object mSnapshotLock = new Object();
+    private volatile CollectionState mCollection = new CollectionState(1, true, null);
+    private final AtomicReference<PendingRing> mPending = new AtomicReference<>();
     private long mObservedSourceLosses;
     private long mLossHorizon = Long.MIN_VALUE;
     private long mLastSnapshotTime = Long.MIN_VALUE;
     private long mLossWindows;
-    private final AtomicLongArray mOutcomes = new AtomicLongArray(CallOutcome.values().length);
-    private final AtomicReferenceArray<Pending> mPending = new AtomicReferenceArray<>(MAX_PENDING);
-    private final AtomicInteger mNext = new AtomicInteger();
-    private final AtomicLong mLosses = new AtomicLong();
 
-    /** One final outcome, counted once by its call holder. */
-    public void count(CallOutcome outcome)
+    private static final class CollectionState
     {
-        if(outcome != null)
+        private final long generation;
+        private final boolean enabled;
+        private final AtomicLongArray outcomes = new AtomicLongArray(OUTCOMES.length);
+        private final AtomicLong losses;
+
+        private CollectionState(long generation, boolean enabled, CollectionState previous)
         {
-            mOutcomes.incrementAndGet(outcome.ordinal());
+            this.generation = generation;
+            this.enabled = enabled;
+            if(previous != null)
+            {
+                for(int index = 0; index < OUTCOMES.length; index++) outcomes.set(index, previous.outcomes.get(index));
+            }
+            losses = new AtomicLong(previous != null ? previous.losses.get() : 0);
         }
     }
 
-    /** Compatibility for callers recording an already settled call, never for reclassification. */
-    public void count(CallOutcome previous, CallOutcome outcome)
+    private static final class PendingRing
     {
-        if(previous != null)
-        {
-            throw new IllegalArgumentException("An already settled call cannot change outcome");
-        }
-        count(outcome);
+        private final long generation;
+        private final AtomicReferenceArray<Pending> slots = new AtomicReferenceArray<>(MAX_PENDING);
+        private final AtomicInteger next = new AtomicInteger();
+        private final AtomicInteger active = new AtomicInteger();
+        private final AtomicBoolean dirty = new AtomicBoolean();
+
+        private PendingRing(long generation) { this.generation = generation; }
     }
 
-    /** Begins one call's tentative accounting, without retaining talkgroup/radio identities in the reporting worker. */
-    public Pending pending(CallOutcome outcome, long timestamp, long quietMs)
-    {
-        if(quietMs <= 0 || quietMs > MAX_QUIET_MS)
-        {
-            throw new IllegalArgumentException("Call quiet period exceeds bounded health recovery horizon");
-        }
-        Pending pending = new Pending(outcome, timestamp, quietMs);
-        int slot = mNext.getAndIncrement() & (MAX_PENDING - 1);
-        Pending previous = mPending.get(slot);
-        if(previous != null && !previous.isFinished() || !mPending.compareAndSet(slot, previous, pending))
-        {
-            pending.mTracked = false;
-            lost();
-        }
-        return pending;
-    }
-
-    /** A bounded producer-side observation was lost. */
-    public void lost()
-    {
-        mLosses.incrementAndGet();
-    }
-
-    /** Settled calls only; ongoing calls are included after their final outcome is known. */
-    public long getStarted()
-    {
-        long count = 0;
-        for(CallOutcome outcome: CallOutcome.values())
-        {
-            count += get(outcome);
-        }
-        return count;
-    }
-
-    public long get(CallOutcome outcome)
-    {
-        return mOutcomes.get(outcome.ordinal());
-    }
-
-    /** A reporting-worker snapshot without advancing quiet time. Producers never acquire this reader-only lock. */
-    public Totals totals()
+    /** Lifecycle/reporting-worker operation. Old producers can finish only into their retired counter generation. */
+    public void setEnabled(boolean enabled)
     {
         synchronized(mSnapshotLock)
         {
-            return snapshotTotals();
+            CollectionState previous = mCollection;
+            if(previous.enabled == enabled) return;
+            CollectionState next = new CollectionState(previous.generation + 1, enabled, previous);
+            if(enabled)
+            {
+                // Demand is applied on the lifecycle/reporting worker, before the first decoder grant.
+                mPending.set(new PendingRing(next.generation));
+                mCollection = next;
+            }
+            else
+            {
+                mCollection = next;
+                mPending.set(null);
+            }
+            mObservedSourceLosses = next.losses.get();
+            mLossHorizon = Long.MIN_VALUE;
+            mLastSnapshotTime = Long.MIN_VALUE;
         }
     }
 
-    private Totals snapshotTotals()
+    public boolean isEnabled() { return mCollection.enabled; }
+    public long generation() { return mCollection.generation; }
+    boolean isGenerationEnabled(long generation)
+    {
+        CollectionState state = mCollection;
+        return state.enabled && state.generation == generation;
+    }
+
+    public void count(CallOutcome outcome)
+    {
+        CollectionState state = mCollection;
+        if(state.enabled && outcome != null) state.outcomes.incrementAndGet(outcome.ordinal());
+    }
+
+    public void count(CallOutcome previous, CallOutcome outcome)
+    {
+        if(previous != null) throw new IllegalArgumentException("An already settled call cannot change outcome");
+        count(outcome);
+    }
+
+    /** No holder or ring allocation when disabled. The bounded ring is created only for the first enabled call. */
+    public Pending pending(CallOutcome outcome, long timestamp, long quietMs)
+    {
+        CollectionState state = mCollection;
+        if(!state.enabled) return null;
+        if(outcome == null || quietMs <= 0 || quietMs > MAX_QUIET_MS || !validTimestamp(timestamp))
+        {
+            lost(state);
+            return null;
+        }
+        PendingRing ring = mPending.get();
+        if(ring == null || ring.generation != state.generation)
+        {
+            PendingRing candidate = new PendingRing(state.generation);
+            if(mCollection != state) return null;
+            if(mPending.compareAndSet(ring, candidate)) ring = candidate;
+            else ring = mPending.get();
+            if(ring == null || ring.generation != state.generation) return null;
+        }
+        if(mCollection != state)
+        {
+            mPending.compareAndSet(ring, null);
+            return null;
+        }
+        Pending pending = new Pending(state, ring.active, ring.dirty, outcome, timestamp, quietMs);
+        int slot = ring.next.getAndIncrement() & (MAX_PENDING - 1);
+        Pending previous = ring.slots.get(slot);
+        ring.active.incrementAndGet();
+        if(previous != null && !previous.isFinished() || !ring.slots.compareAndSet(slot, previous, pending))
+        {
+            pending.mTracked = false;
+            ring.active.decrementAndGet();
+            lost(state);
+        }
+        else ring.dirty.set(true);
+        if(mCollection != state) mPending.compareAndSet(ring, null);
+        return pending;
+    }
+
+    public void lost() { lost(mCollection); }
+
+    private void lost(CollectionState state)
+    {
+        if(state.enabled && mCollection == state) state.losses.incrementAndGet();
+    }
+
+    public long getStarted()
+    {
+        CollectionState state = mCollection;
+        long count = 0;
+        for(int index = 0; index < OUTCOMES.length; index++) count += state.outcomes.get(index);
+        return count;
+    }
+
+    public long get(CallOutcome outcome) { return mCollection.outcomes.get(outcome.ordinal()); }
+
+    public Totals totals()
+    {
+        synchronized(mSnapshotLock) { return snapshotTotals(mCollection); }
+    }
+
+    private Totals snapshotTotals(CollectionState state)
     {
         Map<CallOutcome,Long> outcomes = new EnumMap<>(CallOutcome.class);
         long started = 0;
-        for(CallOutcome outcome: CallOutcome.values())
+        for(CallOutcome outcome: OUTCOMES)
         {
-            long count = get(outcome);
+            long count = state.outcomes.get(outcome.ordinal());
             outcomes.put(outcome, count);
             started += count;
         }
-        return new Totals(started, Map.copyOf(outcomes), mLosses.get() + mLossWindows);
+        return new Totals(started, Map.copyOf(outcomes), state.losses.get() + mLossWindows);
     }
 
-    /**
-     * Reporting-worker operation. A lost observer call may settle after its initial loss, so reporting remains
-     * incomplete through the maximum quiet period and the first snapshot past it. Continued lost activity extends
-     * that horizon. Source loss and generated window markers are separate, so markers cannot extend themselves.
-     */
+    /** Expiry scans run only for a non-empty/dirty enabled ring. Loss markers never extend their own horizon. */
     public Totals totals(long now)
     {
         synchronized(mSnapshotLock)
         {
-            for(int index = 0; index < MAX_PENDING; index++)
+            CollectionState state = mCollection;
+            PendingRing ring = mPending.get();
+            if(state.enabled && ring != null && ring.generation == state.generation &&
+                (ring.dirty.getAndSet(false) || ring.active.get() > 0))
             {
-                Pending pending = mPending.get(index);
-                if(pending != null) pending.expire(now);
+                for(int index = 0; index < MAX_PENDING; index++)
+                {
+                    Pending pending = ring.slots.get(index);
+                    if(pending != null)
+                    {
+                        pending.expire(now, false);
+                        if(pending.isFinished()) ring.slots.compareAndSet(index, pending, null);
+                    }
+                }
             }
-            long sourceLosses = mLosses.get();
-            if(sourceLosses != mObservedSourceLosses)
+            long sourceLosses = state.losses.get();
+            if(state.enabled && sourceLosses != mObservedSourceLosses)
             {
                 mObservedSourceLosses = sourceLosses;
                 mLossHorizon = now + MAX_QUIET_MS;
             }
-            if(mLossHorizon != Long.MIN_VALUE && mLastSnapshotTime <= mLossHorizon)
-            {
-                mLossWindows++;
-            }
+            if(state.enabled && mLossHorizon != Long.MIN_VALUE && mLastSnapshotTime <= mLossHorizon) mLossWindows++;
             mLastSnapshotTime = now;
-            return snapshotTotals();
+            return snapshotTotals(state);
         }
     }
 
-    private record State(CallOutcome outcome, long timestamp, boolean expired) {}
-    private static final State FINISHED = new State(null, Long.MIN_VALUE, false);
+    private static boolean validTimestamp(long timestamp) { return timestamp >= MIN_TIMESTAMP && timestamp <= MAX_TIMESTAMP; }
+    private static long encode(CallOutcome outcome, long timestamp) { return timestamp << STATE_BITS | outcome.ordinal() + 1L; }
+    private static long timestamp(long state) { return state >> STATE_BITS; }
+    private static boolean expired(long state) { return (state & EXPIRED_BIT) != 0; }
+    private static CallOutcome outcome(long state) { return OUTCOMES[(int)(state & OUTCOME_MASK) - 1]; }
 
-    /** One call, owned by a decoder's existing lifecycle and observed lock-free by the reporting worker. */
+    /** Holds no ring/array reference: disabling collection releases the large ring even while trackers remain alive. */
     public final class Pending
     {
-        private final AtomicReference<State> mState;
+        private final CollectionState mCollectionState;
+        private final AtomicInteger mActive;
+        private final AtomicBoolean mDirty;
+        private final AtomicLong mState;
         private final long mQuietMs;
         private boolean mTracked = true;
 
-        private Pending(CallOutcome outcome, long timestamp, long quietMs)
+        private Pending(CollectionState collection, AtomicInteger active, AtomicBoolean dirty, CallOutcome outcome,
+                        long timestamp, long quietMs)
         {
-            mState = new AtomicReference<>(new State(outcome, timestamp, false));
+            mCollectionState = collection;
+            mActive = active;
+            mDirty = dirty;
+            mState = new AtomicLong(encode(outcome, timestamp));
             mQuietMs = quietMs;
         }
 
-        public boolean isFinished()
-        {
-            State state = mState.get();
-            return state == FINISHED || state.expired();
-        }
+        public long generation() { return mCollectionState.generation; }
+        private boolean current() { return mCollectionState.enabled && mCollection == mCollectionState; }
+        public boolean isFinished() { long state = mState.get(); return !current() || state == FINISHED || expired(state); }
 
-        /** A single attempt: a concurrent expiry cannot hold up its producer. */
-        public void observe(CallOutcome outcome, long timestamp)
+        /** One CAS and no allocation, including timestamp-only traffic observations. */
+        public void observe(CallOutcome nextOutcome, long observedAt)
         {
-            State state = mState.get();
-            if(state.expired())
-            {
-                contradicted(state, outcome);
-            }
+            if(!current()) return;
+            if(!validTimestamp(observedAt)) { lost(mCollectionState); return; }
+            long state = mState.get();
+            if(expired(state)) contradicted(state, nextOutcome);
             else if(state != FINISHED)
             {
-                if(!mState.compareAndSet(state, new State(outcome != null ? outcome : state.outcome(),
-                    Math.max(timestamp, state.timestamp()), false)))
+                long next = encode(nextOutcome != null ? nextOutcome : outcome(state), Math.max(observedAt, timestamp(state)));
+                if(next != state && !mState.compareAndSet(state, next))
                 {
-                    State current = mState.get();
-                    if(current.expired()) contradicted(current, outcome);
-                    else if(current != FINISHED) lost();
+                    long actual = mState.get();
+                    if(expired(actual)) contradicted(actual, nextOutcome);
+                    else if(actual != FINISHED) lost(mCollectionState);
                 }
-                if(!mTracked) lost();
+                if(!mTracked) lost(mCollectionState);
             }
         }
 
-        private void contradicted(State state, CallOutcome outcome)
+        private void contradicted(long state, CallOutcome next)
         {
-            //Late material evidence invalidates completeness; it must never silently retain a provisional failure.
-            if(outcome != null && outcome != state.outcome()) lost();
+            if(next != null && next != outcome(state)) lost(mCollectionState);
         }
 
-        /** Retires the call exactly once on end, replacement, reset or stop. */
         public void finish()
         {
-            settle(mState.getAndSet(FINISHED));
+            if(current()) settle(mState.getAndSet(FINISHED), true);
         }
 
-        /** An unresolved grant subsequently resolved; the normal call tracker will account for it instead. */
         public void cancel()
         {
-            mState.getAndSet(FINISHED);
+            if(current()) retire(mState.getAndSet(FINISHED), true);
         }
 
-        /** One bounded quiet check, also usable by the existing call owner before replacement/resolution. */
-        public void expire(long now)
+        public void expire(long now) { expire(now, true); }
+
+        private void expire(long now, boolean dirty)
         {
-            State state = mState.get();
-            if(state != FINISHED && !state.expired() && now - state.timestamp() > mQuietMs &&
-                mState.compareAndSet(state, new State(state.outcome(), state.timestamp(), true)))
+            if(!current()) return;
+            if(!validTimestamp(now)) { lost(mCollectionState); return; }
+            long state = mState.get();
+            if(state != FINISHED && !expired(state) && now - timestamp(state) > mQuietMs &&
+                mState.compareAndSet(state, state | EXPIRED_BIT)) settle(state, dirty);
+        }
+
+        private void retire(long state, boolean dirty)
+        {
+            if(state != FINISHED && !expired(state) && mTracked)
             {
-                settle(state);
+                mActive.decrementAndGet();
+                if(dirty) mDirty.set(true);
             }
         }
 
-        private void settle(State state)
+        private void settle(long state, boolean dirty)
         {
-            if(state != FINISHED && !state.expired())
+            if(state != FINISHED && !expired(state))
             {
-                if(mTracked) count(state.outcome());
-                else lost();
+                retire(state, dirty);
+                if(mTracked) mCollectionState.outcomes.incrementAndGet(outcome(state).ordinal());
+                else lost(mCollectionState);
             }
         }
     }

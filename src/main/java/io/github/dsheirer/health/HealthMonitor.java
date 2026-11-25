@@ -65,6 +65,7 @@ public class HealthMonitor extends Module implements IMessageListener, ISquelchS
     private final Listener<SquelchStateEvent> mSquelchListener = this::receive;
     private final Listener<SourceEvent> mSourceEventListener = this::receive;
     private long mLastLcchKey = Long.MIN_VALUE;
+    private long mObservedCollectionEpoch = Long.MIN_VALUE;
     private volatile double mSampleRate;
     private final Listener<ComplexSamples> mComplexSamplesListener = this::receiveSamples;
 
@@ -189,17 +190,23 @@ public class HealthMonitor extends Module implements IMessageListener, ISquelchS
     /** O(1) sample-duration observation; no array contents, copies, queues or report state are touched. */
     private void receiveSamples(ComplexSamples samples)
     {
-        if(mComplexSource && samples != null)
-        {
-            mHealth.deliveredSamples(samples.length(), mSampleRate);
-        }
+        if(!mHealth.isCollecting() || mHealth.countsCalls() || !mComplexSource || samples == null) return;
+        long epoch = mHealth.collectionEpoch();
+        mHealth.deliveredSamples(epoch, samples.length(), mSampleRate);
     }
 
     void receive(IMessage message)
     {
+        if(!mHealth.isCollecting()) return;
+        long epoch = mHealth.collectionEpoch();
+        if(epoch != mObservedCollectionEpoch)
+        {
+            mLastLcchKey = Long.MIN_VALUE;
+            mObservedCollectionEpoch = epoch;
+        }
         if(message instanceof TSBKMessage tsbk)
         {
-            mHealth.control("p25", tsbk.isValid(), tsbk.getTimestamp());
+            mHealth.control(epoch, "p25", tsbk.isValid(), tsbk.getTimestamp());
 
             if(tsbk.isValid())
             {
@@ -214,7 +221,7 @@ public class HealthMonitor extends Module implements IMessageListener, ISquelchS
             if(key != mLastLcchKey)
             {
                 mLastLcchKey = key;
-                mHealth.control("p25", mac.isValid(), mac.getTimestamp());
+                mHealth.control(epoch, "p25", mac.isValid(), mac.getTimestamp());
             }
         }
         else if(mDecoderType == DecoderType.DMR && message instanceof CSBKMessage data)
@@ -222,16 +229,16 @@ public class HealthMonitor extends Module implements IMessageListener, ISquelchS
             //Only CSBK control units belong in this count, not voice/data/idle bursts. The operator's Ignore CRC
             //setting does not change the raw integrity measurement sent to the provider.
             boolean valid = data.getSlotType() != null && data.getSlotType().isValid() && data.isValid();
-            mHealth.control("dmr", valid, data.getTimestamp());
+            mHealth.control(epoch, "dmr", valid, data.getTimestamp());
         }
         else if(mDecoderType == DecoderType.NXDN && message instanceof NXDNMessage nxdn &&
             nxdn.isRfFrameQualityCarrier() && isOutboundCac(nxdn.getLICH()))
         {
-            mHealth.control("nxdn", nxdn.isRfFrameValid(), nxdn.getTimestamp());
+            mHealth.control(epoch, "nxdn", nxdn.isRfFrameValid(), nxdn.getTimestamp());
         }
         else if(message instanceof SyncLossMessage syncLoss && mProtocol != null)
         {
-            mHealth.syncLoss(Math.max(0, syncLoss.getBitsProcessed()) / BITS_PER_SYMBOL);
+            mHealth.syncLoss(epoch, Math.max(0, syncLoss.getBitsProcessed()) / BITS_PER_SYMBOL);
         }
     }
 
@@ -252,13 +259,19 @@ public class HealthMonitor extends Module implements IMessageListener, ISquelchS
 
     private void receive(SquelchStateEvent event)
     {
-        if(event.getSquelchState() == SquelchState.UNSQUELCH)
+        SquelchState state = event.getSquelchState();
+        if(state != SquelchState.UNSQUELCH && state != SquelchState.SQUELCH) return;
+        boolean open = state == SquelchState.UNSQUELCH;
+        mHealth.squelchState(open);
+        long epoch = mHealth.collectionEpoch();
+        if(!mHealth.isCollecting()) return;
+        if(open)
         {
-            mHealth.opened(System.currentTimeMillis());
+            mHealth.opened(epoch, System.currentTimeMillis());
         }
-        else if(event.getSquelchState() == SquelchState.SQUELCH)
+        else
         {
-            mHealth.closed(System.currentTimeMillis());
+            mHealth.closed(epoch, System.currentTimeMillis());
         }
     }
 

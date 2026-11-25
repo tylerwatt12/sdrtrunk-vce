@@ -1044,7 +1044,8 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
                 trafficChannelEvent.getChannelDescriptor() instanceof DMRChannel dmrChannel ?
                     dmrChannel.getTimeslot() : null;
             long timestamp = observedAt;
-            if(mCallOutcomes != null && trafficChannelEvent.getChannelDescriptor() != null && timeslot != null)
+            if(mCallOutcomes != null && mCallOutcomes.isEnabled() &&
+                trafficChannelEvent.getChannelDescriptor() != null && timeslot != null)
             {
                 String key = trafficChannelEvent.getChannelDescriptor() instanceof DMRChannel dmr ?
                     healthCallKey(dmr) : mCallOutcomes.frequencyKey(
@@ -1111,8 +1112,12 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
                     mNativeRadioSystemKey);
             TrunkedCallStartEvent callStart = callObservation.callStart();
             boolean newCall = callStart != null;
-            String callKey = healthCallKey(channel);
-            mCallOutcomes.bindFrequency(callKey, channel.getDownlinkFrequency(), channel.getTimeslot());
+            String callKey = null;
+            if(mCallOutcomes.isEnabled())
+            {
+                callKey = healthCallKey(channel);
+                mCallOutcomes.bindFrequency(callKey, channel.getDownlinkFrequency(), channel.getTimeslot());
+            }
 
             if(callStart != null)
             {
@@ -1372,7 +1377,7 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
      */
     private void tallyCall(String callKey, boolean newCall, CallOutcome outcome, long timestamp)
     {
-        if(mCallOutcomes != null)
+        if(mCallOutcomes != null && mCallOutcomes.isEnabled())
         {
             mCallOutcomes.tally(callKey, newCall, outcome, timestamp);
         }
@@ -1383,7 +1388,7 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
      */
     private void tallyRejected(String callKey)
     {
-        if(mCallOutcomes != null && callKey != null)
+        if(mCallOutcomes != null && mCallOutcomes.isEnabled() && callKey != null)
         {
             mLock.lock();
 
@@ -1711,7 +1716,7 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
                 IDecodeEvent timeslotOne = mCallEventsTS1.remove(frequency);
                 IDecodeEvent timeslotTwo = mCallEventsTS2.remove(frequency);
                 long endedAt = System.currentTimeMillis();
-                if(mCallOutcomes != null)
+                if(mCallOutcomes != null && mCallOutcomes.isEnabled())
                 {
                     mCallOutcomes.trafficStopped(mCallOutcomes.frequencyKey(frequency, 1));
                     mCallOutcomes.trafficStopped(mCallOutcomes.frequencyKey(frequency, 2));
@@ -1743,8 +1748,11 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
 
             try
             {
-                tallyRejected(mCallOutcomes.frequencyKey(frequency, 1));
-                tallyRejected(mCallOutcomes.frequencyKey(frequency, 2));
+                if(mCallOutcomes != null && mCallOutcomes.isEnabled())
+                {
+                    tallyRejected(mCallOutcomes.frequencyKey(frequency, 1));
+                    tallyRejected(mCallOutcomes.frequencyKey(frequency, 2));
+                }
 
                 IDecodeEvent event = mCallEventsTS1.get(frequency);
 

@@ -996,7 +996,7 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
     private void tallyCall(boolean counted, NXDNChannelEventTracker tracker, CallOutcome outcome,
                            IChannelDescriptor descriptor, long timestamp)
     {
-        if(counted && tracker != null)
+        if(counted && tracker != null && mCallTally != null && mCallTally.isEnabled())
         {
             String key = unmappedHealthKey(descriptor);
             if(key != null && descriptor.getDownlinkFrequency() <= 0)

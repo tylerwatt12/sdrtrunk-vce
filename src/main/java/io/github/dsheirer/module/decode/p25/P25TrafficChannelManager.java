@@ -205,7 +205,8 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
     private final boolean mGrantAllocationEnabled;
     private final ChannelHealth mHealth;
     private final CallTally mCallTally;
-    private final UnresolvedGrants mUnresolvedGrants = new UnresolvedGrants();
+    private UnresolvedGrants mUnresolvedGrants = new UnresolvedGrants();
+    private long mUnresolvedHealthGeneration = -1;
     private final Map<String,RemoteTrafficAllocation> mRemoteTrafficAllocations = new HashMap<>();
     private final RemoteTrafficGenerationHistory mRemoteTrafficGenerations =
         new RemoteTrafficGenerationHistory(MAX_REMOTE_TRAFFIC_GENERATION_TOMBSTONES);
@@ -864,7 +865,8 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
 
         try
         {
-            mUnresolvedGrants.reset();
+            if(mCallTally != null && mCallTally.isEnabled()) mUnresolvedGrants.reset();
+            else mUnresolvedGrants = new UnresolvedGrants();
 
             //Capture traffic channels under the manager lock, but disable them after releasing it.  Channel disable is
             //synchronous and can re-enter a decoder state that is simultaneously waiting for this manager lock.
@@ -2768,6 +2770,13 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
      */
     private CallTally calls()
     {
+        if(mCallTally == null || !mCallTally.isEnabled()) return null;
+        long generation = mCallTally.generation();
+        if(mUnresolvedHealthGeneration != generation)
+        {
+            mUnresolvedGrants = new UnresolvedGrants();
+            mUnresolvedHealthGeneration = generation;
+        }
         return mCallTally;
     }
 
@@ -2776,9 +2785,10 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
      */
     private void tallyUnresolvedGrant(IdentifierCollection ic, long timestamp)
     {
-        if(calls() != null)
+        CallTally tally = calls();
+        if(tally != null)
         {
-            mUnresolvedGrants.unresolved(callKey(ic), timestamp, calls());
+            mUnresolvedGrants.unresolved(callKey(ic), timestamp, tally);
         }
     }
 
@@ -3084,7 +3094,8 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
         try
         {
             clearTrackers();
-            mUnresolvedGrants.reset();
+            if(mCallTally != null && mCallTally.isEnabled()) mUnresolvedGrants.reset();
+            else mUnresolvedGrants = new UnresolvedGrants();
             P25SiteIdentity observedIdentity = mWuidSourceIdentity;
             if(observedIdentity != null)
             {

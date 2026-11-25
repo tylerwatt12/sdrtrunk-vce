@@ -187,7 +187,7 @@ public class ChannelHealthTest
         assertFalse(reader.isAlive());
         assertFalse(producer.isAlive());
         assertEquals(10_000, health.totals(20_000).good());
-        assertEquals(100_000, health.totals(20_000).heardMs());
+        assertNull(health.totals(20_000).heardMs(), "Trunked reporting does not accumulate conventional sample duration");
     }
 
     @Test
@@ -355,6 +355,161 @@ public class ChannelHealthTest
         assertEquals(300, recovered.runningMs());
         assertEquals(200, recovered.openMs());
         assertEquals(1, recovered.closes());
+    }
+
+    @Test
+    void demand_gating_preserves_live_state_without_counting_disabled_time_or_activity()
+    {
+        ChannelHealth health = new ChannelHealth(info(20, "fm"), false);
+        health.setSyncLossMeasured(true);
+        health.started(1_000);
+        health.opened(1_500);
+        health.sampleRate(48_000);
+        health.deliveredSamples(48_000, 48_000);
+        health.control("p25", true, 2_000);
+        health.syncLoss(100);
+        health.setFrequency(155_500_000);
+        health.identity("site", 7);
+        ChannelHealth.Totals off = health.totals(2_500);
+        assertFalse(off.collecting());
+        assertEquals(0, off.collectionEpoch());
+        assertEquals(0, off.good());
+        assertEquals(0, off.syncLossSym());
+        assertEquals(0, off.runningMs());
+        assertEquals(0, off.opens());
+        assertEquals(0, off.openMs());
+        assertEquals(0, off.heardMs());
+        assertEquals(155_500_000, off.frequency());
+        assertEquals(7, off.identity().get("site"));
+        assertFalse(health.getCalls().isEnabled(), "Conventional reception never enables a pending-call ring");
+
+        health.setCollecting(true, 3_000);
+        long firstEpoch = health.collectionEpoch();
+        health.setCollecting(true, 3_500);
+        assertEquals(firstEpoch, health.collectionEpoch(), "An unchanged demand set does not start another epoch");
+        health.control("p25", true, 3_500);
+        health.syncLoss(2);
+        health.deliveredSamples(24_000, 48_000);
+        ChannelHealth.Totals on = health.totals(4_000);
+        assertTrue(on.collecting());
+        assertEquals(3_000, on.collectionSinceMs());
+        assertEquals(1_000, on.runningMs());
+        assertEquals(1_000, on.openMs(), "An already-open transmission is rebased at activation");
+        assertEquals(0, on.opens(), "Activation does not manufacture a squelch opening");
+        assertEquals(1, on.good());
+        assertEquals(2, on.syncLossSym());
+        assertEquals(500, on.heardMs());
+        assertFalse(health.getCalls().isEnabled());
+
+        health.setCollecting(false, 4_500);
+        health.closed(5_000);
+        health.control("p25", false, 6_000);
+        health.deliveredSamples(48_000, 48_000);
+        health.setCollecting(true, 9_000);
+        //A callback admitted by a previous subscription cannot become an observation in this new window.
+        health.control(firstEpoch, "p25", true, 9_100);
+        health.syncLoss(firstEpoch, 50);
+        health.deliveredSamples(firstEpoch, 48_000, 48_000);
+        health.opened(firstEpoch, 9_100);
+        ChannelHealth.Totals resumed = health.totals(10_000);
+        assertEquals(firstEpoch + 2, resumed.collectionEpoch());
+        assertEquals(9_000, resumed.collectionSinceMs());
+        assertEquals(2_500, resumed.runningMs());
+        assertEquals(1_500, resumed.openMs());
+        assertEquals(0, resumed.opens());
+        assertEquals(0, resumed.closes(), "Disabling observation does not end the actual transmission");
+        assertEquals(1, resumed.good());
+        assertEquals(0, resumed.bad());
+        assertEquals(2, resumed.syncLossSym());
+        assertEquals(500, resumed.heardMs());
+    }
+
+    @Test
+    void trunked_collection_enables_calls_but_never_accumulates_conventional_sample_duration()
+    {
+        ChannelHealth health = new ChannelHealth(info(21, "p25"), false);
+        health.setCallsCounted();
+        health.sampleRate(48_000);
+        assertFalse(health.getCalls().isEnabled());
+        health.setCollecting(true, 1_000);
+        assertTrue(health.getCalls().isEnabled());
+        health.deliveredSamples(48_000, 48_000);
+        assertEquals(0, health.totals(2_000).heardMs());
+        health.setCollecting(false, 2_000);
+        assertFalse(health.getCalls().isEnabled());
+        health.setCollecting(true, 3_000);
+        assertTrue(health.getCalls().isEnabled());
+    }
+
+    @Test
+    void disabled_callbacks_return_while_collection_transition_is_blocked_on_reporting() throws Exception
+    {
+        CountDownLatch transitionEntered = new CountDownLatch(1);
+        CountDownLatch releaseTransition = new CountDownLatch(1);
+        java.util.concurrent.atomic.AtomicBoolean block = new java.util.concurrent.atomic.AtomicBoolean();
+        CallTally tally = new CallTally()
+        {
+            @Override
+            public void setEnabled(boolean enabled)
+            {
+                if(!enabled && block.get())
+                {
+                    transitionEntered.countDown();
+                    try
+                    {
+                        assertTrue(releaseTransition.await(5, TimeUnit.SECONDS));
+                    }
+                    catch(InterruptedException exception)
+                    {
+                        Thread.currentThread().interrupt();
+                        throw new AssertionError(exception);
+                    }
+                }
+                super.setEnabled(enabled);
+            }
+        };
+        ChannelHealth health = new ChannelHealth(info(22, "p25"), tally);
+        health.setCallsCounted();
+        health.control("p25", true, 1_000);
+        block.set(true);
+        Thread transition = new Thread(() -> health.setCollecting(false, 2_000), "blocked-health-transition");
+        CountDownLatch producerFinished = new CountDownLatch(1);
+        Thread producer = new Thread(() ->
+        {
+            try
+            {
+                for(int index = 0; index < 10_000; index++)
+                {
+                    health.control("p25", true, 3_000 + index);
+                    health.syncLoss(1);
+                    health.deliveredSamples(480, 48_000);
+                    health.opened(3_000 + index);
+                    health.closed(3_001 + index);
+                }
+            }
+            finally
+            {
+                producerFinished.countDown();
+            }
+        }, "disabled-health-callbacks");
+        try
+        {
+            transition.start();
+            assertTrue(transitionEntered.await(2, TimeUnit.SECONDS));
+            producer.start();
+            assertTrue(producerFinished.await(2, TimeUnit.SECONDS),
+                "Disabled receiver callbacks waited for collection/reporting lifecycle work");
+        }
+        finally
+        {
+            releaseTransition.countDown();
+            transition.join(5_000);
+            producer.join(5_000);
+        }
+        assertFalse(transition.isAlive());
+        assertFalse(producer.isAlive());
+        assertFalse(health.isCollecting());
+        assertEquals(1, health.totals(20_000).good());
     }
 
 }

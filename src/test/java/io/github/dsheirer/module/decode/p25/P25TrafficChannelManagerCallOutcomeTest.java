@@ -104,6 +104,7 @@ class P25TrafficChannelManagerCallOutcomeTest
         configuration.setTrafficChannelPoolSize(trafficChannels);
         configuration.setIgnoreEncryptedCalls(ignoreEncrypted);
         parent.setDecodeConfiguration(configuration);
+        HealthRegistry.getInstance().channel(parent).setCollecting(true, 0);
         P25TrafficChannelManager manager = new P25TrafficChannelManager(parent);
         manager.processFrequencyBand(band());
         manager.processFrequencyBand(band()); //Heard twice: confirmed

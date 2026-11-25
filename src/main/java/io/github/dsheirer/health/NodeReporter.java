@@ -89,6 +89,7 @@ public class NodeReporter
     private long mSeq;
     private volatile boolean mStopped;
     private boolean mCollectionGap;
+    private boolean mCollectionBaseline;
 
     /**
      * @param key something of the node's own (its ID), to spread nodes that start together
@@ -128,6 +129,28 @@ public class NodeReporter
         if(mFirst == null)
         {
             mFirst = first;
+        }
+    }
+
+    /** Fresh scoped collection cannot claim observations from before its first measured snapshot. */
+    public void beginCollected(HealthSnapshot first)
+    {
+        mCollectionBaseline = true;
+        if(first == null) return;
+        if(mDeliveredTo == null)
+        {
+            if(mFirst == null || first.timeMs() > mFirst.timeMs())
+            {
+                mFirst = first;
+                if(mNextAt != null) mNextAt = Math.max(mNextAt, first.timeMs() + FIRST_AFTER_MS);
+            }
+        }
+        else if(mDeliveredTo[1] == first.sinceMs() && first.timeMs() > mDeliveredTo[0])
+        {
+            //A newly observed source/epoch cannot claim the time before its activation as a quiet interval.
+            mDeliveredTo = new long[]{first.timeMs(), first.sinceMs()};
+            mBuilt = null;
+            mCollectionGap = true;
         }
     }
 
@@ -234,11 +257,12 @@ public class NodeReporter
 
         Long from = mDeliveredTo != null && mDeliveredTo[1] == now.sinceMs() ? mDeliveredTo[0] : null;
         boolean startedLate = from == null && startedLate(history, now);
+        boolean collectedFirst = from == null && mCollectionBaseline;
         long oldest = now.timeMs() - MAX_WINDOW_MS;
         HealthSnapshot base;
         boolean gap;
 
-        if(startedLate)
+        if(startedLate || collectedFirst)
         {
             gap = true;
             base = history.atOrAfter(Math.max(mFirst.timeMs(), oldest));
@@ -262,7 +286,7 @@ public class NodeReporter
         //A window with no time in it (yet), or a start no snapshot is kept for, isn't sent.
         long start = base != null ? base.timeMs() : now.sinceMs();
 
-        if(start >= now.timeMs() || (base == null && (from != null || startedLate)))
+        if(start >= now.timeMs() || (base == null && (from != null || startedLate || collectedFirst)))
         {
             return null;
         }

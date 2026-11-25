@@ -32,8 +32,9 @@ import java.util.concurrent.atomic.AtomicReference;
  * readers never acquire a receiver lock, and only the reporting worker assembles collections. A busy reporter can
  * therefore neither hold up a decoder nor lose accounting observations by filling a handoff queue.
  *
- * Scalar measurements are sampled independently, rather than promising a simultaneous cut across decoder, source,
- * squelch and traffic-manager callbacks. CallTally owns the separate settled call-outcome accounting.
+ * Measurement updates run only while an enabled reporting destination selects this channel. Cheap lifecycle,
+ * rate and identity state remains current while disabled. Collection epochs qualify activation boundaries without
+ * resetting cumulative totals. CallTally owns the separate settled call-outcome accounting.
  */
 public class ChannelHealth
 {
@@ -46,6 +47,13 @@ public class ChannelHealth
     private final ChannelInfo mInfo;
     private final CallTally mCalls;
     private final AtomicBoolean mCallsCounted = new AtomicBoolean();
+    private final Object mCollectionLock = new Object();
+    private volatile boolean mCollecting;
+    private final AtomicLong mCollectionEpoch = new AtomicLong();
+    private volatile long mCollectionSinceMs;
+    private volatile boolean mProcessing;
+    private volatile boolean mSquelchOpen;
+    private volatile boolean mKnownSampleRate;
     private volatile String mProtocol;
     private final AtomicLong mFrequency = new AtomicLong();
     private final AtomicIntegerArray mIdentity = new AtomicIntegerArray(IDENTITY_NAMES.length);
@@ -71,14 +79,27 @@ public class ChannelHealth
 
     public ChannelHealth(ChannelInfo info)
     {
-        this(info, new CallTally());
+        this(info, new CallTally(), true);
+    }
+
+    /** Production registrations stay dormant until an enabled destination selects this channel. */
+    public ChannelHealth(ChannelInfo info, boolean collecting)
+    {
+        this(info, new CallTally(), collecting);
     }
 
     /** Injection point for collection-isolation tests; no observer is called by the measurement methods. */
     ChannelHealth(ChannelInfo info, CallTally calls)
     {
+        this(info, calls, true);
+    }
+
+    private ChannelHealth(ChannelInfo info, CallTally calls, boolean collecting)
+    {
         mInfo = info;
         mCalls = calls;
+        mCollecting = collecting;
+        mCalls.setEnabled(collecting && mCallsCounted.get());
         for(int index = 0; index < IDENTITY_NAMES.length; index++)
         {
             mIdentity.set(index, UNKNOWN_IDENTITY);
@@ -97,16 +118,90 @@ public class ChannelHealth
 
     public void setCallsCounted()
     {
-        mCallsCounted.set(true);
+        synchronized(mCollectionLock)
+        {
+            mCallsCounted.set(true);
+            mCalls.setEnabled(mCollecting);
+        }
     }
 
-    /** Lifecycle calls are serialized by the processing chain; snapshots never participate in their updates. */
+    public boolean isCollecting()
+    {
+        return mCollecting;
+    }
+
+    public long collectionEpoch()
+    {
+        return mCollectionEpoch.get();
+    }
+
+    public long collectionSinceMs()
+    {
+        return mCollectionSinceMs;
+    }
+
+    public boolean countsCalls()
+    {
+        return mCallsCounted.get();
+    }
+
+    public void setCollecting(boolean collecting)
+    {
+        setCollecting(collecting, System.currentTimeMillis());
+    }
+
+    /** Worker/lifecycle only. Receiver callbacks never acquire this transition lock or wait for its work. */
+    public void setCollecting(boolean collecting, long now)
+    {
+        synchronized(mCollectionLock)
+        {
+            if(mCollecting == collecting)
+            {
+                return;
+            }
+            beginTimingUpdate();
+            try
+            {
+                //Close admission before changing interval state. A producer admitted just before this boundary
+                //keeps timing readers incomplete until its bounded update finishes.
+                mCollecting = false;
+                long epoch = mCollectionEpoch.incrementAndGet();
+                long since = mRunningSince.getAndSet(-epoch - 2);
+                if(since >= 0)
+                {
+                    mRunningMs.addAndGet(Math.max(0, now - since));
+                }
+                finishLock(now, -epoch - 1);
+                finishOpen(now, false, -epoch - 2);
+                mCalls.setEnabled(collecting && mCallsCounted.get());
+                if(collecting)
+                {
+                    mCollectionSinceMs = now;
+                    mDeliveryMeasured = mKnownSampleRate;
+                    mDeliveryUnknown = false;
+                    if(mProcessing) mRunningSince.set(now);
+                    //An already-open transmission contributes duration after activation, but no invented opening.
+                    if(mSquelchOpen) mOpenedAt.set(now);
+                }
+                mCollecting = collecting;
+            }
+            finally
+            {
+                endTimingUpdate();
+            }
+        }
+    }
+
+    /** Lifecycle calls retain live state while off, without accumulating disabled running time. */
     public void started(long now)
     {
-        beginTimingUpdate();
+        mProcessing = true;
+        long epoch = collectionEpoch();
+        if(!beginMeasurement(epoch)) return;
         try
         {
-            mRunningSince.compareAndSet(-1, now);
+            long previous = mRunningSince.get();
+            if(previous < 0) mRunningSince.compareAndSet(previous, now);
         }
         finally
         {
@@ -116,25 +211,42 @@ public class ChannelHealth
 
     public void stopped(long now)
     {
+        mProcessing = false;
+        mSquelchOpen = false;
+        if(!mCollecting) return;
         beginTimingUpdate();
         try
         {
-            long since = mRunningSince.getAndSet(-1);
+            long since = mRunningSince.getAndSet(-mCollectionEpoch.get() - 2);
             if(since >= 0)
             {
                 mRunningMs.addAndGet(Math.max(0, now - since));
             }
-            //Finish the last lock interval here so a later restart cannot credit time while stopped.
-            long lastGood = mLastGood.getAndSet(0);
-            if(lastGood > 0)
-            {
-                mLockedMs.addAndGet(Math.min(Math.max(0, now - lastGood), LOCK_HOLD_MS));
-            }
-            closed(now);
+            finishLock(now, -mCollectionEpoch.get() - 1);
+            finishOpen(now, true, -mCollectionEpoch.get() - 2);
         }
         finally
         {
             endTimingUpdate();
+        }
+    }
+
+    private void finishLock(long now, long empty)
+    {
+        long lastGood = mLastGood.getAndSet(empty);
+        if(lastGood > 0)
+        {
+            mLockedMs.addAndGet(Math.min(Math.max(0, now - lastGood), LOCK_HOLD_MS));
+        }
+    }
+
+    private void finishOpen(long now, boolean countClose, long empty)
+    {
+        long opened = mOpenedAt.getAndSet(empty);
+        if(opened >= 0)
+        {
+            mOpenMs.addAndGet(Math.max(0, now - opened));
+            if(countClose) mCloses.incrementAndGet();
         }
     }
 
@@ -152,30 +264,50 @@ public class ChannelHealth
     /** Counts a control unit without collection allocation, locks, queues or observer calls. */
     public void control(String protocol, boolean valid, long timestamp)
     {
-        mProtocol = protocol;
-        if(valid)
+        if(!mCollecting) return;
+        control(collectionEpoch(), protocol, valid, timestamp);
+    }
+
+    void control(long epoch, String protocol, boolean valid, long timestamp)
+    {
+        if(!beginMeasurement(epoch)) return;
+        try
         {
-            mGood.incrementAndGet();
-            beginTimingUpdate();
-            try
+            mProtocol = protocol;
+            if(valid)
             {
+                mGood.incrementAndGet();
                 long previous = mLastGood.get();
-                //The decoder normally has one ordered message writer. One CAS also prevents an obsolete timestamp
-                //from moving lock observation backwards; a competing writer is never retried or waited for.
-                if(timestamp > previous && mLastGood.compareAndSet(previous, timestamp) && previous > 0)
+                long observedAt = Math.max(timestamp, mCollectionSinceMs);
+                //One CAS prevents an obsolete timestamp/epoch from moving lock observation backwards. Producers
+                //never retry; transition sentinels are distinct so stale updates cannot revive an old lock tail.
+                if(observedAt > previous && mLastGood.compareAndSet(previous, observedAt) && previous > 0)
                 {
-                    mLockedMs.addAndGet(Math.min(timestamp - previous, LOCK_HOLD_MS));
+                    mLockedMs.addAndGet(Math.min(observedAt - previous, LOCK_HOLD_MS));
                 }
             }
-            finally
+            else
             {
-                endTimingUpdate();
+                mBad.incrementAndGet();
             }
         }
-        else
+        finally
         {
-            mBad.incrementAndGet();
+            endTimingUpdate();
         }
+    }
+
+    /** Epoch check after fixed admission prevents a queued old callback from entering a newly enabled window. */
+    private boolean beginMeasurement(long epoch)
+    {
+        if(!mCollecting || epoch != mCollectionEpoch.get()) return false;
+        beginTimingUpdate();
+        if(!mCollecting || epoch != mCollectionEpoch.get())
+        {
+            endTimingUpdate();
+            return false;
+        }
+        return true;
     }
 
     public void setSyncLossMeasured(boolean measured)
@@ -185,9 +317,20 @@ public class ChannelHealth
 
     public void syncLoss(long symbols)
     {
-        if(symbols > 0)
+        if(!mCollecting) return;
+        syncLoss(collectionEpoch(), symbols);
+    }
+
+    void syncLoss(long epoch, long symbols)
+    {
+        if(symbols <= 0 || !beginMeasurement(epoch)) return;
+        try
         {
             mSyncLossSym.addAndGet(symbols);
+        }
+        finally
+        {
+            endTimingUpdate();
         }
     }
 
@@ -217,15 +360,26 @@ public class ChannelHealth
         }
     }
 
+    /** Cheap live squelch state is retained while disabled so activation can rebase a current transmission. */
+    public void squelchState(boolean open)
+    {
+        mSquelchOpen = open;
+    }
+
     public void opened(long now)
     {
-        beginTimingUpdate();
+        mSquelchOpen = true;
+        if(!mCollecting) return;
+        opened(collectionEpoch(), now);
+    }
+
+    void opened(long epoch, long now)
+    {
+        if(!beginMeasurement(epoch)) return;
         try
         {
-            if(mOpenedAt.compareAndSet(-1, now))
-            {
-                mOpens.incrementAndGet();
-            }
+            long previous = mOpenedAt.get();
+            if(previous < 0 && mOpenedAt.compareAndSet(previous, now)) mOpens.incrementAndGet();
         }
         finally
         {
@@ -235,11 +389,18 @@ public class ChannelHealth
 
     public void closed(long now)
     {
-        beginTimingUpdate();
+        mSquelchOpen = false;
+        if(!mCollecting) return;
+        closed(collectionEpoch(), now);
+    }
+
+    void closed(long epoch, long now)
+    {
+        if(!beginMeasurement(epoch)) return;
         try
         {
-            long opened = mOpenedAt.getAndSet(-1);
-            if(opened >= 0)
+            long opened = mOpenedAt.get();
+            if(opened >= 0 && mOpenedAt.compareAndSet(opened, -epoch - 2))
             {
                 mOpenMs.addAndGet(Math.max(0, now - opened));
                 mCloses.incrementAndGet();
@@ -321,32 +482,42 @@ public class ChannelHealth
     /** A known complex-source rate establishes that zero delivered samples is a measured zero, not unknown. */
     public void sampleRate(double sampleRate)
     {
-        if(Double.isFinite(sampleRate) && sampleRate > 0)
-        {
-            mDeliveryMeasured = true;
-        }
+        mKnownSampleRate = Double.isFinite(sampleRate) && sampleRate > 0;
+        mDeliveryMeasured = mKnownSampleRate;
     }
 
-    /** Actual complex samples delivered to this processing chain, excluding buffers that never arrived. */
+    /** Actual conventional complex samples delivered while requested; trunked channels do not use heardS. */
     public void deliveredSamples(int count, double sampleRate)
     {
-        if(count <= 0)
+        if(!mCollecting || mCallsCounted.get()) return;
+        deliveredSamples(collectionEpoch(), count, sampleRate);
+    }
+
+    void deliveredSamples(long epoch, int count, double sampleRate)
+    {
+        if(count <= 0 || mCallsCounted.get() || !beginMeasurement(epoch)) return;
+        try
         {
-            return;
+            if(!Double.isFinite(sampleRate) || sampleRate <= 0)
+            {
+                mDeliveryUnknown = true;
+                return;
+            }
+            mDeliveredNanos.addAndGet(Math.round(count * 1_000_000_000.0 / sampleRate));
+            mDeliveryMeasured = true;
         }
-        if(!Double.isFinite(sampleRate) || sampleRate <= 0)
+        finally
         {
-            //Never reinterpret a delivery whose duration was unknown as measured uptime in a later report.
-            mDeliveryUnknown = true;
-            return;
+            endTimingUpdate();
         }
-        mDeliveredNanos.addAndGet(Math.round(count * 1_000_000_000.0 / sampleRate));
-        mDeliveryMeasured = true;
     }
 
     /** Reporting-worker projection; producer callbacks do not use its collections or CallTally snapshot. */
     public Totals totals(long now)
     {
+        long epoch = mCollectionEpoch.get();
+        boolean collecting = mCollecting;
+        long collectionSince = mCollectionSinceMs;
         TimingTotals timing = timing(now);
         Map<String,Integer> identity = new TreeMap<>();
         for(int index = 0; index < IDENTITY_NAMES.length; index++)
@@ -361,7 +532,9 @@ public class ChannelHealth
             mSyncLossMeasured ? mSyncLossSym.get() : null, timing.lockedMs(), timing.locked(),
             mCallsCounted.get() ? mCalls.totals(now) : null, timing.runningMs(), timing.opens(), timing.closes(),
             timing.openMs(),
-            mDeliveryMeasured && !mDeliveryUnknown ? mDeliveredNanos.get() / 1_000_000 : null, timing.complete());
+            mDeliveryMeasured && !mDeliveryUnknown ? mDeliveredNanos.get() / 1_000_000 : null,
+            timing.complete() && epoch == mCollectionEpoch.get() && collecting == mCollecting,
+            epoch, collecting, collectionSince);
     }
 
     /**
@@ -396,7 +569,7 @@ public class ChannelHealth
      * @param locked true when there was a good control message within the last 2 s at this moment: false while the
      *               channel hunts for its control channel
      * @param calls announced, and their outcomes, or null when nothing counts them
-     * @param runningMs milliseconds the channel was processing
+     * @param runningMs milliseconds the channel was processing while collection was requested
      * @param opens squelch openings
      * @param closes squelch closings (transmissions completed)
      * @param openMs milliseconds open
@@ -404,12 +577,25 @@ public class ChannelHealth
      *                source buffering and hardware loss not visible to this callback cannot be independently inferred
      * @param timingComplete false when a bounded reader could only retain an older complete timing tuple; the report
      *                       window must be omitted rather than attribute old timing totals to its new boundary
+     * @param collectionEpoch changes whenever reporting demand enables or disables this channel
+     * @param collecting true while at least one enabled reporting destination selects this channel
+     * @param collectionSinceMs start of the current enabled measurement epoch, in Unix milliseconds
      */
     public record Totals(ChannelInfo info, String protocol, long frequency, Map<String,Integer> identity, long good,
                          long bad, Long syncLossSym, long lockedMs, boolean locked, CallTally.Totals calls,
                          long runningMs,
-                         long opens, long closes, long openMs, Long heardMs, boolean timingComplete)
+                         long opens, long closes, long openMs, Long heardMs, boolean timingComplete,
+                         long collectionEpoch, boolean collecting, long collectionSinceMs)
     {
+        /** Compatibility snapshots are collecting fixtures from the start of their supplied cumulative totals. */
+        public Totals(ChannelInfo info, String protocol, long frequency, Map<String,Integer> identity, long good,
+                      long bad, Long syncLossSym, long lockedMs, boolean locked, CallTally.Totals calls,
+                      long runningMs, long opens, long closes, long openMs, Long heardMs, boolean timingComplete)
+        {
+            this(info, protocol, frequency, identity, good, bad, syncLossSym, lockedMs, locked, calls,
+                runningMs, opens, closes, openMs, heardMs, timingComplete, 0, true, 0);
+        }
+
         /** Compatibility snapshots explicitly supplying heard duration predate contention qualification. */
         public Totals(ChannelInfo info, String protocol, long frequency, Map<String,Integer> identity, long good,
                       long bad, Long syncLossSym, long lockedMs, boolean locked, CallTally.Totals calls,

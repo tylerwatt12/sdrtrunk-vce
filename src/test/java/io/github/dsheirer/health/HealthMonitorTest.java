@@ -25,6 +25,8 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.audio.squelch.SquelchState;
+import io.github.dsheirer.audio.squelch.SquelchStateEvent;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.module.decode.dmr.message.data.SlotType;
 import io.github.dsheirer.module.decode.dmr.message.data.UnknownDataMessage;
@@ -51,7 +53,7 @@ public class HealthMonitorTest
     {
         Channel channel = new Channel("P25 control");
         channel.setDecodeConfiguration(new DecodeConfigP25Phase1());
-        HealthMonitor monitor = new HealthMonitor(channel);
+        HealthMonitor monitor = collectingMonitor(channel, true);
         assertEquals(0, monitor.getHealth().totals(0).syncLossSym(), "measured, and none yet");
 
         //A second of P25 Phase 1 without sync: 9600 bits, 4800 symbols.
@@ -65,7 +67,7 @@ public class HealthMonitorTest
     {
         Channel channel = new Channel("DMR control");
         channel.setDecodeConfiguration(new DecodeConfigDMR());
-        HealthMonitor monitor = new HealthMonitor(channel);
+        HealthMonitor monitor = collectingMonitor(channel, true);
         assertNull(monitor.getHealth().totals(0).syncLossSym());
     }
     @Test
@@ -75,7 +77,7 @@ public class HealthMonitorTest
         DecodeConfigDMR config = new DecodeConfigDMR();
         config.setIgnoreCRCChecksums(true);
         channel.setDecodeConfiguration(config);
-        HealthMonitor monitor = new HealthMonitor(channel);
+        HealthMonitor monitor = collectingMonitor(channel, true);
         SlotType validSlot = SlotType.getSlotType(new CorrectedBinaryMessage(288));
         UnknownDataMessage data = new UnknownDataMessage(DMRSyncPattern.BASE_STATION_DATA,
             new CorrectedBinaryMessage(99), null, validSlot, 1_000, 1);
@@ -105,7 +107,7 @@ public class HealthMonitorTest
     {
         Channel channel = new Channel("NXDN CAC units");
         channel.setDecodeConfiguration(new DecodeConfigNXDN());
-        HealthMonitor monitor = new HealthMonitor(channel);
+        HealthMonitor monitor = collectingMonitor(channel, true);
         SACCHFragment cac = nxdn(1_000, LICH.RCCH_OUTBOUND_SINGLE_CAC_NORMAL);
         cac.setRfFrameQuality(true, 0);
         monitor.receive(cac);
@@ -130,7 +132,7 @@ public class HealthMonitorTest
     {
         Channel channel = new Channel("P25 LCCH restart");
         channel.setDecodeConfiguration(new DecodeConfigP25Phase2());
-        HealthMonitor monitor = new HealthMonitor(channel);
+        HealthMonitor monitor = collectingMonitor(channel, true);
         monitor.start();
         MacMessage message = new MacMessage(0, DataUnitID.UNSCRAMBLED_LCCH,
             new CorrectedBinaryMessage(320), 1_000, null);
@@ -150,7 +152,7 @@ public class HealthMonitorTest
     {
         Channel channel = new Channel("FM delivered samples");
         channel.setDecodeConfiguration(new io.github.dsheirer.module.decode.nbfm.DecodeConfigNBFM());
-        HealthMonitor monitor = new HealthMonitor(channel);
+        HealthMonitor monitor = collectingMonitor(channel, true);
         assertNull(monitor.getHealth().totals(10_000).heardMs());
         monitor.getSourceEventListener().receive(SourceEvent.sampleRateChange(48_000));
         assertEquals(0, monitor.getHealth().totals(10_000).heardMs());
@@ -168,7 +170,7 @@ public class HealthMonitorTest
     {
         Channel channel = new Channel("Remote bitstream");
         channel.setDecodeConfiguration(new DecodeConfigP25Phase1());
-        HealthMonitor monitor = new HealthMonitor(channel, false);
+        HealthMonitor monitor = collectingMonitor(channel, false);
         monitor.getSourceEventListener().receive(SourceEvent.sampleRateChange(4_800));
         assertNull(monitor.getHealth().totals(10_000).heardMs());
     }
@@ -191,7 +193,7 @@ public class HealthMonitorTest
     {
         Channel channel = new Channel("Deaf Phase 2 control");
         channel.setDecodeConfiguration(new DecodeConfigP25Phase2());
-        HealthMonitor monitor = new HealthMonitor(channel);
+        HealthMonitor monitor = collectingMonitor(channel, true);
         ChannelHealth health = monitor.getHealth();
         assertEquals("p25", health.totals(0).protocol());
         assertTrue(health.totals(0).isSite());
@@ -200,6 +202,75 @@ public class HealthMonitorTest
         assertNull(health.totals(0).calls(), "Protocol alone does not turn conventional digital into trunked coverage");
         health.setCallsCounted();
         assertNotNull(health.totals(0).calls());
+    }
+
+    private static HealthMonitor collectingMonitor(Channel channel, boolean complexSource)
+    {
+        HealthMonitor monitor = new HealthMonitor(channel, complexSource);
+        monitor.getHealth().setCollecting(true, 0);
+        return monitor;
+    }
+
+    @Test
+    void disabled_monitor_returns_before_control_classification_or_sample_projection()
+    {
+        Channel channel = new Channel("Inactive report collection");
+        channel.setDecodeConfiguration(new DecodeConfigP25Phase2());
+        HealthMonitor monitor = new HealthMonitor(channel);
+        monitor.getHealth().setCollecting(false, 0);
+        MacMessage forbiddenProjection = new MacMessage(0, DataUnitID.UNSCRAMBLED_LCCH,
+            new CorrectedBinaryMessage(320), 1_000, null)
+        {
+            @Override
+            public DataUnitID getDataUnitID()
+            {
+                throw new AssertionError("Disabled reporting inspected a control message");
+            }
+        };
+        monitor.receive(forbiddenProjection);
+        //The intentionally absent arrays expose any attempt to read sample length while disabled.
+        monitor.getComplexSamplesListener().receive(new ComplexSamples(null, null, 1_000));
+        assertEquals(0, monitor.getHealth().totals(2_000).good());
+        assertEquals(0, monitor.getHealth().totals(2_000).bad());
+    }
+
+    @Test
+    void monitor_retains_off_rate_and_squelch_state_but_skips_trunked_sample_work()
+    {
+        Channel channel = new Channel("Conventional demand activation");
+        channel.setDecodeConfiguration(new io.github.dsheirer.module.decode.nbfm.DecodeConfigNBFM());
+        HealthMonitor monitor = new HealthMonitor(channel);
+        monitor.getHealth().setCollecting(false, 0);
+        monitor.getSourceEventListener().receive(SourceEvent.sampleRateChange(48_000));
+        monitor.getSquelchStateListener().receive(SquelchStateEvent.create(SquelchState.UNSQUELCH));
+        monitor.getHealth().started(1_000);
+        monitor.getHealth().setCollecting(true, 2_000);
+        monitor.getComplexSamplesListener().receive(new ComplexSamples(new float[480], new float[480], 2_000));
+        ChannelHealth.Totals totals = monitor.getHealth().totals(3_000);
+        assertEquals(1_000, totals.runningMs());
+        assertEquals(1_000, totals.openMs());
+        assertEquals(0, totals.opens());
+        assertEquals(10, totals.heardMs());
+        monitor.getHealth().setCallsCounted();
+        monitor.getComplexSamplesListener().receive(new ComplexSamples(null, null, 3_000));
+        assertEquals(10, monitor.getHealth().totals(3_000).heardMs(),
+            "Known trunked coverage skips length/duration work entirely");
+    }
+
+    @Test
+    void reenabled_monitor_counts_lcch_burst_without_reusing_previous_subscription_deduplication()
+    {
+        Channel channel = new Channel("LCCH reporting generations");
+        channel.setDecodeConfiguration(new DecodeConfigP25Phase2());
+        HealthMonitor monitor = collectingMonitor(channel, true);
+        MacMessage message = new MacMessage(0, DataUnitID.UNSCRAMBLED_LCCH,
+            new CorrectedBinaryMessage(320), 1_000, null);
+        message.setValid(true);
+        monitor.receive(message);
+        monitor.getHealth().setCollecting(false, 2_000);
+        monitor.getHealth().setCollecting(true, 3_000);
+        monitor.receive(message);
+        assertEquals(2, monitor.getHealth().totals(4_000).good());
     }
 
 }

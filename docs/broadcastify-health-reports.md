@@ -16,6 +16,10 @@ none. An unavailable or busy server makes reports less frequent; uploads continu
 Destinations that upload as the same System ID share one report, covering their feeding sites and channels.
 Each site is reported whole: its totals include calls that do not stream to that destination.
 
+VCE collects these measurements only for channels that can feed an enabled reporting destination. Destinations
+sharing a channel reuse its collection. Coverage changes normally take effect within 10 seconds. Starting collection
+establishes a new measured window rather than treating the earlier unmeasured time as quiet reception.
+
 ## What a report contains
 
 Reports include reception and call totals, plus configuration and radio system metadata:
@@ -27,7 +31,7 @@ Reports include reception and call totals, plus configuration and radio system m
   traffic channel. When several receivers hear the same site, entries can also include their configured channel names.
 - **Conventional channels:** frequency, configured name, sample delivery time when measured, open time and call
   totals. Sample delivery time comes from the samples VCE receives; it does not independently detect every hardware loss.
-- **Available tuners:** configured name, kind (`airspy`, `hackrf`, `rtlsdr`, and others), running time and measured
+- **Available tuners:** tuner name (which can include its hardware serial number), kind (`airspy`, `hackrf`, `rtlsdr`, and others), running time and measured
   frequency error when available. This is the available tuner set, which can include tuners serving other destinations.
 - **VCE:** version and running time.
 - **Destination:** System ID and API key, as used for call uploads.

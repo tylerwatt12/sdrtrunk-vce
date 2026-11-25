@@ -101,6 +101,7 @@ class DMRTrafficChannelManagerCallOutcomeTest
         config.setTrafficChannelPoolSize(trafficChannels);
         config.setIgnoreEncryptedCalls(ignoreEncrypted);
         parent.setDecodeConfiguration(config);
+        HealthRegistry.getInstance().channel(parent).setCollecting(true, 0);
         DMRTrafficChannelManager manager = new DMRTrafficChannelManager(parent);
         Starter starter = new Starter();
         starter.mManager = manager;

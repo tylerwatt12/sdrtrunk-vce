@@ -34,6 +34,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Supplier;
+import java.util.function.Predicate;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -68,7 +69,8 @@ public class HealthRegistry
     private TunerManager mTunerManager;
     private Supplier<List<Channel>> mConfiguredChannelsSupplier;
     private ScheduledFuture<?> mSnapshotFuture;
-    private int mHistoryReaders;
+    private int mUnscopedReaders;
+    private final Map<Object,Supplier<Predicate<ChannelHealth.ChannelInfo>>> mScopes = new HashMap<>();
     private long mLastSnapshot;
     private final ScheduledExecutorService mSnapshotExecutor = Executors.newSingleThreadScheduledExecutor(task ->
     {
@@ -137,7 +139,7 @@ public class HealthRegistry
                 configurationId, channel.getAliasListId(), channel.getName(), channel.getSystem(),
                 channel.getSite(), channel.getAliasListName(), mode,
                 channel.getDecodeConfiguration() != null ?
-                    HealthMonitor.symbolRate(channel.getDecodeConfiguration().getDecoderType()) : null));
+                    HealthMonitor.symbolRate(channel.getDecodeConfiguration().getDecoderType()) : null), false);
             if(channel.getSourceConfiguration() instanceof SourceConfigTuner tuner)
             {
                 health.setFrequency(tuner.getFrequency());
@@ -182,32 +184,68 @@ public class HealthRegistry
         return mHistory;
     }
 
-    /** Retains sampling for one active provider node, independently of how many destinations share that node. */
+    /** Compatibility retain for an unscoped measurement consumer. */
     public synchronized HealthHistory retainHistory()
     {
-        if(mHistoryReaders++ == 0)
-        {
-            snapshot();
-            //Provider work must never occupy the common scheduler used by receiver-critical tasks. Fixed delay
-            //also avoids catch-up bursts after a slow snapshot, pause or machine sleep.
-            mSnapshotFuture = mSnapshotExecutor.scheduleWithFixedDelay(this::snapshot, SNAPSHOT_INTERVAL_MS,
-                SNAPSHOT_INTERVAL_MS, TimeUnit.MILLISECONDS);
-        }
+        mUnscopedReaders++;
+        startSampling();
         return mHistory;
     }
 
-    /** Stops background collection after the last enabled node leaves; no receiver callback uses this monitor. */
+    /** Provider demand is evaluated only on the measurement worker, never on a decoder callback. */
+    public synchronized HealthHistory retainHistory(Object owner, Predicate<ChannelHealth.ChannelInfo> feeds)
+    {
+        return retainScope(owner, () -> feeds);
+    }
+
+    /** Prepare a provider's membership once per sampling pass, rather than once per channel. */
+    public synchronized HealthHistory retainScope(Object owner, Supplier<Predicate<ChannelHealth.ChannelInfo>> scope)
+    {
+        mScopes.put(owner, scope);
+        startSampling();
+        return mHistory;
+    }
+
+    private void startSampling()
+    {
+        if(mSnapshotFuture == null)
+        {
+            mSnapshotFuture = mSnapshotExecutor.scheduleWithFixedDelay(this::snapshot, 0, SNAPSHOT_INTERVAL_MS,
+                TimeUnit.MILLISECONDS);
+        }
+    }
+
     public synchronized void releaseHistory()
     {
-        if(mHistoryReaders <= 0)
+        if(mUnscopedReaders > 0) mUnscopedReaders--;
+        stopUnusedSampling();
+    }
+
+    public synchronized void releaseHistory(Object owner)
+    {
+        mScopes.remove(owner);
+        stopUnusedSampling();
+    }
+
+    private void stopUnusedSampling()
+    {
+        if(mUnscopedReaders == 0 && mScopes.isEmpty())
         {
-            return;
-        }
-        if(--mHistoryReaders == 0 && mSnapshotFuture != null)
-        {
-            mSnapshotFuture.cancel(false);
+            if(mSnapshotFuture != null) mSnapshotFuture.cancel(false);
             mSnapshotFuture = null;
+            long now = System.currentTimeMillis();
+            for(ChannelHealth health: mChannels.values()) health.setCollecting(false, now);
         }
+    }
+
+    private boolean wanted(ChannelHealth.ChannelInfo info, List<Predicate<ChannelHealth.ChannelInfo>> scopes)
+    {
+        if(mUnscopedReaders > 0) return true;
+        for(Predicate<ChannelHealth.ChannelInfo> feeds: scopes)
+        {
+            if(feeds.test(info)) return true;
+        }
+        return false;
     }
 
     synchronized boolean isSamplingForTest()
@@ -237,9 +275,12 @@ public class HealthRegistry
                 mChannels.keySet().removeIf(id -> !configured.contains(id));
             }
 
+            List<Predicate<ChannelHealth.ChannelInfo>> scopes = new ArrayList<>(mScopes.size());
+            for(Supplier<Predicate<ChannelHealth.ChannelInfo>> scope: mScopes.values()) scopes.add(scope.get());
             for(ChannelHealth health: mChannels.values())
             {
-                channels.add(health.totals(now));
+                health.setCollecting(wanted(health.getInfo(), scopes), now);
+                if(health.isCollecting()) channels.add(health.totals(now));
             }
 
             mHistory.add(new HealthSnapshot(now, mSince, channels, radios(now)));

@@ -553,4 +553,20 @@ public class BroadcastifyHealthReporterTest
         assertNotSame(null, node.getSchedule().getNextAt());
     }
 
+    @Test
+    void prepared_membership_has_the_same_scope_as_current_routing_and_refreshes_after_changes()
+    {
+        BroadcastifyHealthReporter node = reporter(schedule(96));
+        HealthSnapshot now = history().latest();
+        var first = node.coverage();
+        for(ChannelHealth.Totals channel: now.channels())
+            assertEquals(node.feeds(channel.info()), first.test(channel.info()));
+        node.add(countyCalls(), aliases());
+        var both = node.coverage();
+        for(ChannelHealth.Totals channel: now.channels())
+            assertEquals(node.feeds(channel.info()), both.test(channel.info()));
+        assertFalse(first.test(now.channels().get(1).info()), "old snapshot stays immutable");
+        assertTrue(both.test(now.channels().get(1).info()));
+    }
+
 }

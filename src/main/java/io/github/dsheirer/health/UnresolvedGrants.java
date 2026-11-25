@@ -57,6 +57,7 @@ public class UnresolvedGrants
 
     public void unresolved(String talkgroup, long timestamp, CallTally tally)
     {
+        if(!tally.isEnabled()) return;
         first(timestamp);
         if(talkgroup == null || timestamp - mFirstGrant < GRACE_MS) return;
         CallTally.Pending pending = mCalls.get(talkgroup);
@@ -81,6 +82,7 @@ public class UnresolvedGrants
                 oldest.remove();
             }
             pending = tally.pending(CallOutcome.NO_FREQUENCY, timestamp, QUIET_MS);
+            if(pending == null) return;
             mCalls.put(talkgroup, pending);
         }
         else
