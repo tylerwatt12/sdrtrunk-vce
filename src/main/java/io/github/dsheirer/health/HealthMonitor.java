@@ -132,7 +132,7 @@ public class HealthMonitor extends Module implements IMessageListener, ISquelchS
         {
             case NBFM -> "fm";
             case AM -> "am";
-            case P25_PHASE1 -> "p25";
+            case P25_PHASE1, P25_CONVENTIONAL -> "p25";
             case DMR -> "dmr";
             case NXDN -> "nxdn";
             default -> null;

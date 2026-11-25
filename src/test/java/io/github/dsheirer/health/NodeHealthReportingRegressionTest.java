@@ -2,6 +2,11 @@
 package io.github.dsheirer.health;
 
 import com.google.gson.JsonObject;
+import io.github.dsheirer.controller.channel.Channel;
+import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Conventional;
+import io.github.dsheirer.sample.complex.ComplexSamples;
+import io.github.dsheirer.source.SourceEvent;
+import io.github.dsheirer.source.config.SourceConfigTuner;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
@@ -94,6 +99,33 @@ class NodeHealthReportingRegressionTest
         JsonObject channel = build(before, snapshot(health, START + 11_000)).getAsJsonArray("channels")
             .get(0).getAsJsonObject();
         assertEquals(2.0, channel.get("heardS").getAsDouble());
+    }
+
+    @Test
+    void explicit_conventional_p25_configuration_reports_delivered_samples_without_trunked_calls()
+    {
+        Channel configured = new Channel("Conventional P25");
+        configured.setDecodeConfiguration(new DecodeConfigP25Conventional());
+        SourceConfigTuner source = new SourceConfigTuner();
+        source.setFrequency(155_520_000);
+        configured.setSourceConfiguration(source);
+        HealthMonitor monitor = new HealthMonitor(configured);
+        ChannelHealth health = monitor.getHealth();
+        health.setCollecting(true, START);
+        health.started(START);
+        monitor.getSourceEventListener().receive(SourceEvent.sampleRateChange(1_000));
+        HealthSnapshot before = snapshot(health, START + 1000);
+        monitor.getComplexSamplesListener().receive(new ComplexSamples(new float[2000], new float[2000], START + 1000));
+
+        JsonObject report = build(before, snapshot(health, START + 3000));
+        assertNotNull(report, "The explicit conventional P25 decoder must be included in health coverage");
+        assertFalse(report.has("sites"), "A conventional decoder must not invent trunked-site call totals");
+        JsonObject channel = report.getAsJsonArray("channels").get(0).getAsJsonObject();
+        assertEquals("p25", channel.get("mode").getAsString());
+        assertEquals(155_520_000, channel.get("hz").getAsLong());
+        assertEquals(2.0, channel.get("heardS").getAsDouble());
+        assertNull(health.totals(START + 3000).calls());
+        HealthRegistry.getInstance().retire(configured);
     }
 
     @Test
