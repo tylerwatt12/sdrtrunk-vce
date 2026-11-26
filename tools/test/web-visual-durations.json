@@ -2,8 +2,8 @@
   "version": 1,
   "shards": 4,
   "workers": 2,
-  "caseCount": 1866,
-  "inventorySha256": "78c72f111140dc649f367e4d73558fc639f79330fd8f847d655ff243f1909ae2",
+  "caseCount": 1916,
+  "inventorySha256": "0b4a185d4c6ae254144889aeafa8df3358d3c87aa658a749cb45beeb8f79d6db",
   "files": {
     "access-landing.spec.js": {
       "durationMs": 12822,
@@ -190,6 +190,11 @@
       "caseCount": 2,
       "source": "measured"
     },
+    "bsi.spec.js": {
+      "durationMs": 7660,
+      "caseCount": 4,
+      "source": "estimated"
+    },
     "bulk-operation-feedback.spec.js": {
       "durationMs": 11870,
       "caseCount": 10,
@@ -234,6 +239,11 @@
       "durationMs": 6806,
       "caseCount": 7,
       "source": "measured"
+    },
+    "channel-patches.spec.js": {
+      "durationMs": 3830,
+      "caseCount": 2,
+      "source": "estimated"
     },
     "channel-protocol-relevance.spec.js": {
       "durationMs": 5284,
@@ -314,6 +324,11 @@
       "durationMs": 1509,
       "caseCount": 2,
       "source": "measured"
+    },
+    "encryption-keys.spec.js": {
+      "durationMs": 19150,
+      "caseCount": 10,
+      "source": "estimated"
     },
     "filled-surfaces.spec.js": {
       "durationMs": 14418,
@@ -439,6 +454,11 @@
       "durationMs": 28420,
       "caseCount": 4,
       "source": "measured"
+    },
+    "p25-source-identity.spec.js": {
+      "durationMs": 15320,
+      "caseCount": 8,
+      "source": "estimated"
     },
     "p25-visualizer-actions.spec.js": {
       "durationMs": 8968,
