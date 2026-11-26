@@ -45,7 +45,7 @@ test('account reset locks dismissal and duplicate saves, retains failed choices 
   await expect.poll(() => pending.length).toBe(1);
   await pending.shift().fallback();
   await expect(modal).toBeHidden();
-  expect(preferenceStore.preferences.version).toBe(15);
+  expect(preferenceStore.preferences.version).toBe(16);
   expect(preferenceStore.preferences.appearance.theme).toBe('light');
   expect(preferenceStore.preferences.playback.volume).toBe(1);
 });

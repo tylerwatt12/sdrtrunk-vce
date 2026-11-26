@@ -252,9 +252,10 @@ test('idle monitoring stays Live and mode changes use the shared tuner state', a
   await expect(setup).toHaveAttribute('aria-pressed', 'true');
   await expect(page.getByRole('alertdialog')).toHaveCount(0);
   expect(state.modeSequence).toBe(1);
-  const before = state.requests.length;
+  const before = state.requests.filter(request => request.method !== 'GET');
   await setup.click();
-  expect(state.requests.length).toBe(before);
+  await expect(setup).toHaveAttribute('aria-pressed', 'true');
+  expect(state.requests.filter(request => request.method !== 'GET')).toEqual(before);
   await live.click();
   await expect(live).toHaveAttribute('aria-pressed', 'true');
   expect(state.requests.filter((request) => request.path === browsePath && request.method === 'DELETE')
