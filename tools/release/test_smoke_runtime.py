@@ -1,8 +1,10 @@
 """Isolated, hardware-free contracts for release smoke web, USB, target and SQLite checks."""
 from contextlib import closing
+from contextlib import ExitStack, redirect_stdout
 import hashlib
 import importlib.util
 import inspect
+import io
 import json
 import os
 from pathlib import Path
@@ -18,6 +20,75 @@ import urllib.error
 SPEC = importlib.util.spec_from_file_location("smoke_runtime", Path(__file__).with_name("smoke-runtime.py"))
 SMOKE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(SMOKE)
+
+
+class SmokeMigrationSelectionTest(unittest.TestCase):
+    def test_non_schema_main_still_checks_native_runtime_usb_profile_launcher_web_and_shutdown(self):
+        with tempfile.TemporaryDirectory() as directory, ExitStack() as stack:
+            root = Path(directory)
+            archive = root / "candidate.zip"
+            archive.write_bytes(b"synthetic archive")
+            installation = root / "installation"
+            mocks = {}
+            for name in ("check_java_runtime", "check_usb_runtimes", "check_manifest", "run",
+                         "check_database", "check_database_after_stop", "validate_pair",
+                         "check_web_runtime", "stop"):
+                mocks[name] = stack.enter_context(mock.patch.object(SMOKE, name))
+            snapshot = stack.enter_context(mock.patch.object(SMOKE, "snapshot_database"))
+            stack.enter_context(mock.patch.object(SMOKE, "check_candidate", return_value="25.0.5.1+5"))
+            stack.enter_context(mock.patch.object(SMOKE, "extract", return_value=installation))
+            stack.enter_context(mock.patch.object(SMOKE, "read_target_format", return_value=78))
+            stack.enter_context(mock.patch.object(SMOKE.shutil, "which", return_value="javac"))
+            launch = stack.enter_context(mock.patch.object(SMOKE.subprocess, "Popen"))
+            stack.enter_context(mock.patch("sys.argv", ["smoke-runtime.py", "--archive", str(archive),
+                "--work-dir", str(root / "work"), "--expected-build", "123",
+                "--expected-commit", "a" * 40, "--skip-migrations"]))
+            with redirect_stdout(io.StringIO()) as output:
+                SMOKE.main()
+            for name in ("check_java_runtime", "check_usb_runtimes", "check_manifest", "check_database",
+                         "check_database_after_stop", "validate_pair", "check_web_runtime", "stop"):
+                mocks[name].assert_called_once()
+            launch.assert_called_once()
+            snapshot.assert_not_called()
+            self.assertEqual(2, mocks["run"].call_count)  # Compile helper and create fresh profile.
+            for call in mocks["run"].call_args_list:
+                self.assertNotIn("io.github.dsheirer.database.upgrade.ApplicationDatabaseMigrator", call.args[0])
+            self.assertIn("migration scenarios not required", output.getvalue())
+
+    def exercise(self, required):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            database = root / "profile" / "database" / "sdrtrunk.sqlite"
+            database.parent.mkdir(parents=True)
+            with mock.patch.object(SMOKE, "run") as run, \
+                 mock.patch.object(SMOKE, "snapshot_database") as snapshot, \
+                 mock.patch.object(SMOKE, "check_database") as check, \
+                 mock.patch.object(SMOKE, "validate_pair") as validate, \
+                 mock.patch.object(SMOKE, "retained_history_counts", return_value={}), \
+                 mock.patch.object(SMOKE, "retained_counts", return_value={}):
+                result = SMOKE.check_packaged_migrations(
+                    required=required, java=root / "java", options=[], classes=root / "classes",
+                    classpath="synthetic classpath", database=database, target_format=78,
+                    installation=root, env={}, evidence=root, work=root)
+            self.assertEqual(required, result)
+            if required:
+                self.assertEqual(2, run.call_count)
+                for call in run.call_args_list:
+                    self.assertIn("io.github.dsheirer.database.upgrade.ApplicationDatabaseMigrator", call.args[0])
+                snapshot.assert_called_once()
+                self.assertEqual(2, validate.call_count)
+            else:
+                run.assert_not_called()
+                snapshot.assert_not_called()
+                check.assert_not_called()
+                validate.assert_not_called()
+                self.assertFalse((root / "published-format20.sqlite").exists())
+
+    def test_unchanged_schema_never_runs_migrator_or_materializes_legacy_fixture(self):
+        self.exercise(False)
+
+    def test_schema_update_keeps_current_and_published_legacy_upgrade_checks(self):
+        self.exercise(True)
 
 
 class SmokeJavaRuntimeTest(unittest.TestCase):

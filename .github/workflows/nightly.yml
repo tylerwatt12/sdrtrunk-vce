@@ -89,7 +89,7 @@ jobs:
   package:
     name: Package candidate
     if: ${{ inputs.mode == 'prepare' }}
-    # Do not build six runtime packages until all checks, including the full migration suite, pass.
+    # Build only after every required check passes; schema updates also require the migration suite.
     needs: [validate, catalog, ci]
     #Build the pinned macOS ARM USB library locally; the JRE archives are still packaged for all six targets.
     runs-on: macos-15
@@ -165,7 +165,7 @@ jobs:
   smoke:
     name: Native runtime smoke (${{ matrix.platform }})
     if: ${{ inputs.mode == 'prepare' }}
-    needs: package
+    needs: [package, ci]
     strategy:
       fail-fast: false
       matrix:
@@ -206,6 +206,7 @@ jobs:
           --work-dir "${{ runner.temp }}/nightly-runtime-smoke"
           --expected-build "${{ github.run_id }}"
           --expected-commit "${{ github.sha }}"
+          ${{ needs.ci.outputs.schema_changes == 'false' && '--skip-migrations' || '' }}
       - name: Save runtime smoke evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@v7
@@ -230,7 +231,7 @@ jobs:
             echo '## Nightly candidate prepared'
             echo "Commit: \`${CANDIDATE_COMMIT}\`"
             echo "Preparation run ID: \`${CANDIDATE_RUN_ID}\`"
-            echo 'Full application checks, browser checks, visual checks, all six package checks, and all six native runtime checks passed.'
+            echo 'All required application checks, browser checks, visual checks, all six package checks, and all six native runtime checks passed.'
             echo 'Candidate ZIPs and checksums are saved as workflow artifacts for 30 days. No release, update feed, or tag was changed.'
             echo 'After reviewing and approving this exact candidate, run Nightly Release on main with mode=publish, this candidate_run_id, and confirm_publication=true.'
           } >> "$GITHUB_STEP_SUMMARY"

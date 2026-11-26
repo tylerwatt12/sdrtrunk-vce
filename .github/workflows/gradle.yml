@@ -5,6 +5,10 @@ on:
     branches: [ main ]
   workflow_dispatch:
   workflow_call:
+    outputs:
+      schema_changes:
+        description: Whether this candidate requires migration qualification
+        value: ${{ jobs.schema.outputs.required }}
     inputs:
       radio_system_catalog_artifact:
         description: Exact prepared network-name snapshot to test with the candidate
@@ -16,19 +20,44 @@ permissions:
   contents: read
 
 jobs:
+  schema:
+    name: Determine schema changes
+    runs-on: ubuntu-latest
+    outputs:
+      required: ${{ steps.plan.outputs.required }}
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - name: Compare schema with the PR base or published Nightly
+        id: plan
+        shell: bash
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          base=''
+          if [[ -n "$PR_BASE" ]]; then
+            if git fetch --no-tags --depth=1 origin "$PR_BASE"; then base="$PR_BASE"; fi
+          elif git fetch --no-tags --depth=1 origin refs/tags/nightly; then
+            base="$(git rev-parse FETCH_HEAD)"
+          fi
+          python tools/release/schema_changes.py --base "$base" --head HEAD \
+            --github-output "$GITHUB_OUTPUT" --output build/schema-check-plan.json
+      - name: Save schema comparison
+        uses: actions/upload-artifact@v7
+        with:
+          name: schema-check-plan-${{ github.run_id }}-${{ github.run_attempt }}
+          path: build/schema-check-plan.json
+
   check:
     name: Application checks (${{ matrix.os }}, ${{ matrix.test_group }})
+    needs: schema
     timeout-minutes: 10
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - {os: ubuntu-latest, test_group: core}
-          - {os: ubuntu-latest, test_group: migrations}
-          - {os: ubuntu-latest, test_group: activity}
-          - {os: ubuntu-latest, test_group: web}
-          - {os: ubuntu-latest, test_group: http}
-          - {os: windows-latest, test_group: platform-filesystem}
+      matrix: ${{ fromJSON(needs.schema.outputs.matrix) }}
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -179,6 +208,7 @@ jobs:
     name: Main CI gate
     if: ${{ always() }}
     needs:
+      - schema
       - check
       - visual
       - contracts
@@ -186,7 +216,8 @@ jobs:
     steps:
       - name: Require every platform check
         env:
+          SCHEMA_RESULT: ${{ needs.schema.result }}
           CHECK_RESULT: ${{ needs.check.result }}
           VISUAL_RESULT: ${{ needs.visual.result }}
           CONTRACT_RESULT: ${{ needs.contracts.result }}
-        run: test "$CHECK_RESULT" = "success" && test "$VISUAL_RESULT" = "success" && test "$CONTRACT_RESULT" = "success"
+        run: test "$SCHEMA_RESULT" = "success" && test "$CHECK_RESULT" = "success" && test "$VISUAL_RESULT" = "success" && test "$CONTRACT_RESULT" = "success"

@@ -351,11 +351,30 @@ function verifyParallelPreparationWiring() {
   const reusable = fs.readFileSync(path.join(path.dirname(process.argv[2] || '.github/workflows/nightly.yml'),
     'gradle.yml'), 'utf8').replace(/\r\n/g, '\n');
   const application = job('check', reusable);
-  const groups = [...application.matchAll(/\{os: ([\w-]+), test_group: ([\w-]+)\}/g)]
-    .map(([, os, group]) => `${os}:${group}`).sort();
-  assert.deepEqual(groups, ['ubuntu-latest:core', 'ubuntu-latest:migrations', 'ubuntu-latest:activity',
-    'ubuntu-latest:web', 'ubuntu-latest:http', 'windows-latest:platform-filesystem'].sort(),
-  'Run the complete Java partition once and retain Windows filesystem regressions.');
+  const schema = job('schema', reusable);
+  assert.match(schema, /github\.event\.pull_request\.base\.sha/);
+  assert.match(schema, /git fetch --no-tags --depth=1 origin refs\/tags\/nightly/);
+  assert.match(schema, /python tools\/release\/schema_changes\.py --base "\$base" --head HEAD/);
+  assert.match(application, /needs: schema/);
+  assert.match(application, /matrix: \$\{\{ fromJSON\(needs\.schema\.outputs\.matrix\) \}\}/);
+  assert.match(reusable, /schema_changes:[\s\S]*value: \$\{\{ jobs\.schema\.outputs\.required \}\}/);
+  const detector = path.resolve(__dirname, '../../../../tools/release');
+  const select = paths => {
+    const result = spawnSync(python, ['-c',
+      'import sys,json;sys.path.insert(0,sys.argv[1]);from schema_changes import plan;print(json.dumps(plan(json.loads(sys.argv[2]))))',
+      detector, JSON.stringify(paths)], { encoding: 'utf8', timeout: 10_000 });
+    assert.equal(result.status, 0, result.stderr);
+    return JSON.parse(result.stdout);
+  };
+  for (const paths of [[], ['src/main/java/example/ManagedRecordingSchema.java']]) {
+    const selection = select(paths);
+    const groups = selection.matrix.include.map(row => `${row.os}:${row.test_group}`).sort();
+    const expected = ['ubuntu-latest:core', 'ubuntu-latest:activity', 'ubuntu-latest:web',
+      'ubuntu-latest:http', 'windows-latest:platform-filesystem'];
+    if (paths.length) expected.push('ubuntu-latest:migrations');
+    assert.deepEqual(groups, expected.sort());
+    assert.equal(selection.required, Boolean(paths.length));
+  }
   assert.match(application, /fail-fast: false/);
   assert.match(application, /-PtestGroup=\$\{\{ matrix\.test_group \}\}/);
   assert.match(application, /main-ci-gradle-failure-\$\{\{ matrix\.os \}\}-\$\{\{ matrix\.test_group \}\}/,
@@ -374,12 +393,25 @@ function verifyParallelPreparationWiring() {
   assert.match(visual, /name: web-design-system-visual-differences-\$\{\{ matrix\.shard \}\}/);
   assert.match(visual, /name: Save browser timings and results\n        if: always\(\)/);
   const gate = job('gate', reusable);
-  assert.match(gate, /needs:\n      - check\n      - visual\n      - contracts/);
+  assert.match(gate, /needs:\n      - schema\n      - check\n      - visual\n      - contracts/);
+  assert.match(gate, /SCHEMA_RESULT: \$\{\{ needs\.schema\.result \}\}/);
   assert.match(gate, /CHECK_RESULT: \$\{\{ needs\.check\.result \}\}/);
   assert.match(gate, /VISUAL_RESULT: \$\{\{ needs\.visual\.result \}\}/);
   assert.match(gate, /CONTRACT_RESULT: \$\{\{ needs\.contracts\.result \}\}/);
-  assert.match(gate, /test "\$CHECK_RESULT" = "success" && test "\$VISUAL_RESULT" = "success" && test "\$CONTRACT_RESULT" = "success"/,
+  assert.match(gate, /test "\$SCHEMA_RESULT" = "success" && test "\$CHECK_RESULT" = "success" && test "\$VISUAL_RESULT" = "success" && test "\$CONTRACT_RESULT" = "success"/,
     'The Main CI gate must require every application group, browser shard and direct contract job.');
+  const gateScript = gate.match(/^        run: (.+)$/m)[1];
+  const outcomes = { SCHEMA_RESULT: 'success', CHECK_RESULT: 'success',
+    VISUAL_RESULT: 'success', CONTRACT_RESULT: 'success' };
+  const accepted = values => spawnSync(bash, ['-e', '-c', gateScript],
+    { env: { ...process.env, ...values }, timeout: 10_000 }).status === 0;
+  assert(accepted(outcomes));
+  for (const name of Object.keys(outcomes)) {
+    for (const result of ['failure', 'cancelled', 'skipped', '']) {
+      assert.equal(accepted({ ...outcomes, [name]: result }), false,
+        `Required ${name}=${result} must block packaging.`);
+    }
+  }
   const contracts = job('contracts', reusable);
   assert.match(contracts, /runs-on: ubuntu-latest/);
   assert.match(contracts, /uses: actions\/setup-java@v5[\s\S]*java-version: '25'/,
@@ -391,11 +423,12 @@ function verifyParallelPreparationWiring() {
   assert.match(contracts, /python -m unittest discover -s tools\/release/);
   assert.match(contracts, /python -m unittest discover -s tools\/build/);
   assert.match(job('package'), /needs: \[validate, catalog, ci\]/,
-    'Packaging must wait for the complete CI gate, including all migration checks.');
+    'Packaging must wait for every required check, including migrations for schema updates.');
   assert.doesNotMatch(job('package'), /always\(\)|continue-on-error/,
     'A failed or skipped CI gate must not be bypassed for packaging.');
   assert.match(job('package'), /ref: \$\{\{ github\.sha \}\}/);
-  assert.match(job('smoke'), /needs: package/);
+  assert.match(job('smoke'), /needs: \[package, ci\]/);
+  assert.match(job('smoke'), /needs\.ci\.outputs\.schema_changes == 'false' && '--skip-migrations'/);
   assert.match(job('ready'), /needs: \[validate, ci, package, smoke\]/,
     'Overlapping work must never allow an untested candidate to become ready.');
 }

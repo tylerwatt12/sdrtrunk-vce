@@ -276,12 +276,54 @@ def check_web_runtime(process, port, web_root):
         raise RuntimeError(f"Packaged launcher exited early ({process.returncode}); see receiver.log")
 
 
+def check_packaged_migrations(*, required, java, options, classes, classpath, database,
+                              target_format, installation, env, evidence, work):
+    if not required:
+        return False
+    expected_history = retained_history_counts(database) if target_format >= 63 else None
+    staged = database.with_name(".sdrtrunk.sqlite.migration-" + str(uuid.uuid4()))
+    snapshot_database(java, options, str(classes) + os.pathsep + classpath, database, staged,
+                      cwd=installation, env=env, log=evidence / "current-snapshot.log")
+    run([str(java), *options, "-cp", classpath,
+         "io.github.dsheirer.database.upgrade.ApplicationDatabaseMigrator", str(staged)],
+        cwd=installation, env=env, log=evidence / "migrator.log")
+    check_database(staged, target_format)
+    validate_pair(java, options, str(classes) + os.pathsep + classpath, staged,
+                  cwd=installation, env=env, log=evidence / "current-pair.log")
+    if expected_history is not None and retained_history_counts(staged) != expected_history:
+        raise RuntimeError("Packaged current-format migration changed retained history counts")
+    # This schema comes from the actual previously published format-20 runtime, with synthetic data only.
+    legacy = work / "published-format20.sqlite"
+    resource = (Path(__file__).resolve().parents[2] / "src/test/resources/io/github/dsheirer/database/upgrade"
+                / "format20-populated.sqlite.gz.b64")
+    legacy.write_bytes(gzip.decompress(base64.b64decode(resource.read_bytes())))
+    check_database(legacy, 20)
+    legacy_bytes = legacy.read_bytes()
+    expected_counts = retained_counts(legacy)
+    expected_legacy_history = retained_history_counts(legacy, separated=False)
+    migrated = database.with_name(".sdrtrunk.sqlite.migration-" + str(uuid.uuid4()))
+    shutil.copyfile(legacy, migrated)
+    run([str(java), *options, "-cp", classpath,
+         "io.github.dsheirer.database.upgrade.ApplicationDatabaseMigrator", str(migrated)],
+        cwd=installation, env=env, log=evidence / f"format20-to{target_format}.log")
+    check_database(migrated, target_format)
+    validate_pair(java, options, str(classes) + os.pathsep + classpath, migrated,
+                  cwd=installation, env=env, log=evidence / "migrated-pair.log")
+    if retained_counts(migrated) != expected_counts or legacy.read_bytes() != legacy_bytes:
+        raise RuntimeError("Packaged format-20 upgrade changed retained counts or the selected source")
+    if retained_history_counts(migrated) != expected_legacy_history:
+        raise RuntimeError("Packaged format-20 upgrade changed the fixture's preserved history counts")
+    return True
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--archive", required=True, type=Path)
     parser.add_argument("--work-dir", required=True, type=Path)
     parser.add_argument("--expected-build", required=True)
     parser.add_argument("--expected-commit", required=True)
+    parser.add_argument("--skip-migrations", action="store_true",
+                        help="Skip migration scenarios when the release has no schema changes")
     args = parser.parse_args()
     archive = args.archive.resolve(strict=True)
     work = args.work_dir.resolve()
@@ -335,39 +377,10 @@ def main():
     database = profile / "database" / "sdrtrunk.sqlite"
     target_format = read_target_format(target_metadata)
     check_database(database, target_format)
-    expected_history = retained_history_counts(database) if target_format >= 63 else None
-    staged = database.with_name(".sdrtrunk.sqlite.migration-" + str(uuid.uuid4()))
-    snapshot_database(java, options, str(classes) + os.pathsep + classpath, database, staged,
-                      cwd=installation, env=env, log=evidence / "current-snapshot.log")
-    run([str(java), *options, "-cp", classpath,
-         "io.github.dsheirer.database.upgrade.ApplicationDatabaseMigrator", str(staged)],
-        cwd=installation, env=env, log=evidence / "migrator.log")
-    check_database(staged, target_format)
-    validate_pair(java, options, str(classes) + os.pathsep + classpath, staged,
-                  cwd=installation, env=env, log=evidence / "current-pair.log")
-    if expected_history is not None and retained_history_counts(staged) != expected_history:
-        raise RuntimeError("Packaged current-format migration changed retained history counts")
-    # This schema comes from the actual previously published format-20 runtime, with synthetic data only.
-    legacy = work / "published-format20.sqlite"
-    resource = (Path(__file__).resolve().parents[2] / "src/test/resources/io/github/dsheirer/database/upgrade"
-                / "format20-populated.sqlite.gz.b64")
-    legacy.write_bytes(gzip.decompress(base64.b64decode(resource.read_bytes())))
-    check_database(legacy, 20)
-    legacy_bytes = legacy.read_bytes()
-    expected_counts = retained_counts(legacy)
-    expected_legacy_history = retained_history_counts(legacy, separated=False)
-    migrated = database.with_name(".sdrtrunk.sqlite.migration-" + str(uuid.uuid4()))
-    shutil.copyfile(legacy, migrated)
-    run([str(java), *options, "-cp", classpath,
-         "io.github.dsheirer.database.upgrade.ApplicationDatabaseMigrator", str(migrated)],
-        cwd=installation, env=env, log=evidence / f"format20-to{target_format}.log")
-    check_database(migrated, target_format)
-    validate_pair(java, options, str(classes) + os.pathsep + classpath, migrated,
-                  cwd=installation, env=env, log=evidence / "migrated-pair.log")
-    if retained_counts(migrated) != expected_counts or legacy.read_bytes() != legacy_bytes:
-        raise RuntimeError("Packaged format-20 upgrade changed retained counts or the selected source")
-    if retained_history_counts(migrated) != expected_legacy_history:
-        raise RuntimeError("Packaged format-20 upgrade changed the fixture's preserved history counts")
+    migrations_checked = check_packaged_migrations(
+        required=not args.skip_migrations, java=java, options=options, classes=classes,
+        classpath=classpath, database=database, target_format=target_format,
+        installation=installation, env=env, evidence=evidence, work=work)
     launcher = installation / ({"nt": "Start VCE.bat"}.get(os.name) or
                                ("Start VCE.command" if os.sys.platform == "darwin" else "Start VCE.sh"))
     env["JAVA_OPTS"] = " ".join(f'"{option}"' for option in options)
@@ -386,7 +399,8 @@ def main():
                   cwd=installation, env=env, log=evidence / "stopped-pair.log")
     with archive.open("rb") as source:
         digest = hashlib.file_digest(source, "sha256").hexdigest()
-    print(f"PASS: {archive.name}: bundled Java and USB discovery, fresh format {target_format} profile, format 20-to-{target_format} migration, native launcher and web assets")
+    migration_status = f"format 20-to-{target_format} migration" if migrations_checked else "migration scenarios not required"
+    print(f"PASS: {archive.name}: bundled Java and USB discovery, fresh format {target_format} profile, {migration_status}, native launcher and web assets")
     print(f"SHA256: {digest}")
 
 
