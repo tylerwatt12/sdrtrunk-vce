@@ -576,6 +576,43 @@ class ChannelActivityModelTest
     }
 
     @Test
+    void committedAliasColorEditRefreshesRetainedIdleSnapshotWithoutReceiverObservations() throws Exception
+    {
+        AliasListDefinition definition = p25AliasList("County", 1);
+        Alias first = alias("Dispatch", 12, definition, new Talkgroup(Protocol.APCO25, 4_400));
+        first.setColor(0xffff0000);
+        AliasModel aliases = new AliasModel();
+        aliases.replaceCommittedConfiguration(List.of(definition), List.of(first));
+        try(ChannelActivityModel model = new ChannelActivityModel(aliases, new NowPlayingPreference(type -> {})))
+        {
+            Channel channel = trunkedChannel("Dispatch", "County", "North", new DecodeConfigP25Conventional(),
+                155_730_000L);
+            channel.setAliasListId(definition.getId());
+            channel.setAliasListName(definition.getName());
+            ChannelMetadata metadata = new ChannelMetadata(aliases, 1);
+            run(model, () -> {
+                model.channelStarted(channel, List.of(metadata));
+                metadata.receive(new IdentifierUpdateNotification(APCO25Talkgroup.create(4_400), Operation.ADD, 1));
+                model.updated(metadata, io.github.dsheirer.channel.metadata.ChannelMetadataField.USER_TO);
+                metadata.receive(new IdentifierUpdateNotification(ChannelStateIdentifier.IDLE, Operation.ADD, 1));
+                model.updated(metadata, io.github.dsheirer.channel.metadata.ChannelMetadataField.DECODER_STATE);
+            });
+            ChannelActivitySnapshot before = model.getConventionalTable().getLatestSnapshot();
+            assertEquals(0xffff0000, before.rows().getFirst().navigation().targetAliases().getFirst().color());
+            Alias replacement = alias("Dispatch", 12, definition, new Talkgroup(Protocol.APCO25, 4_400));
+            replacement.setColor(0xff0000ff);
+            aliases.publishCommittedConfiguration(List.of(definition), List.of(replacement), Set.of(12L), false);
+            assertTrue(model.awaitIdle(5, TimeUnit.SECONDS));
+            ChannelActivitySnapshot after = model.getConventionalTable().getLatestSnapshot();
+            assertEquals(before.rows().getFirst().key(), after.rows().getFirst().key());
+            assertEquals(before.rows().getFirst().status(), after.rows().getFirst().status());
+            assertEquals(0xff0000ff, after.rows().getFirst().navigation().targetAliases().getFirst().color());
+            assertEquals(0xffff0000, before.rows().getFirst().navigation().targetAliases().getFirst().color(),
+                "Published scalar snapshots must not change with mutable configuration");
+        }
+    }
+
+    @Test
     void retainsCoherentTrunkedCallDetailsWhenSiteStops() throws Exception
     {
         AliasListDefinition definition = p25AliasList("County", 1);

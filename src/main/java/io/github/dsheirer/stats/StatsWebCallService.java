@@ -894,6 +894,15 @@ final class StatsWebCallService implements AutoCloseable
         putText(value, "target_group", recordingMetadata != null ? recordingMetadata.destinationGroup() : null,
             MAXIMUM_ALIAS_METADATA_TEXT_CHARACTERS);
         putText(value, "target_form", form(target));
+        if(recordingMetadata != null)
+        {
+            Integer sourceColor = StatsAliasColors.color(snapshot.aliasList(), source, recordingMetadata.sourceAlias(),
+                recordingMetadata.sourceDescription(), recordingMetadata.sourceGroup());
+            Integer targetColor = StatsAliasColors.color(snapshot.aliasList(), target, recordingMetadata.destinationAlias(),
+                recordingMetadata.destinationDescription(), recordingMetadata.destinationGroup());
+            if(sourceColor != null) value.put("source_alias_color", sourceColor);
+            if(targetColor != null) value.put("target_alias_color", targetColor);
+        }
         Protocol sourceProtocol = callLegSource != null && callLegSource.decoderType() != null ?
             canonicalProtocol(callLegSource.decoderType().getProtocol()) : null;
         putText(value, "protocol", sourceProtocol != null ? sourceProtocol.name() :

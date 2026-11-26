@@ -343,7 +343,7 @@ public record ChannelActivitySnapshot(String tableId, String title, String syste
                 if(alias != null && alias.getId() > 0 && alias.getAliasListId() > 0)
                 {
                     references.putIfAbsent(alias.getId(),
-                        new AliasReference(alias.getId(), alias.getAliasListId(), alias.getName()));
+                        new AliasReference(alias.getId(), alias.getAliasListId(), alias.getName(), alias.getColor()));
                 }
             }
 
@@ -404,8 +404,13 @@ public record ChannelActivitySnapshot(String tableId, String title, String syste
         }
     }
 
-    public record AliasReference(long aliasId, long aliasListId, String name)
+    public record AliasReference(long aliasId, long aliasListId, String name, Integer color)
     {
+        public AliasReference(long aliasId, long aliasListId, String name)
+        {
+            this(aliasId, aliasListId, name, null);
+        }
+
         public AliasReference
         {
             name = name != null ? name : "";

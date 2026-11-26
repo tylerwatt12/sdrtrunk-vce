@@ -2,6 +2,7 @@
 
 // Every gallery composition is reviewed independently in both themes and sizes.
 const galleryViews = [
+  'alias-colors',
   'mobile-table', 'gallery', 'loading-indicators', 'text-links', 'workflows', 'qr-code', 'app-chrome', 'audio-dock', 'access-landing', 'access-login-modal',
   'modal', 'modal-long', 'alias-list-create-modal', 'activity-action-tooltip', 'activity-filters',
   'health-alert-modal', 'focus', 'settings', 'health', 'computer', 'status-primitives', 'p25', 'admin-access',

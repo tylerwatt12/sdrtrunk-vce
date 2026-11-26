@@ -118,6 +118,7 @@ async function main() {
       assert.deepEqual(namedPlayer.retainedCallIds(), ['current', 'last', 'idle', 'held', 'queued', 'other']);
       const presentation = id => ({ call_id: id, source_alias: 'Unit 501', source_description: null,
         source_group: 'Units', target_alias: 'Dispatch', target_description: 'County dispatch', target_group: null,
+        source_alias_color: -65536, target_alias_color: -16776961,
         playback_target_label: 'Dispatch', audio_url: '/replacement', target_id: 999,
         _playbackTargetKey: 'replacement', talker_alias: 'Replaced OTA' });
       assert.equal(namedPlayer.applyCallPresentationUpdates(
@@ -127,6 +128,8 @@ async function main() {
         assert.equal(call.target_alias, 'Dispatch');
         assert.equal(call.source_description, null);
         assert.equal(call.target_group, null);
+        assert.equal(call.source_alias_color, -65536);
+        assert.equal(call.target_alias_color, -16776961);
         assert.equal(call.playback_target.label, 'Dispatch');
         assert.equal(call.playback_target.key, 'system-a:77');
         assert.equal(call.playback_target.kind, 'talkgroup');
@@ -159,7 +162,10 @@ async function main() {
         'Identical labels should not create redundant renders.');
       assert.equal(presentationRenders, 1);
       assert.equal(namedPlayer.applyCallPresentationUpdates([{ call_id: 'current', target_alias: null,
-        playback_target_label: null, source_alias: { invalid: true } }]), true);
+        playback_target_label: null, source_alias: { invalid: true }, target_alias_color: null,
+        source_alias_color: 'red' }]), true);
+      assert.equal(namedCurrent.target_alias_color, null);
+      assert.equal(namedCurrent.source_alias_color, -65536);
       assert.equal(namedCurrent.target_alias, null);
       assert.equal(namedCurrent.playback_target.label, null);
       assert.equal(namedCurrent.source_alias, 'Unit 501');

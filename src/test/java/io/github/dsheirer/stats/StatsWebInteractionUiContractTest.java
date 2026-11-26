@@ -1506,7 +1506,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(assignmentLinks.contains("anchor(filtered ? 'Current Assignments' : 'ISSI Assignments', href('radio-system'"));
         assertTrue(assignmentLinks.contains("issi_view: 'current-assignments', q: filtered ? canonicalSubscriberText(canonical) : null"));
         assertTrue(assignmentLinks.contains("anchor('Assignment History', href('radio-system'"));
-        assertTrue(radio.contains("['Alias', aliasLabel(radio)]"));
+        assertTrue(radio.contains("['Alias', coloredAliasName(aliasLabel(radio), radio.alias_color)]"));
         assertTrue(radio.contains("radioCurrentAssignmentSection(radio, renderContext)"));
     }
 

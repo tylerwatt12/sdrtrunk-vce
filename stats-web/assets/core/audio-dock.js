@@ -1,6 +1,7 @@
 import { createAudioCommand, createAudioTransport, createAudioTiming, createAudioVolume, audioPlaybackAction } from './audio-controls.js?v=2';
 import { systemLabel, systemName, systemIdentity, homeSystemName } from './system-labels.js?v=2';
 import { formatSourceName } from './source-names.js?v=1';
+import { applyAliasColor, callAliasColor } from './alias-colors.js?v=1';
 import { formatHexDecimal, formatVoiceQuality } from './call-value-format.js?v=1';
 import { p25IdentityFacts, p25IdentifierText, p25RadioIdentityKnown, p25ServingSystemKey } from './radio-labels.js?v=8';
 import { callAudioDetailGroups } from './call-audio-details.js?v=7';
@@ -1216,9 +1217,17 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     const call = current(), active = state(), name = String(title(call));
     compactTitle.textContent = collapsedTitle.textContent = name;
     renderTitle(name, call?.target_entity_ref);
+    applyAliasColor(nowTitle, null);
+    [compactTitle, collapsedTitle, nowTitle.firstElementChild || nowTitle].forEach(element =>
+      applyAliasColor(element, callAliasColor(call, 'target')));
     compactTitle.dataset.uiHint = collapsedTitle.dataset.uiHint = nowTitle.dataset.uiHint = name;
     collapsedMeta.textContent = `${source === 'live' ? 'Live' : 'Recording'} · ${queueCount()} queued`;
-    compactSubtitle.textContent = subtitle(call) || (source === 'live' ? 'Select a List to listen' : 'Choose a recording to play');
+    const sourceLabelText = sourceName(call);
+    compactSubtitle.replaceChildren();
+    if (sourceLabelText) {
+      compactSubtitle.append(applyAliasColor(node('span', '', sourceLabelText), callAliasColor(call, 'source')));
+      if (call?.channel || call?.channel_name) compactSubtitle.append(` · ${call.channel || call.channel_name}`);
+    } else compactSubtitle.textContent = subtitle(call) || (source === 'live' ? 'Select a List to listen' : 'Choose a recording to play');
     compactSubtitle.dataset.uiHint = [sourceSummary(call), call?.channel || call?.channel_name].filter(Boolean).join(' · ') || compactSubtitle.textContent;
     Object.entries(sourceOptions).forEach(([value, option]) => { option.disabled = !permissions[value]; });
     const sourceLabel = source === 'live' ? 'Live' : 'Recordings'; currentSourceChoice.textContent = sourceLabel;
@@ -1236,6 +1245,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     nowSystem.textContent = call ? [systemLabel(call), call.channel_name || call.channel].filter(Boolean).join(' · ') : (live ? 'Select a List to start listening' : 'Choose a recording to play');
     transmittingName.textContent = sourceName(call) || '—'; targetGroup.textContent = call?.target_group || call?.group_name || ''; targetGroup.hidden = !targetGroup.textContent;
     transmittingName.dataset.uiHint = sourceSummary(call) || transmittingName.textContent;
+    applyAliasColor(transmittingName, unknownSource(call) ? null : callAliasColor(call, 'source'));
     transmitting.hidden = false;
     technical.replaceChildren();
     [Number(call?.frequency_hz) > 0 ? `${(Number(call.frequency_hz) / 1e6).toFixed(5)} MHz` : '', call?.site,

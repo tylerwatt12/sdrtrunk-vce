@@ -2,6 +2,15 @@ body {
   min-width: 320px;
 }
 
+.visual-alias-colors-example {
+  margin: var(--space-4);
+  padding: var(--space-4);
+}
+
+body:not([data-gallery-view="alias-colors"]) .visual-alias-colors-example {
+  display: none;
+}
+
 .visual-table-overflow-example {
   width: min(1180px, calc(100% - (2 * var(--space-4))));
   margin: var(--space-4) auto;

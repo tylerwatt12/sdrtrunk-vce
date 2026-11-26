@@ -157,7 +157,7 @@ async function openAudioApp(page, options = {}) {
     if (p === '/api/v1/scan-lists') return fulfill({ revision: 1, scan_lists: scanLists });
     if (p === '/api/v1/calls/feed') {
       state.feedRequests++;
-      const calls = !state.feedDelivered && state.feedCallsEnabled ? [liveCall,
+      const calls = !state.feedDelivered && state.feedCallsEnabled ? options.liveCalls || [liveCall,
         { ...liveCall, call_id: 'dock-live-2', started_at_ms: started + 60_000,
           completed_at_ms: started + 102_000, source_alias: 'Engine 5', source_id: 30915 }] : [];
       if (calls.length) state.feedDelivered = true;

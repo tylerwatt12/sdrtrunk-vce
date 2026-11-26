@@ -1,4 +1,5 @@
 'use strict';
+const aliasColors = require(require('node:path').resolve(__dirname, '../../../../stats-web/assets/core/alias-colors.js'));
 
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -83,6 +84,7 @@ async function main() {
     'core/form-workflows.js')).href);
   let mode = 'talker_alias';
   const context = {
+    ...aliasColors,
     activeUserPreferences: () => ({ presentation: { source_name_display: mode } }),
     formatSourceName,
     p25ServingSystemKey,

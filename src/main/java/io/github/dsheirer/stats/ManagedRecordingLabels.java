@@ -135,6 +135,7 @@ final class ManagedRecordingLabels
                         put(call, "group_alias", label.name());
                         put(call, "group_description", label.description());
                         put(call, "group_group", label.group());
+                        call.put("group_alias_color", label.color());
                     }
                 }
                 if(aliasListId != null && sourceId != null && sourceId > 0 &&
@@ -148,6 +149,7 @@ final class ManagedRecordingLabels
                         put(call, "source_alias", label.name());
                         put(call, "source_description", label.description());
                         put(call, "source_group", label.group());
+                        call.put("source_alias_color", label.color());
                     }
                 }
                 if(aliasListId != null && destinationRadioId != null && destinationRadioId > 0 &&
@@ -161,6 +163,7 @@ final class ManagedRecordingLabels
                         put(call, "destination_radio_alias", label.name());
                         put(call, "destination_radio_description", label.description());
                         put(call, "destination_radio_group", label.group());
+                        call.put("destination_radio_alias_color", label.color());
                     }
                 }
                 decoratePatchMemberAliases(connection, call, aliasListId, protocol, recordedSystem, aliases,
@@ -1292,7 +1295,7 @@ final class ManagedRecordingLabels
         String exact = radio ? "RADIO_ID" : "TALKGROUP";
         String range = radio ? "RADIO_ID_RANGE" : "TALKGROUP_RANGE";
         try(PreparedStatement statement = connection.prepareStatement("""
-            SELECT name, description, group_name
+            SELECT name, description, group_name, color
             FROM alias
             WHERE alias_list_id=? AND protocol IN (?,?)
               AND ((matcher_type=? AND value=?) OR
@@ -1313,7 +1316,7 @@ final class ManagedRecordingLabels
             statement.setString(9, exact);
             try(ResultSet rows = statement.executeQuery())
             {
-                return rows.next() ? new AliasLabels(rows.getString(1), rows.getString(2), rows.getString(3)) : null;
+                return rows.next() ? new AliasLabels(rows.getString(1), rows.getString(2), rows.getString(3), rows.getInt(4)) : null;
             }
         }
         catch(SQLException ignored)
@@ -1391,7 +1394,7 @@ final class ManagedRecordingLabels
                                  String systemKey) {}
     private record SiteCoordinates(int wacn, int systemId, int rfss, int siteId) {}
     private record SiteNavigation(WebEntityRef.KeyRef reference, String name) {}
-    private record AliasLabels(String name, String description, String group) {}
+    private record AliasLabels(String name, String description, String group, int color) {}
     private record SystemScope(long id, String key, int protocolCode, Integer p25Wacn, Integer p25SystemId,
                                WebEntityRef.KeyRef reference) {}
 }

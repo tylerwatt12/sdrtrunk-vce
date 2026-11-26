@@ -121,7 +121,7 @@ final class StatsCallAliasHttpController
         return value;
     }
 
-    /** Names only: captured recording/output decisions, audio, cursors and queue eligibility stay frozen. */
+    /** Presentation only: captured recording/output decisions, audio, cursors and queue eligibility stay frozen. */
     static Map<String,Object> presentation(StatsWebCallService.CachedCall call)
     {
         AudioCallSnapshot snapshot = call.snapshot();
@@ -139,6 +139,10 @@ final class StatsCallAliasHttpController
         value.put("target_alias", to.aliasName());
         value.put("target_description", to.aliasDescription());
         value.put("target_group", to.aliasGroup());
+        value.put("source_alias_color", StatsAliasColors.color(list, source, from.aliasName(),
+            from.aliasDescription(), from.aliasGroup()));
+        value.put("target_alias_color", StatsAliasColors.color(list, target, to.aliasName(),
+            to.aliasDescription(), to.aliasGroup()));
         AudioCallRecordingMetadata current = AudioCallRecordingMetadata.captureAtSnapshot(list, identifiers);
         CallPlaybackTarget playback = snapshot != null ? CallPlaybackTarget.from(snapshot, target) : null;
         if(playback != null && (playback.kind() == CallPlaybackTarget.Kind.CHANNEL ||

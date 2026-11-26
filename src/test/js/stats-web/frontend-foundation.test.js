@@ -1,4 +1,5 @@
 'use strict';
+const aliasColors = require(require('node:path').resolve(__dirname, '../../../../stats-web/assets/core/alias-colors.js'));
 
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -290,7 +291,7 @@ async function checkGroupIdentityRadiosLoading(browsingWorkflows, tableLayouts) 
   const pending = [];
   const content = node('main');
   const context = {
-    route, URLSearchParams, pageLifecycle, browsingWorkflows, tableLayouts, node, content,
+    ...aliasColors, route, URLSearchParams, pageLifecycle, browsingWorkflows, tableLayouts, node, content,
     SERVER_TABLE_DEFAULT_SORTS: { 'group-identity-radios': 'last_seen' },
     captureRenderContext: () => ({ epoch }), renderIsCurrent: (renderContext) => renderContext.epoch === epoch,
     requiredRadioSystem: () => ({ radio_system_key: radioSystemKey }), requiredIdentityKey: () => identityKey,
@@ -319,6 +320,7 @@ async function checkGroupIdentityRadiosLoading(browsingWorkflows, tableLayouts) 
     'radioSystemApiPath(radioSystemKey, child = "")',
     'groupIdentityApiPath(radioSystemKey, identityKey, child = "")', 'currentHref(overrides = {}, sourceParameters = route)',
     'pageParameters(extra = {})', 'entityPageTitle(kind, label, fallback = "")',
+    'aliasPageTitle(kind, label, fallback, color)', 'coloredAliasName(name, color)',
     'section(title, child, action = null)', 'sectionActionHost(action = null)',
     'replaceAsyncContent(host, rendered)', 'asyncSectionFailure(error, fallbackMessage, retry)',
     'createAsyncSection(title, options = {})', 'pager(page, position = "bottom", itemLabel = "Rows", parameters = route)',
@@ -1704,7 +1706,7 @@ async function main() {
 
   const scannerCallRenderKey = vm.runInNewContext(
     `(function(call, state, site, mode = scannerDetailMode) ${functionBinding(appSource, 'scannerCallRenderKey')})`, {
-      scannerDetailMode: 'normal', scannerMatchedScanLists: () => '',
+      ...aliasColors, scannerDetailMode: 'normal', scannerMatchedScanLists: () => '',
       sourceNameDisplayMode: () => 'talker_alias', scannerSourceAlias: () => ''
     });
   const scannerCall = { call_id: 'call-1', started_at_ms: 100 };

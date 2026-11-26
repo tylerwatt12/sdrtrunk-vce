@@ -1008,7 +1008,6 @@ body[data-view="live"] .channel-diagnostic-readouts {
     padding: var(--space-2) var(--space-3);
     overflow: visible;
     cursor: pointer;
-    background: var(--surface);
     border: 0;
     border-bottom: 1px solid var(--table-rule);
     border-radius: 0;

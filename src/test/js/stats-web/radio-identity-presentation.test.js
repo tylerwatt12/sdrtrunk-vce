@@ -1,4 +1,5 @@
 'use strict';
+const aliasColors = require(require('node:path').resolve(__dirname, '../../../../stats-web/assets/core/alias-colors.js'));
 
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -326,6 +327,8 @@ assert.match(dockSource, /JSON\.stringify\(\[source, panel, getSourceNameDisplay
 
 const detailNode = (tag, className = '', initialText = '') => ({
   dataset: {},
+  get classList() { const self=this; return { toggle(name,on) { const values=new Set(self.className.split(' ')); if(on) values.add(name); else values.delete(name); self.className=[...values].join(' '); } }; },
+  querySelector(selector) { const names=selector.split(',').map(value=>value.trim().slice(1)); return this.children.find(child=>names.some(name=>child.className.split(' ').includes(name))) || this.children.map(child=>child.querySelector(selector)).find(Boolean) || null; },
   nodeType: 1, tag, className, childNodes: [], ownText: initialText,
   append(...children) { this.childNodes.push(...children); },
   get children() { return this.childNodes.filter(child => child?.nodeType === 1); },
@@ -376,7 +379,7 @@ const scannerSourceDetails = vm.runInNewContext(`(() => {
     ${source.slice(scannerSourceStart, scannerSourceEnd)}
     const host = node('div'); host.append(source, participants); return host;
   };
-})()`, { node: (...args) => Object.assign(detailNode(...args), { setAttribute() {}, addEventListener() {} }),
+})()`, { ...aliasColors, node: (...args) => Object.assign(detailNode(...args), { setAttribute() {}, addEventListener() {} }),
   ...radioLabels, isP25: behavior.isP25, scannerSourceAlias: behavior.scannerSourceAlias,
   radioIdentifierText: behavior.radioIdentifierText, partyIdentifierText: behavior.partyIdentifierText,
   capabilityAllowed: () => false, ACCESS_CAPABILITIES: { RADIO: 'radio' }, scannerAliasEditButton: () => null });
@@ -549,7 +552,7 @@ assert.equal(nxdnZeroSuggestion.key, 'v1-g-x-x-0');
 assert.equal(nxdnZeroSuggestion.label, 'Talkgroup 0 · Security',
   'Activity name-search suggestions retain the exact zero identity and configured alias.');
 const scannerRenderKeys = vm.runInNewContext(`${functionSource('scannerCallRenderKey')}\n({scannerCallRenderKey});`, {
-  scannerDetailMode: 'compact', sourceNameDisplayMode: () => 'talker_alias', scannerSourceAlias: () => '',
+  ...aliasColors, scannerDetailMode: 'compact', sourceNameDisplayMode: () => 'talker_alias', scannerSourceAlias: () => '',
   scannerMatchedScanLists: () => []
 });
 assert.notEqual(scannerRenderKeys.scannerCallRenderKey({ target_id: 0 }, {}, {}),
@@ -625,6 +628,7 @@ const pageHeaders = [];
 let pageResponse;
 const pageRoute = new URLSearchParams('tab=info');
 const pageContext = {
+  ...aliasColors,
   directListenAction: () => null,
   systemLabels, ...radioLabels, route: pageRoute,
   captureRenderContext: () => ({}), renderIsCurrent: () => true,
@@ -648,7 +652,7 @@ const pageFunctions = [
   'isSavedChannelRadioSystem', 'radioSystemLabel', 'radioSystemPrimaryName', 'radioSystemDisplayName',
   'radioSystemValue', 'aliasLabel', 'identityKind', 'rowGroupIdentityKind', 'groupIdentityLabel',
   'p25CanonicalSubscriber', 'canonicalSubscriberText', 'radioIdentityPrefix', 'workingSubscriberId',
-  'radioIdentifierText', 'groupIdentityPrefix', 'groupIdentifierText', 'partyIdentifierText', 'entityPageTitle', 'renderChannel', 'renderTrunkedChannel',
+  'radioIdentifierText', 'groupIdentityPrefix', 'groupIdentifierText', 'partyIdentifierText', 'entityPageTitle', 'aliasPageTitle', 'coloredAliasName', 'renderChannel', 'renderTrunkedChannel',
   'renderConventionalChannel', 'renderRadioSystem', 'renderGroupIdentity', 'renderRadio'
 ];
 vm.createContext(pageContext);

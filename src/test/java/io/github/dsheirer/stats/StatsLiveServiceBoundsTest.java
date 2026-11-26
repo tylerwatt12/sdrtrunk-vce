@@ -429,9 +429,9 @@ class StatsLiveServiceBoundsTest
             "Engine 1 · Portable 12", "4400", "TALKGROUP", "Fire Dispatch", "Primary dispatch",
             "P25_PHASE1", null, new ChannelActivitySnapshot.Navigation(
             "728d2d66-de4e-476b-a696-919f32dd4d12", 41L, "County",
-            "p25", List.of(new ChannelActivitySnapshot.AliasReference(301L, 41L, "Engine 1")),
+            "p25", List.of(new ChannelActivitySnapshot.AliasReference(301L, 41L, "Engine 1", 0xffff0000)),
             new ChannelActivitySnapshot.MatcherReference("radio", "p25", "phase_1", 1201),
-            List.of(new ChannelActivitySnapshot.AliasReference(302L, 41L, "Fire Dispatch")),
+            List.of(new ChannelActivitySnapshot.AliasReference(302L, 41L, "Fire Dispatch", 0xff0000ff)),
             new ChannelActivitySnapshot.MatcherReference("talkgroup", "p25", "phase_1", 4400)), "TRAFFIC");
         ChannelActivitySnapshot snapshot = new ChannelActivitySnapshot("site", "Live", "County", "Downtown",
             "Primary", null, true, true,
@@ -463,6 +463,8 @@ class StatsLiveServiceBoundsTest
                 (List<Map<String,Object>>)projected.get("source_aliases");
             assertEquals(301L, sourceAliases.getFirst().get("alias_id"));
             assertEquals(41L, sourceAliases.getFirst().get("alias_list_id"));
+            assertEquals(0xffff0000, sourceAliases.getFirst().get("color"));
+            assertEquals(0xff0000ff, ((List<Map<String,Object>>)projected.get("target_aliases")).getFirst().get("color"));
             assertFalse(projected.containsKey("target_matcher"),
                 "raw matcher hints are internal inputs, not browser navigation contracts");
         }

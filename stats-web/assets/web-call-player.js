@@ -697,6 +697,14 @@ export class WebCallPlayer {
         }
       });
       const label = update.playback_target_label;
+      for (const field of ['source_alias_color', 'target_alias_color']) {
+        if (!Object.hasOwn(update, field)) continue;
+        const value = update[field];
+        if ((value === null || Number.isInteger(value) && value >= -2147483648 && value <= 2147483647) && call[field] !== value) {
+          call[field] = value;
+          changed = true;
+        }
+      }
       if (Object.hasOwn(update, 'playback_target_label') && (label === null || typeof label === 'string') &&
           call.playback_target && call.playback_target.label !== label) {
         call.playback_target = { ...call.playback_target, label };

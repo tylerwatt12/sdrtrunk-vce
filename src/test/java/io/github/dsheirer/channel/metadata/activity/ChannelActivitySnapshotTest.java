@@ -112,13 +112,13 @@ class ChannelActivitySnapshotTest
         assertEquals(41L, navigation.aliasListId());
         assertEquals("County Sheriff", navigation.aliasListName());
         assertEquals("p25", navigation.protocol());
-        assertEquals(new ChannelActivitySnapshot.AliasReference(301L, 41L, "Car 12"),
+        assertEquals(new ChannelActivitySnapshot.AliasReference(301L, 41L, "Car 12", 0),
             navigation.sourceAliases().getFirst());
         assertEquals(new ChannelActivitySnapshot.MatcherReference("radio", "p25", "phase_1", 1201, null, null,
             new io.github.dsheirer.identifier.radio.ResolvedRadioIdentity(io.github.dsheirer.protocol.Protocol.APCO25,
                 1201, null, io.github.dsheirer.identifier.IdentityResolutionEvidence.UNRESOLVED)),
             navigation.sourceMatcher());
-        assertEquals(new ChannelActivitySnapshot.AliasReference(302L, 41L, "Dispatch"),
+        assertEquals(new ChannelActivitySnapshot.AliasReference(302L, 41L, "Dispatch", 0),
             navigation.targetAliases().getFirst());
         assertEquals(new ChannelActivitySnapshot.MatcherReference("talkgroup", "p25", "phase_1", 4400),
             navigation.targetMatcher());

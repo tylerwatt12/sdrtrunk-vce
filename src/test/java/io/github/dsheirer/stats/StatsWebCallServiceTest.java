@@ -1533,6 +1533,29 @@ class StatsWebCallServiceTest
     }
 
     @Test
+    void publishesWebAliasColorsFromTheSameConfiguredIdentityAsItsName() throws Exception
+    {
+        AliasListDefinition definition = new AliasListDefinition("County", AliasListFamily.P25);
+        definition.setId(10);
+        Alias destination = alias(101, "Dispatch", new Talkgroup(Protocol.APCO25, 4400), definition);
+        Alias source = alias(102, "Unit 9001", new Radio(Protocol.APCO25, 9001), definition);
+        destination.setColor(0xff0000ff);
+        source.setColor(0xffff0000);
+        AliasList list = new AliasList(definition);
+        list.addAliases(List.of(destination, source));
+        try(StatsWebCallService service = started(new StatsWebCallService());
+            FeedClient client = listen(service, Set.of()))
+        {
+            service.receive(withAliasList(call(), list));
+            Map<String,Object> metadata = client.awaitCall();
+            assertEquals("Dispatch", metadata.get("target_alias"));
+            assertEquals(0xff0000ff, metadata.get("target_alias_color"));
+            assertEquals("Unit 9001", metadata.get("source_alias"));
+            assertEquals(0xffff0000, metadata.get("source_alias_color"));
+        }
+    }
+
+    @Test
     void boundsEveryMetadataStringWithoutSplittingUnicode()
     {
         String oversized = "x".repeat(StatsWebCallService.MAXIMUM_METADATA_TEXT_CHARACTERS + 100);
@@ -1647,10 +1670,13 @@ class StatsWebCallServiceTest
         var cached = scannerCachedCall("retained", completed);
         destination.setName("Renamed dispatch");
         destination.setDescription("New description");
+        destination.setColor(0xff0000ff);
         list.removeAlias(source);
         var refreshed = StatsCallAliasHttpController.presentation(cached);
         assertEquals("Renamed dispatch", refreshed.get("target_alias"));
         assertEquals("New description", refreshed.get("target_description"));
+        assertEquals(0xff0000ff, refreshed.get("target_alias_color"));
+        assertNull(refreshed.get("source_alias_color"));
         assertTrue(refreshed.containsKey("source_alias"));
         assertNull(refreshed.get("source_alias"));
         assertNull(refreshed.get("source_description"));

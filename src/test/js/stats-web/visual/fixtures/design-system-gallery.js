@@ -1,4 +1,15 @@
 import { applyThemeHue, APPEARANCE_SCHEMES } from '/assets/core/theme.js?v=2';
+import { applyAliasColor } from '/assets/core/alias-colors.js?v=1';
+
+const aliasPalette = document.querySelector('[data-alias-palette]');
+for (let family = 0; family < 12; family++) {
+  const hue = family / 2, x = 1 - Math.abs(hue % 2 - 1);
+  const rgb = [[1,x,0],[x,1,0],[0,1,x],[0,x,1],[x,0,1],[1,0,x]][Math.floor(hue)];
+  const color = rgb.reduce((value, part) => (value << 8) | Math.round(part * 255), 0);
+  const value = document.createElement('span');
+  value.textContent = `Alias ${family + 1}`;
+  aliasPalette.append(applyAliasColor(value, color));
+}
 import { receiverHealthAlertGroups } from '/assets/core/receiver-health-alerts.js?v=4';
 import { setIconHintDetails } from '/assets/core/icon-hints.js';
 import { formatPagingToneSummary } from '/assets/core/call-audio-details.js';
@@ -427,7 +438,7 @@ function initializeScanListCatalog() {
 
 const parameters = new URLSearchParams(window.location.search);
 const theme = parameters.get('theme') === 'dark' ? 'dark' : 'light';
-const view = ['awaiting-apply', 'control-states', 'table-overflow', 'mobile-table', 'gallery', 'loading-indicators', 'text-links', 'workflows', 'qr-code', 'section-body', 'app-chrome', 'audio-dock', 'access-landing', 'access-login-modal', 'modal', 'modal-long', 'alias-list-create-modal', 'activity-action-tooltip', 'activity-filters', 'health-alert-modal', 'focus', 'settings', 'health', 'computer', 'status-primitives', 'p25', 'admin-access',
+const view = ['alias-colors', 'awaiting-apply', 'control-states', 'table-overflow', 'mobile-table', 'gallery', 'loading-indicators', 'text-links', 'workflows', 'qr-code', 'section-body', 'app-chrome', 'audio-dock', 'access-landing', 'access-login-modal', 'modal', 'modal-long', 'alias-list-create-modal', 'activity-action-tooltip', 'activity-filters', 'health-alert-modal', 'focus', 'settings', 'health', 'computer', 'status-primitives', 'p25', 'admin-access',
   'admin-navigation', 'focused-settings', 'admin-receiver', 'admin-support', 'dashboard-health', 'dashboard-calls', 'dashboard-activity',
   'signal-quality-detail', 'radioreference-results', 'radioreference-connect', 'comparison-table',
   'radio-directory-coverage', 'radio-directory-panel', 'admin-scan-lists',

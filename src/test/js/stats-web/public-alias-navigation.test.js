@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const root = path.resolve(__dirname, '../../../..');
+const aliasColors = require(path.join(root, 'stats-web/assets/core/alias-colors.js'));
 const source = fs.readFileSync(path.join(root, 'stats-web/assets/app.js'), 'utf8');
 const routesSource = fs.readFileSync(path.join(root, 'stats-web/assets/core/routes.js'), 'utf8');
 const sourceNamesSource = fs.readFileSync(path.join(root, 'stats-web/assets/core/source-names.js'), 'utf8');
@@ -41,6 +42,7 @@ const route = new URLSearchParams('view=dashboard');
 let admin = false;
 const node = (...args) => new Element(...args);
 const context = {
+  ...aliasColors,
   formatSourceName, sourceNameDisplayMode: () => 'talker_alias',
   isP25: () => false,
   route, routeFoundation: routes, applicationRoutes: Object.fromEntries(routes.definitions.map(value => [value.id, value])),

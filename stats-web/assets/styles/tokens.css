@@ -1,5 +1,30 @@
 /* Original blue-gray palette by default; custom hue affects only theme colors, never status colors. */
 :root {
+  --alias-color-fill-0: hsl(0 66% 91%);
+  --alias-color-ink-0: hsl(0 50% 20%);
+  --alias-color-fill-1: hsl(30 66% 91%);
+  --alias-color-ink-1: hsl(30 50% 20%);
+  --alias-color-fill-2: hsl(60 66% 91%);
+  --alias-color-ink-2: hsl(60 50% 20%);
+  --alias-color-fill-3: hsl(90 66% 91%);
+  --alias-color-ink-3: hsl(90 50% 20%);
+  --alias-color-fill-4: hsl(120 66% 91%);
+  --alias-color-ink-4: hsl(120 50% 20%);
+  --alias-color-fill-5: hsl(150 66% 91%);
+  --alias-color-ink-5: hsl(150 50% 20%);
+  --alias-color-fill-6: hsl(180 66% 91%);
+  --alias-color-ink-6: hsl(180 50% 20%);
+  --alias-color-fill-7: hsl(210 66% 91%);
+  --alias-color-ink-7: hsl(210 50% 20%);
+  --alias-color-fill-8: hsl(240 66% 91%);
+  --alias-color-ink-8: hsl(240 50% 20%);
+  --alias-color-fill-9: hsl(270 66% 91%);
+  --alias-color-ink-9: hsl(270 50% 20%);
+  --alias-color-fill-10: hsl(300 66% 91%);
+  --alias-color-ink-10: hsl(300 50% 20%);
+  --alias-color-fill-11: hsl(330 66% 91%);
+  --alias-color-ink-11: hsl(330 50% 20%);
+  --alias-color-inset: 3px;
   --ui-panel-fill: var(--surface);
   --ui-tile-fill: var(--surface-2);
   --ui-content-fill: var(--ui-panel-fill);
@@ -519,6 +544,31 @@
 }
 
 :root[data-theme="dark"] {
+  --alias-color-fill-0: hsl(0 38% 24%);
+  --alias-color-ink-0: hsl(0 65% 91%);
+  --alias-color-fill-1: hsl(30 38% 24%);
+  --alias-color-ink-1: hsl(30 65% 91%);
+  --alias-color-fill-2: hsl(60 38% 24%);
+  --alias-color-ink-2: hsl(60 65% 91%);
+  --alias-color-fill-3: hsl(90 38% 24%);
+  --alias-color-ink-3: hsl(90 65% 91%);
+  --alias-color-fill-4: hsl(120 38% 24%);
+  --alias-color-ink-4: hsl(120 65% 91%);
+  --alias-color-fill-5: hsl(150 38% 24%);
+  --alias-color-ink-5: hsl(150 65% 91%);
+  --alias-color-fill-6: hsl(180 38% 24%);
+  --alias-color-ink-6: hsl(180 65% 91%);
+  --alias-color-fill-7: hsl(210 38% 24%);
+  --alias-color-ink-7: hsl(210 65% 91%);
+  --alias-color-fill-8: hsl(240 38% 24%);
+  --alias-color-ink-8: hsl(240 65% 91%);
+  --alias-color-fill-9: hsl(270 38% 24%);
+  --alias-color-ink-9: hsl(270 65% 91%);
+  --alias-color-fill-10: hsl(300 38% 24%);
+  --alias-color-ink-10: hsl(300 65% 91%);
+  --alias-color-fill-11: hsl(330 38% 24%);
+  --alias-color-ink-11: hsl(330 65% 91%);
+
   --recording-active-marker: oklch(96% 0.015 var(--theme-hue, 180));
   --recording-queue-marker: oklch(76% 0.025 var(--theme-hue, 180));
   --recording-played-marker: oklch(55% 0.015 var(--theme-hue, 180));

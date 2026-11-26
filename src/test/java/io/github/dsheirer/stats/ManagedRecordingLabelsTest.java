@@ -216,6 +216,8 @@ class ManagedRecordingLabelsTest
         assertEquals("County fire", decorated.get("group_description"));
         assertEquals("Fire", decorated.get("group_group"));
         assertEquals("Engine 1", decorated.get("source_alias"));
+        assertEquals(0, decorated.get("source_alias_color"));
+        assertEquals(0, decorated.get("group_alias_color"));
         assertEquals("Engine One OTA", decorated.get("source_ota_alias"));
         assertFalse(decorated.toString().contains("Wrong Home OTA"));
 

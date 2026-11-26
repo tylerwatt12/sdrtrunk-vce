@@ -362,7 +362,7 @@ async function installSiteStyleApplication(page, theme = 'light', liveInitialSna
   await page.route('**/api/v1/**', async route => {
     const request = route.request(), url = new URL(request.url()), p = decodeURIComponent(url.pathname);
     state.requests.push(p);
-    const respond = data => route.fulfill({ json: { data } });
+    const respond = data => route.fulfill({ json: { data: options.decorateResponse ? options.decorateResponse(data, p) : data } });
     if (p === '/api/v1/me/tour-dismissals') {
       if (request.method() === 'PUT') {
         for (const [id, version] of Object.entries(request.postDataJSON().dismissed))

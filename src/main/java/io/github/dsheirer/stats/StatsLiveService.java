@@ -1403,6 +1403,7 @@ final class StatsLiveService implements AutoCloseable
         value.put("alias_id", reference.aliasId());
         value.put("alias_list_id", reference.aliasListId());
         value.put("name", boundedText(reference.name(), MAXIMUM_LIVE_TEXT_LENGTH));
+        put(value, "color", reference.color());
         return Map.copyOf(value);
     }
 

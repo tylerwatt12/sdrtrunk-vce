@@ -1,6 +1,7 @@
 import * as routeFoundation from './core/routes.js?v=12';
 import * as preferenceSchema from './core/preference-schema.js?v=12';
 import { formatSourceName } from './core/source-names.js?v=1';
+import { aliasColorFamily, applyAliasColor, commonAliasColor, callAliasColor } from './core/alias-colors.js?v=1';
 import { summarizeBsi, bsiObservationFreshness } from './core/bsi.js?v=1';
 import { receiverDisplayName } from './core/receiver-names.js?v=1';
 import { createMessageTypeCatalog } from './core/message-types.js?v=1';
@@ -51,12 +52,12 @@ import { createSpectrumDisplayPreferences } from './core/spectrum-display-prefer
 import { createSpectrumAutoRange, spectrumTraceValue } from './features/spectrum-auto-range.js?v=4';
 import { createChannelSignalAutoRange } from './features/channel-signal-auto-range.js?v=2';
 import { smoothSpectrumValues } from './features/spectrum-smoothing.js?v=1';
-import { createAudioDock } from './core/audio-dock.js?v=52';
+import { createAudioDock } from './core/audio-dock.js?v=53';
 import { createAudioCommand, createAudioTransport, createAudioTiming, createAudioVolume, audioPlaybackAction } from './core/audio-controls.js?v=2';
 import { formatPagingToneSummary } from './core/call-audio-details.js?v=7';
 import { createRemoteSupportWorkspace, remoteSupportDescription } from './features/remote-support.js?v=6';
 import { mountAccessWireframe } from './features/access-wireframe.js?v=2';
-import { WebCallPlayer } from './web-call-player.js?v=30';
+import { WebCallPlayer } from './web-call-player.js?v=31';
 
 let route = new URLSearchParams(window.location.search);
 const content = document.getElementById('content');
@@ -2452,6 +2453,16 @@ function channelTagTitle(row) {
 function entityPageTitle(kind, label, fallback = '') {
   const value = String(label ?? '').trim() || String(fallback ?? '').trim();
   return value ? `${kind}: ${value}` : `${kind} Details`;
+}
+
+function coloredAliasName(name, color) {
+  if (!name || aliasColorFamily(color) === null) return name || '';
+  return applyAliasColor(node('span', '', name), color);
+}
+
+function aliasPageTitle(kind, label, fallback, color) {
+  if (!label || aliasColorFamily(color) === null) return entityPageTitle(kind, label, fallback);
+  return fragment(`${kind}: `, coloredAliasName(label, color));
 }
 
 function pageHeader(title, subtitle) {
@@ -12684,6 +12695,7 @@ function scannerCallRenderKey(call, state, site, mode = scannerDetailMode) {
   return JSON.stringify([
     mode, sourceNameDisplayMode(), scannerSourceAlias(call),
     call.target_alias, call.target_description, call.target_group, call.source_description, call.source_group,
+    callAliasColor(call, 'source'), callAliasColor(call, 'target'),
     call.call_id || '', call.started_at_ms || '',
     call.source_id || '', call.source_canonical_identity || '', call.source_observed_working_id || '',
     call.target_id ?? '', call.target_canonical_identity || '', call.target_observed_working_id || '',
@@ -12755,6 +12767,7 @@ function renderScannerCall(host, state, channelMetadata, options = {}) {
     title.replaceChildren(titleAction);
   }
   const titleRow = node('div', 'scanner-identity-actions');
+  if (!idle && !analog && call.target_alias) applyAliasColor(title.firstElementChild || title, callAliasColor(call, 'target'));
   const targetEdit = !idle && !analog && scannerAliasEditButton('target', aliasContexts?.target, options.onAliasSaved);
   if (targetEdit) titleRow.append(targetEdit);
   titleRow.append(title);
@@ -12791,6 +12804,9 @@ function renderScannerCall(host, state, channelMetadata, options = {}) {
   const sourceId = sourceUnknown ? '' : radioIdentifierText(call, call.source_id, 'source');
   sourceFields.append(scannerField('Transmitting', sourceAlias || sourceId || '—', 0,
     open(sourceAlias ? 'source-alias' : 'source'), true, detailMode));
+  if (!idle && sourceAlias && !sourceUnknown) {
+    applyAliasColor(sourceFields.querySelector('.scanner-field-value, .scanner-field-link'), callAliasColor(call, 'source'));
+  }
   const sourceEdit = !idle && scannerAliasEditButton('source', aliasContexts?.source, options.onAliasSaved);
   if (sourceEdit) {
     const value = sourceFields.querySelector('dd');
@@ -12818,10 +12834,16 @@ function renderScannerCall(host, state, channelMetadata, options = {}) {
       const target = scannerParticipant('Target', call.target_alias, targetId, call.target_description,
         call.target_group, open('target-alias'), open('target'), detailMode);
       if (target) participants.append(target);
+      if (target && !idle && call.target_alias) {
+        applyAliasColor(target.querySelector('.scanner-field-value, .scanner-field-link'), callAliasColor(call, 'target'));
+      }
     }
     const sourceDetails = scannerParticipant('Source', sourceAlias, sourceId, sourceUnknown ? '' : call.source_description,
       sourceUnknown ? '' : call.source_group, open('source-alias'), open('source'), detailMode);
     if (sourceDetails) participants.append(sourceDetails);
+    if (sourceDetails && !idle && sourceAlias && !sourceUnknown) {
+      applyAliasColor(sourceDetails.querySelector('.scanner-field-value, .scanner-field-link'), callAliasColor(call, 'source'));
+    }
   }
   const networkSiteIdentity = scannerNetworkSiteIdentity(call);
   const nac = scannerIsP25(call) ? scannerHex(call.nac, 3) : '';
@@ -20256,20 +20278,34 @@ function liveSourceName(row) {
 }
 
 function liveAliasValue(row, kind) {
-  if (kind === 'source') {
+  if (kind === 'source' && isP25(row) && !p25RadioIdentityKnown(row, row?.source_id, kind)) return '';
+  const references = liveAliasReferences(row, kind);
+  if (kind === 'source' && references.length <= 1) {
     const label = liveSourceName(row);
     return label ? liveIdentityActionLink(row, kind, label) : '';
   }
-  const references = liveAliasReferences(row, kind);
+  if (kind === 'source' && sourceNameDisplayMode() === 'talker_alias' && String(row?.talker_alias || '').trim()) {
+    return liveIdentityActionLink(row, kind, String(row.talker_alias).trim());
+  }
   const fallback = String(row?.target_alias || '').trim();
   if (!references.length) return fallback ?
     liveIdentityActionLink(row, kind, fallback) : fallback;
   const result = node('span', 'live-alias-values');
+  const sharedColor = commonAliasColor(references);
   references.forEach((reference, index) => {
     if (index) result.append(document.createTextNode(', '));
     const label = String(reference.name || '').trim() || 'Unnamed alias';
-    result.append(liveIdentityActionLink(row, kind, label));
+    const value = liveIdentityActionLink(row, kind, label);
+    const part = node('span');
+    part.append(value);
+    result.append(references.length > 1 && sharedColor === null ? applyAliasColor(part, reference.color) : part);
   });
+  if (kind === 'source' && sourceNameDisplayMode() === 'both') {
+    const talker = String(row?.talker_alias || '').trim();
+    if (talker && !references.some(reference => String(reference.name || '').trim().toLowerCase() === talker.toLowerCase())) {
+      result.append(' · ', liveIdentityActionLink(row, kind, talker));
+    }
+  }
   return result;
 }
 
@@ -20293,6 +20329,7 @@ function liveIdentityValue(row, kind) {
   const summary = identitySummaryValue(nameText ? name : identifier,
     nameText && idText && nameText !== idText ? identifier : '');
   if (summary instanceof Node) summary.classList.add('identity-summary-inline');
+  if (summary instanceof Node && nameText) applyAliasColor(summary, commonAliasColor(liveAliasReferences(row, kind)));
   return kind === 'target' ? withDirectListenAction(summary, row, row.target_entity_ref || row.entity_ref,
     { label: nameText || idText, actionFirst: true }) : summary;
 }
@@ -22997,7 +23034,7 @@ async function renderGroupIdentity() {
   const tab = route.get('tab') || 'info';
   const formattedId = groupIdentifierText(groupIdentity, groupIdentity.native_id);
   const kindLabel = kind === 'patch_group' ? 'Patch Group' : 'Talkgroup';
-  const title = entityPageTitle(kindLabel, aliasLabel(groupIdentity), formattedId);
+  const title = aliasPageTitle(kindLabel, aliasLabel(groupIdentity), formattedId, groupIdentity.alias_color);
   const header = pageHeader(title, fragment(radioSystemContextLink(groupIdentity), ` · ${kindLabel} ${formattedId}`));
   const direct = directListenAction(groupIdentity, groupIdentity.entity_ref || {
     kind, radio_system_key: radioSystem.radio_system_key, identity_key: identityKey
@@ -23055,7 +23092,7 @@ async function renderGroupIdentity() {
     const blocks = [section('Identity', keyValues([
       [radioSystemOwnerLabel(groupIdentity), radioSystemInfoFact(groupIdentity)],
       [kind === 'patch_group' ? 'Patch Group ID' : 'Talkgroup ID', formattedId],
-      ['Alias', aliasLabel(groupIdentity)],
+      ['Alias', coloredAliasName(aliasLabel(groupIdentity), groupIdentity.alias_color)],
       ['Description', groupIdentity.alias_description],
       ['Group', groupIdentity.alias_group],
       ['Home System', groupIdentity.home_system_entity_ref ? identitySummaryValue(
@@ -23204,8 +23241,8 @@ async function renderRadio() {
   const permanentIdentity = p25CanonicalSubscriber(radio);
   const workingId = workingSubscriberId(radio);
   const formattedId = radioIdentifierText(radio, radio.native_id);
-  const title = entityPageTitle('Radio', aliasLabel(radio),
-    normalizedSiteText(radio.last_talker_alias) || formattedId);
+  const title = aliasPageTitle('Radio', aliasLabel(radio),
+    normalizedSiteText(radio.last_talker_alias) || formattedId, radio.alias_color);
   if (!beginPage(renderContext,
     pageHeader(title, fragment(radioSystemContextLink(radio), ` · Radio ${formattedId}`)),
     entityTabs('radio', radio, identityKey, tab, true))) return;
@@ -23239,7 +23276,7 @@ async function renderRadio() {
     const identityValues = [
       [radioSystemOwnerLabel(radio), radioSystemInfoFact(radio)],
       ['Radio ID', identifierFact],
-      ['Alias', aliasLabel(radio)]
+      ['Alias', coloredAliasName(aliasLabel(radio), radio.alias_color)]
     ];
     if (permanentIdentity) {
       const homeKey = `p25:${hex(permanentIdentity.wacn, 5)}:${hex(permanentIdentity.system_id, 3)}`.toLowerCase();

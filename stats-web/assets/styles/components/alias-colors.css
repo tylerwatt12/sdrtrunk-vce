@@ -1,0 +1,31 @@
+/* A supplementary identity cue: it never colors operational status or page surfaces. */
+.ui-alias-color {
+  --ink: var(--ui-alias-ink);
+  --muted: var(--ui-alias-ink);
+  --link: var(--ui-alias-ink);
+  --audio-ink: var(--ui-alias-ink);
+  --audio-muted: var(--ui-alias-ink);
+  color: var(--ui-alias-ink);
+  background: var(--ui-alias-fill);
+  border-radius: var(--radius-compact);
+  padding-inline: var(--alias-color-inset);
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
+.ui-alias-color :is(a, button, small) {
+  color: inherit;
+}
+
+.ui-alias-color[data-alias-family="0"] { --ui-alias-fill: var(--alias-color-fill-0); --ui-alias-ink: var(--alias-color-ink-0); }
+.ui-alias-color[data-alias-family="1"] { --ui-alias-fill: var(--alias-color-fill-1); --ui-alias-ink: var(--alias-color-ink-1); }
+.ui-alias-color[data-alias-family="2"] { --ui-alias-fill: var(--alias-color-fill-2); --ui-alias-ink: var(--alias-color-ink-2); }
+.ui-alias-color[data-alias-family="3"] { --ui-alias-fill: var(--alias-color-fill-3); --ui-alias-ink: var(--alias-color-ink-3); }
+.ui-alias-color[data-alias-family="4"] { --ui-alias-fill: var(--alias-color-fill-4); --ui-alias-ink: var(--alias-color-ink-4); }
+.ui-alias-color[data-alias-family="5"] { --ui-alias-fill: var(--alias-color-fill-5); --ui-alias-ink: var(--alias-color-ink-5); }
+.ui-alias-color[data-alias-family="6"] { --ui-alias-fill: var(--alias-color-fill-6); --ui-alias-ink: var(--alias-color-ink-6); }
+.ui-alias-color[data-alias-family="7"] { --ui-alias-fill: var(--alias-color-fill-7); --ui-alias-ink: var(--alias-color-ink-7); }
+.ui-alias-color[data-alias-family="8"] { --ui-alias-fill: var(--alias-color-fill-8); --ui-alias-ink: var(--alias-color-ink-8); }
+.ui-alias-color[data-alias-family="9"] { --ui-alias-fill: var(--alias-color-fill-9); --ui-alias-ink: var(--alias-color-ink-9); }
+.ui-alias-color[data-alias-family="10"] { --ui-alias-fill: var(--alias-color-fill-10); --ui-alias-ink: var(--alias-color-ink-10); }
+.ui-alias-color[data-alias-family="11"] { --ui-alias-fill: var(--alias-color-fill-11); --ui-alias-ink: var(--alias-color-ink-11); }

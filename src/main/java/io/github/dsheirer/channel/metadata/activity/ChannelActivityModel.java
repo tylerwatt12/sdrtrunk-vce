@@ -116,6 +116,12 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
     private static final int CONVENTIONAL_CALL = 14;
 
     private final AliasModel mAliasModel;
+    private final AtomicLong mRequestedAliasRefreshRevision = new AtomicLong();
+    private volatile long mAppliedAliasRefreshRevision;
+    private final java.util.function.Consumer<AliasModel.Change> mAliasChangeListener = change -> {
+        mRequestedAliasRefreshRevision.incrementAndGet();
+        signalWorker();
+    };
     private final NowPlayingPreference mNowPlayingPreference;
     private final ChannelActivityTableState mConventionalTable;
     private final Map<Channel,ChannelActivityTableState> mTrunkedTables = new IdentityHashMap<>();
@@ -233,6 +239,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
         mConventionalTable = new ChannelActivityTableState("Conventional", null, this::tableSnapshotUpdated);
         updateTablesSnapshot();
         mWorker = new ObserverThreadFactory("channel activity").newThread(this::runWorker);
+        if(mAliasModel != null) mAliasModel.addChangeListener(mAliasChangeListener);
         mWorker.start();
     }
 
@@ -2281,6 +2288,12 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
                         drained++;
                     }
 
+                    long aliasRefreshRevision = mRequestedAliasRefreshRevision.get();
+                    if(mAppliedAliasRefreshRevision < aliasRefreshRevision)
+                    {
+                        refreshAliasPresentation();
+                        mAppliedAliasRefreshRevision = aliasRefreshRevision;
+                    }
                     long lifecycleReconcileRevision = mRequestedLifecycleReconcileRevision.get();
 
                     long now = System.nanoTime();
@@ -2436,6 +2449,25 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
         changed.forEach(ChannelActivityTableState::refresh);
     }
 
+    /** Coalesced committed edits refresh retained identities on this observer worker, never a decoder callback. */
+    private void refreshAliasPresentation()
+    {
+        Map<ChannelActivityTableState,List<ChannelActivityRow>> changed = new IdentityHashMap<>();
+        for(Map.Entry<ChannelActivityRow,ChannelActivityTableState> entry: mRowTables.entrySet())
+        {
+            ChannelActivityRow row = entry.getKey();
+            List<Alias> source = getAliases(row.getSource(), null, row.getChannel());
+            List<Alias> target = getAliases(row.getTarget(), null, row.getChannel());
+            if(!source.equals(row.getSourceAliases()) || !target.equals(row.getTargetAliases()))
+            {
+                row.setSourceAliases(source);
+                row.setTargetAliases(target);
+                changed.computeIfAbsent(entry.getValue(), ignored -> new ArrayList<>()).add(row);
+            }
+        }
+        changed.forEach(ChannelActivityTableState::refresh);
+    }
+
     @SuppressWarnings("unchecked")
     private void process(ChannelActivityIngressQueue.Entry entry)
     {
@@ -2492,11 +2524,12 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
     {
         long deadline = System.nanoTime() + timeUnit.toNanos(timeout);
         long accepted = mAcceptedIngressCount.get();
+        long aliasRefreshRevision = mRequestedAliasRefreshRevision.get();
         long lifecycleReconcileRevision = mRequestedLifecycleReconcileRevision.get();
 
         while(System.nanoTime() < deadline)
         {
-            if(mProcessedIngressCount.get() >= accepted &&
+            if(mProcessedIngressCount.get() >= accepted && mAppliedAliasRefreshRevision >= aliasRefreshRevision &&
                 mAppliedLifecycleReconcileRevision >= lifecycleReconcileRevision && mIngress.size() == 0)
             {
                 return true;
@@ -2506,7 +2539,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
             LockSupport.parkNanos(this, TimeUnit.MILLISECONDS.toNanos(1));
         }
 
-        return mProcessedIngressCount.get() >= accepted &&
+        return mProcessedIngressCount.get() >= accepted && mAppliedAliasRefreshRevision >= aliasRefreshRevision &&
             mAppliedLifecycleReconcileRevision >= lifecycleReconcileRevision && mIngress.size() == 0;
     }
 
@@ -2519,6 +2552,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
         }
 
         mClosed = true;
+        if(mAliasModel != null) mAliasModel.removeChangeListener(mAliasChangeListener);
         mWorkerRunning = false;
         signalWorker();
         Thread worker = mWorker;
