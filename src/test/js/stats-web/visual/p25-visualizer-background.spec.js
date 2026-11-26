@@ -190,7 +190,8 @@ test('hidden tabs keep live counters and state while rendering sleeps, then show
   expect(resumed.trips).toBe(0);
   await expect(page.locator('.network-visualizer-auto-focus')).toBeHidden();
   expect(await page.evaluate(() => window.p25BackgroundState().cameraPhase)).toBe('roam');
-  await page.clock.runFor(1_500);
+  // Check the later scene without replaying every WebGL animation frame in the elapsed interval.
+  await page.clock.fastForward(1_500);
   const settled = await page.evaluate(() => window.p25BackgroundScene());
   expect(settled.nodes.find(node => node.id === key(radioKey))).toEqual(radio);
   expect(settled.trips).toBe(0);

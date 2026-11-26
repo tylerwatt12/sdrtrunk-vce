@@ -54,6 +54,73 @@ function operatorTuner(overrides = {}) {
   return tuner({ settings: operatorSettings(), ...overrides });
 }
 
+async function installEmbeddedSpectrumStream(page, tuner) {
+  // Keep the real multiplex and diagnostic decoders, with a live receiver response to each control update.
+  await page.addInitScript(({ centerHz, sampleRateHz }) => {
+    const nativeFetch = window.fetch.bind(window);
+    const encoder = new TextEncoder();
+    let controller = null;
+    let sequence = 0;
+    const multiplex = (topic, kind, payload) => {
+      const bytes = new Uint8Array(16 + payload.length), header = new DataView(bytes.buffer);
+      header.setUint32(0, 0x534c4d58); header.setUint8(4, 2); header.setUint8(5, kind);
+      header.setUint16(6, topic); header.setUint32(8, payload.length); bytes.set(payload, 16);
+      return bytes;
+    };
+    const diagnostic = (type, payload, center = centerHz, span = sampleRateHz, count = 0) => {
+      const bytes = new Uint8Array(64 + payload.length), header = new DataView(bytes.buffer);
+      header.setUint32(0, 0x53444447, true); header.setUint8(4, 1); header.setUint8(5, type);
+      header.setUint16(6, 64, true); header.setUint32(8, payload.length, true);
+      header.setUint32(12, count, true); header.setBigInt64(16, 1n, true);
+      header.setBigInt64(24, BigInt(++sequence), true);
+      header.setBigInt64(32, BigInt(Date.now()), true); header.setBigInt64(40, BigInt(Date.now()), true);
+      header.setBigInt64(48, BigInt(center), true); header.setInt32(56, span, true);
+      header.setInt32(60, count || 128, true); bytes.set(payload, 64);
+      return multiplex(5, 2, bytes);
+    };
+    const emit = parameters => {
+      if (!controller || !parameters) return;
+      const state = { stream_state: 'live', center_frequency_hz: centerHz, sample_rate_hz: sampleRateHz,
+        profile: parameters.profile };
+      let center = centerHz, span = sampleRateHz;
+      if (parameters.viewport_start_hz != null) {
+        state.requested_start_frequency_hz = state.visible_start_frequency_hz = parameters.viewport_start_hz;
+        state.requested_end_frequency_hz = state.visible_end_frequency_hz = parameters.viewport_end_hz;
+        center = (parameters.viewport_start_hz + parameters.viewport_end_hz) / 2;
+        span = parameters.viewport_end_hz - parameters.viewport_start_hz;
+      }
+      controller.enqueue(diagnostic(1, encoder.encode(JSON.stringify(state))));
+      const values = new Uint8Array(128 * 4), payload = new DataView(values.buffer);
+      for (let index = 0; index < 128; index++) payload.setFloat32(index * 4, index === 64 ? -25 : -75, true);
+      controller.enqueue(diagnostic(4, values, center, span, 128));
+    };
+    window.tunersSpectrumControls = [];
+    window.fetch = async (input, options = {}) => {
+      const url = new URL(typeof input === 'string' ? input : input.url, location.href);
+      if (url.pathname === '/api/v1/live/multiplex') {
+        return new Response(new ReadableStream({
+          start(value) {
+            controller = value;
+            controller.enqueue(multiplex(0, 1, encoder.encode(JSON.stringify({
+              event: 'ready', data: { client_id: url.searchParams.get('client_id') }
+            }))));
+          },
+          cancel() { controller = null; }
+        }), { headers: { 'Content-Type': 'application/vnd.sdrtrunk.live+binary' } });
+      }
+      const response = await nativeFetch(input, options);
+      if (url.pathname === '/api/v1/live/multiplex/control' && options.body && response.ok) {
+        const parameters = JSON.parse(options.body).subscriptions?.tuner_diagnostics;
+        if (parameters) {
+          window.tunersSpectrumControls.push(parameters);
+          emit(parameters);
+        }
+      }
+      return response;
+    };
+  }, { centerHz: tuner.frequency_hz, sampleRateHz: tuner.sample_rate_hz });
+}
+
 function currentTuner(state) {
   return Array.isArray(state.tuners) ? state.tuners[0] : state.currentTuner;
 }
@@ -392,6 +459,7 @@ test('embedded signal view reuses cursor and zoom with HiRes and LoRes controls'
   const mutations = [];
   const current = operatorTuner({ channel_count: 2, spectrum_available: true,
     spectrum_target_id: 'diagnostic-a' });
+  await installEmbeddedSpectrumStream(page, current);
   await mockTuners(page, mutations, { currentTuner: current,
     targets: [{ target_id: 'diagnostic-a', label: 'Airspy R2',
       center_frequency_hz: 851_012_500, sample_rate_hz: 10_000_000 }] });
@@ -399,6 +467,7 @@ test('embedded signal view reuses cursor and zoom with HiRes and LoRes controls'
 
   const embedded = page.locator('.tuners-spectrum');
   const canvases = embedded.locator('canvas');
+  await expect(embedded.locator('.tuner-spectrum-toolbar .state-current')).toHaveText('Live');
   await expect(canvases).toHaveCount(2);
   await expect(embedded.locator('canvas[tabindex="0"]')).toHaveCount(2);
   await expect(embedded.locator('canvas[aria-keyshortcuts="+ - ArrowLeft ArrowRight R 0 Home"]')).toHaveCount(2);
@@ -426,9 +495,11 @@ test('embedded signal view reuses cursor and zoom with HiRes and LoRes controls'
   await hiRes.click();
   await expect(hiRes).toHaveAttribute('aria-pressed', 'true');
   await expect(loRes).toHaveAttribute('aria-pressed', 'false');
+  await expect(embedded.locator('.tuner-spectrum-refining')).toBeHidden();
   await loRes.click();
   await expect(hiRes).toHaveAttribute('aria-pressed', 'false');
   await expect(loRes).toHaveAttribute('aria-pressed', 'true');
+  await expect(embedded.locator('.tuner-spectrum-refining')).toBeHidden();
   await expect(embedded.locator('.tuner-spectrum-toolbar-profile select')).toHaveCount(0);
   const display = embedded.getByRole('button', { name: 'Display options', exact: true });
   await display.click();
@@ -450,15 +521,16 @@ test('embedded signal view reuses cursor and zoom with HiRes and LoRes controls'
   await expect(embedded.locator('.tuner-spectrum-cursor-guide').first()).toBeVisible();
   await expect(embedded.locator('.tuner-spectrum-cursor-guide').last()).toBeVisible();
 
-  await embedded.locator('.channel-diagnostic-overlay').first().evaluate((overlay) => {
-    overlay.textContent = '';
-    overlay.hidden = true;
-  });
+  await expect(embedded.locator('.channel-diagnostic-overlay').first()).toBeHidden();
   const zoomIn = embedded.getByRole('button', { name: 'Zoom in' });
   await expect(zoomIn).toBeEnabled();
+  await expect(zoomIn).toHaveAttribute('aria-disabled', 'false');
   await zoomIn.click();
   await expect(embedded.locator('.tuner-spectrum-layout')).toHaveClass(/\bzoomed\b/);
   await expect(embedded.getByRole('button', { name: 'Reset zoom' })).toBeEnabled();
+  await expect(embedded.getByRole('button', { name: 'Reset zoom' })).toHaveAttribute('aria-disabled', 'false');
+  await expect.poll(() => page.evaluate(() => window.tunersSpectrumControls.at(-1)))
+    .toMatchObject({ profile: 'efficient', viewport_start_hz: expect.any(Number), viewport_end_hz: expect.any(Number) });
 
   await expect(embedded.locator('.tuner-spectrum-measurement-panel')).toHaveCount(0);
   await expect(embedded.locator('.tuner-spectrum-active-flags')).toHaveCount(0);
