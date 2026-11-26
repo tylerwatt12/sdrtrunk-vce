@@ -28,7 +28,8 @@ class P25P2DecoderHDQPSKTest
         {
             softSymbolCount.incrementAndGet();
 
-            if(!Float.isFinite(symbol) || symbol < -Math.PI || symbol > Math.PI)
+            //Bound by pi as a float: an exactly opposite phase step yields (float)Math.PI, which rounds above Math.PI
+            if(!Float.isFinite(symbol) || symbol < -(float)Math.PI || symbol > (float)Math.PI)
             {
                 invalidSoftSymbol.set(true);
             }
