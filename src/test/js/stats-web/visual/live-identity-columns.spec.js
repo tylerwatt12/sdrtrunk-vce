@@ -6,8 +6,9 @@ const { pathToFileURL } = require('node:url');
 const { installSiteStyleApplication, channelId } = require('./fixtures/site-style-app.cjs');
 const { expectNoHorizontalOverflow } = require('./fixtures/metric-geometry.cjs');
 
-const schema = ['status', 'tags', 'channel', 'frequency', 'signal', 'decode-health',
-  'source', 'target', 'decoder'];
+const layoutType = 'live-channels.trunked';
+const schema = ['status', 'tags', 'channel', 'lcn', 'frequency', 'signal', 'decode-health',
+  'source', 'target', 'decoder', 'receiver'];
 const baseRow = { key: 'identity-call', configuration_id: channelId, lcn: 12,
   frequency_hz: 451012500, status: 'CALL', tags: ['VOICE'], role: 'TRAFFIC', activation_order: 2,
   protocol: 'DMR', decoder: 'DMR', source_id: '65536', source_form: 'RADIO',
@@ -19,7 +20,7 @@ test.beforeAll(async () => {
     '../../../../../stats-web/assets/core/preference-schema.js')).href)).defaults;
 });
 
-async function openLive(page, theme, { hidden = [], row = {}, sourceMode = 'both', density = 'normal' } = {}) {
+async function openLive(page, theme, { hidden = ['tags', 'channel', 'receiver'], row = {}, sourceMode = 'both', density = 'normal' } = {}) {
   const snapshot = { revision: 1, tables: [{ table_id: channelId, configuration_id: channelId,
     title: 'Identity columns', channel_running: true, rows: [{ ...baseRow, ...row }] }] };
   const fixture = await installSiteStyleApplication(page, theme, snapshot);
@@ -27,7 +28,7 @@ async function openLive(page, theme, { hidden = [], row = {}, sourceMode = 'both
   preferences.appearance.theme = theme;
   preferences.presentation.source_name_display = sourceMode;
   preferences.presentation.live_row_density = density;
-  preferences.tables['live-channels'] = { schema, column_order: schema,
+  preferences.tables[layoutType] = { schema, column_order: schema,
     column_widths: {}, hidden_columns: hidden, collapsed_groups: [] };
   const writes = [];
   await page.route('**/api/v1/me/preferences', route => {
@@ -82,7 +83,7 @@ for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
     await expect(page.getByRole('dialog', { name: 'Table columns', exact: true })).toBeHidden();
     await expect(cell(app.row, 'receiver')).toHaveText('North antenna');
     await expect(cell(app.row, 'receiver')).toHaveAttribute('data-ui-hint', 'receiver-a');
-    expect(app.writes.at(-1).tables['live-channels'].hidden_columns).not.toContain('receiver');
+    expect(app.writes.at(-1).tables[layoutType].hidden_columns).not.toContain('receiver');
     const update = (revision, receiver) => page.evaluate(({ revision, row, tableId }) =>
       window.fixtureSendLiveFrame(1, 'activity_batch', { base_revision: revision - 1, revision,
         changes: [{ table_id: tableId, operation: 'upsert', replace: false, rows: [row] }] }),
@@ -143,7 +144,8 @@ for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
       const id = await cell(app.row, role).locator('.identity-summary-context').boundingBox();
       expect(id.x).toBeGreaterThanOrEqual(name.x + name.width - 1);
     }
-    await expect(cell(app.row, 'channel')).toHaveText('12');
+    await expect(cell(app.row, 'channel')).toHaveCount(0);
+    await expect(cell(app.row, 'lcn')).toHaveText('12');
     const update = async (revision, values) => {
       const snapshot = { ...app.snapshot, revision, tables: [{ ...app.snapshot.tables[0],
         rows: [{ ...baseRow, ...values }] }] };
@@ -179,21 +181,26 @@ test('Live combined columns can be hidden, reordered, and restored without separ
     .getByRole('button', { name: 'Choose table columns', exact: true }).click();
   const chooser = page.getByRole('dialog', { name: 'Table columns', exact: true });
   await expect(chooser.getByRole('checkbox', { name: /Show (Source|Target) (ID|Alias) column/ })).toHaveCount(0);
+  await chooser.getByRole('checkbox', { name: 'Show Channel column', exact: true }).check();
+  await expect(cell(app.row, 'channel')).toHaveText('Identity columns');
+  await expect(cell(app.row, 'lcn')).toHaveText('12');
   await chooser.getByRole('checkbox', { name: 'Show Source column', exact: true }).uncheck();
   await expect(cell(app.row, 'source')).toHaveCount(0);
   await expectParty(app.row, 'target', 'Dispatch', '54321');
   await chooser.getByRole('button', { name: 'Move Target left', exact: true }).click();
-  await expect.poll(() => app.writes.at(-1)?.tables['live-channels'].column_order.indexOf('target'))
-    .toBeLessThan(schema.indexOf('target'));
+  await expect.poll(() => app.writes.at(-1)?.tables[layoutType].column_order.indexOf('target'))
+    .toBe(schema.indexOf('target') - 1);
   await chooser.getByRole('checkbox', { name: 'Show Source column', exact: true }).check();
   await expectParty(app.row, 'source', 'Portable 6 · Operator 6', '65536');
   await page.keyboard.press('Escape');
   await expect(chooser).toBeHidden();
   // The visual server serves the application at /app.html; its / route is the component gallery.
   await page.goto(`/app.html?view=live&channel=${channelId}`);
+  await expect(cell(app.row, 'channel')).toHaveText('Identity columns');
+  await expect(cell(app.row, 'lcn')).toHaveText('12');
   await expectParty(app.row, 'source', 'Portable 6 · Operator 6', '65536');
   await expectParty(app.row, 'target', 'Dispatch', '54321');
-  expect(app.writes).toHaveLength(3);
+  expect(app.writes).toHaveLength(4);
   expectClean(app.fixture);
 });
 
