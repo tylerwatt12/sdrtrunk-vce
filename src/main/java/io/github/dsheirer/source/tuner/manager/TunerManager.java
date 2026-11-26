@@ -480,7 +480,6 @@ public class TunerManager implements IDiscoveredTunerStatusListener
                 return USB_RESCAN_FAILED;
             }
             listed = true;
-            mLog.debug("LibUsb - discovered [{}] potential usb devices", count);
             for(Device device: deviceList)
             {
                 if(LibUsb.getPortNumber(device) <= 0) continue;
