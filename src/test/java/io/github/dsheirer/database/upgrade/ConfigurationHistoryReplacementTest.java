@@ -26,6 +26,9 @@ class ConfigurationHistoryReplacementTest
     { assertReplacementRestoresExactBackup(76); }
 
     @Test void failedReplacementRestoresCurrentPairAndAudioOrderPreference() throws Exception
+    { assertReplacementRestoresExactBackup(DatabaseFormatCatalog.CURRENT_VERSION); }
+
+    @Test void failedReplacementRestoresFormat77PairAndAudioOrderPreference() throws Exception
     { assertReplacementRestoresExactBackup(77); }
 
     private void assertReplacementRestoresExactBackup(int version) throws Exception
@@ -38,11 +41,23 @@ class ConfigurationHistoryReplacementTest
             case 62 -> Format62TestDatabase.create(path);
             case 76 -> Format76TestDatabase.create(path);
             case 77 -> Format77TestDatabase.create(path);
+            case DatabaseFormatCatalog.CURRENT_VERSION -> CurrentFormatTestDatabase.create(path);
             default -> throw new IllegalArgumentException();
         };
-        if(version == 77)
+        if(version >= 77)
+        {
             assertTrue(new ConfigurationRepository(current).load().channels().stream()
-                .anyMatch(channel -> channel.getUseAutoStartOrderForAudio()),"The frozen77 fixture is opted in");
+                .anyMatch(channel -> channel.getUseAutoStartOrderForAudio()),"The format-77-and-later fixture is opted in");
+            try(var connection=DriverManager.getConnection("jdbc:sqlite:" + current);
+                var statement=connection.createStatement())
+            {
+                statement.executeUpdate("INSERT INTO configuration_broadcast_stream(configuration_id,sort_order,config_json) " +
+                    "VALUES('00000000-0000-4000-8000-000000000077'," +
+                    "(SELECT coalesce(max(sort_order),-1)+1 FROM configuration_broadcast_stream)," +
+                    "json_object('type','broadcastifyCallConfiguration','name','Restored health opt-out'," +
+                    "'healthReports',json('false')))");
+            }
+        }
         String originalDigest=dataDigest(current);
         Path history=ActivityDatabasePath.forConfiguration(current);
         String originalHistoryDigest=version >= 63 ? dataDigest(history) : null;
@@ -59,6 +74,11 @@ class ConfigurationHistoryReplacementTest
         { assertEquals(version,DatabaseFormatCatalog.inspect(connection).version()); }
         assertEquals(originalDigest,dataDigest(current));
         if(version >= 63) assertEquals(originalHistoryDigest,dataDigest(history));
+        if(version >= 77)
+            assertFalse(((io.github.dsheirer.audio.broadcast.broadcastify.BroadcastifyCallConfiguration)
+                new ConfigurationRepository(current).load().broadcastConfigurations().stream()
+                    .filter(provider -> provider.getConfigurationId().equals("00000000-0000-4000-8000-000000000077"))
+                    .findFirst().orElseThrow()).isHealthReports(),"Restoration must retain an explicit health-report opt-out");
     }
 
     @Test void legacyPairValidationIsReadOnlyAndRejectsMixedIdentityRoleAndSchema() throws Exception
@@ -111,7 +131,7 @@ class ConfigurationHistoryReplacementTest
 
     @Test void everySupportedLegacyConfigurationValidatesWithoutChangingItsFrozenFiles() throws Exception
     {
-        for(int version=45;version<=76;version++)
+        for(int version=45;version<DatabaseFormatCatalog.CURRENT_VERSION;version++)
         {
             Path database=directory.resolve("frozen-" + version + "/sdrtrunk.sqlite");
             Files.createDirectories(database.getParent());
@@ -125,8 +145,12 @@ class ConfigurationHistoryReplacementTest
             {
                 var snapshot=new ConfigurationRepository(database).loadRestoredLegacyConfiguration(connection,version);
                 assertFalse(snapshot.channels().isEmpty(),"format " + version);
-                assertTrue(snapshot.channels().stream().noneMatch(channel -> channel.getUseAutoStartOrderForAudio()),
-                    "Legacy channels remain opted out in format " + version);
+                if(version < 77)
+                    assertTrue(snapshot.channels().stream().noneMatch(channel -> channel.getUseAutoStartOrderForAudio()),
+                        "Legacy channels remain opted out in format " + version);
+                else
+                    assertTrue(snapshot.channels().stream().anyMatch(channel -> channel.getUseAutoStartOrderForAudio()),
+                        "The saved audio-order opt-in survives legacy reading in format " + version);
             }
             assertArrayEquals(original,Files.readAllBytes(database),"configuration format " + version);
             if(version>=63) assertArrayEquals(originalHistory,Files.readAllBytes(history),"history format " + version);

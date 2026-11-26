@@ -124,8 +124,8 @@ public class ConfigurationDatabaseStore
     ChannelAndBroadcastConfiguration loadRestoredLegacyConfiguration(Connection connection, int version)
         throws SQLException, IOException
     {
-        if(version < 45 || version > 76)
-            throw new SQLException("Restored legacy configuration requires a supported format from 45 through 76");
+        if(version < 45 || version > 77)
+            throw new SQLException("Restored legacy configuration requires a supported format from 45 through 77");
         var admitted = io.github.dsheirer.database.upgrade.DatabaseFormatCatalog.inspect(connection);
         if(admitted.version() != version || (version >= 63) !=
             io.github.dsheirer.database.ConfigurationHistoryDatabase.isPairedConfiguration(connection))
@@ -149,7 +149,7 @@ public class ConfigurationDatabaseStore
                 .filter(format -> format.version() == version).findFirst().orElseThrow().fingerprint().equals(
                 io.github.dsheirer.database.SqliteSchemaValidator.fingerprint(connection)))
             throw new SQLException("The legacy channel reader requires exact database format " + version);
-        return loadChannels(connection, false);
+        return loadChannels(connection, version >= 77);
     }
 
     private List<Channel> loadChannels(Connection connection, boolean hasAudioOrderPreference)

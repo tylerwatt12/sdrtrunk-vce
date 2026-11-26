@@ -52,9 +52,8 @@ class Format76To77DatabaseMigrationTest
                 try { new Format76To77DatabaseMigration().migrate(connection); }
                 finally { org.sqlite.ProgressHandler.clearHandler(connection); }
                 DatabaseFormatCatalog.stampForMigration(connection, 77);
-                DatabaseFormatCatalog.requireCurrent(connection);
                 assertEquals(77, DatabaseFormatCatalog.inspect(connection).version());
-                assertEquals(ConfigurationHistoryDatabase.CONFIGURATION_FINGERPRINT,
+                assertEquals(DatabaseFormatCatalog.requireVersion(77).fingerprint(),
                     SqliteSchemaValidator.fingerprint(connection));
                 assertEquals(0, scalar(connection,
                     "SELECT count(*) FROM configuration_channel WHERE use_auto_start_order_for_audio<>0"));
@@ -72,11 +71,22 @@ class Format76To77DatabaseMigrationTest
                     "SELECT use_auto_start_order_for_audio FROM configuration_channel"));
                 new Format76To77DatabaseMigration().migrate(connection);
                 DatabaseFormatCatalog.stampForMigration(connection, 77);
-                DatabaseFormatCatalog.requireCurrent(connection);
+                assertEquals(77, DatabaseFormatCatalog.inspect(connection).version());
+                assertEquals(DatabaseFormatCatalog.requireVersion(77).fingerprint(),
+                    SqliteSchemaValidator.fingerprint(connection));
                 connection.commit();
                 assertEquals(beforeTrees, trees(connection));
             }
-            ConfigurationHistoryDatabase.validatePair(database);
+            ConfigurationHistoryDatabase.validatePairIdentity(database);
+            for(Path role: java.util.List.of(database, ActivityDatabasePath.forConfiguration(database)))
+                try(var connection = DriverManager.getConnection("jdbc:sqlite:" + role);
+                    var statement = connection.createStatement())
+                {
+                    assertEquals(77, DatabaseFormatCatalog.inspect(connection).version());
+                    try(var rows = statement.executeQuery("PRAGMA quick_check"))
+                    { assertTrue(rows.next()); assertEquals("ok", rows.getString(1)); assertFalse(rows.next()); }
+                    try(var rows = statement.executeQuery("PRAGMA foreign_key_check")) { assertFalse(rows.next()); }
+                }
         }
     }
 
@@ -107,7 +117,7 @@ class Format76To77DatabaseMigrationTest
     @Test
     void currentChannelRepairPreservesEnabledAudioPreference() throws Exception
     {
-        Path database = Format77TestDatabase.create(directory.resolve("repair.sqlite"));
+        Path database = CurrentFormatTestDatabase.create(directory.resolve("repair.sqlite"));
         long channels;
         try(var connection = DriverManager.getConnection("jdbc:sqlite:" + database);
             var statement = connection.createStatement())

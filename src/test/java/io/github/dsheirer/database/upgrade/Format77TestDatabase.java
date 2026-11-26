@@ -19,7 +19,8 @@ public final class Format77TestDatabase
             connection.setAutoCommit(false);
             new Format76To77DatabaseMigration().migrate(connection);
             DatabaseFormatCatalog.stampForMigration(connection, 77);
-            DatabaseFormatCatalog.requireCurrent(connection);
+            if(DatabaseFormatCatalog.inspect(connection).version() != 77)
+                throw new AssertionError("Frozen format-77 fixture changed");
             try(var statement = connection.createStatement())
             {
                 statement.executeUpdate("UPDATE configuration_channel SET use_auto_start_order_for_audio=1 " +

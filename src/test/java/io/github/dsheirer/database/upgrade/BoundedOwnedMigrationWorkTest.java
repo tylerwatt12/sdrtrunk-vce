@@ -81,13 +81,13 @@ class BoundedOwnedMigrationWorkTest
         // Its work must nevertheless remain independent of detailed-event history, both alone and in the full route.
         for(int source: List.of(71, 72))
         {
-            int target = source == 71 ? 77 : 73;
+            int target = source == 71 ? DatabaseFormatCatalog.CURRENT_VERSION : 73;
             Path tiny = fixture(source, directory.resolve("bsi-chain-" + source + "/tiny/source.sqlite"));
             Path grown = copyPair(tiny, directory.resolve("bsi-chain-" + source + "/grown/source.sqlite"));
             growEvents(grown);
             var ids = DatabaseMigrationChain.steps().stream().filter(step ->
                 step.sourceVersion() >= source && step.targetVersion() <= target).map(step -> step.id()).toList();
-            assertEquals(source == 71 ? 6 : 1, ids.size());
+            assertEquals(target - source, ids.size());
             int tinyWork = migrateAndMeasure(tiny, source, target, ids, false);
             int grownWork = migrateAndMeasure(grown, source, target, ids, false);
             assertNearlyConstant(tinyWork, grownWork);
