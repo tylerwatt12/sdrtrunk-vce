@@ -276,8 +276,8 @@ test('desktop administration navigation includes every grouped page and its icon
   await expect(links).toHaveText(['Computer & version', 'Receiver status', 'Application log', 'Web server log', 'Report a problem', 'Remote Support',
     'Call matching', 'Tuner allocation', 'Recording settings', 'Audio quality', 'Transcription',
     'Push setup', 'Activity settings', 'Saved data cleanup',
-    'Remote Links', 'P25 band plans', 'Display settings', 'Web accounts', 'Page access']);
-  await expect(links.locator('svg')).toHaveCount(19);
+    'Remote Links', 'Encryption keys', 'P25 band plans', 'Display settings', 'Web accounts', 'Page access']);
+  await expect(links.locator('svg')).toHaveCount(20);
   await expect(links.locator('svg:not([aria-hidden="true"])')).toHaveCount(0);
   for (const label of ['Status & support', 'Decisions engine', 'Audio & recordings', 'Alerts', 'Activity & storage',
     'Receiver configuration', 'Web interface']) {

@@ -253,7 +253,7 @@ test('administration navigation becomes a complete compact picker on mobile', as
   expect(await select.locator('option').evaluateAll((options) => options.map((option) => option.value)))
     .toEqual(['computer', 'health', 'application-log', 'web-diagnostic-log', 'support', 'remote-support', 'call-matching', 'tuner-allocation', 'recordings', 'audio-quality', 'transcription',
       'push-setup',
-      'activity', 'retained-statistics', 'remote-links', 'protocol-p25', 'display', 'users', 'access']);
+      'activity', 'retained-statistics', 'remote-links', 'encryption-keys', 'protocol-p25', 'display', 'users', 'access']);
 
   await select.selectOption('support');
   await expect(page).toHaveURL(/view=admin&tab=support/);

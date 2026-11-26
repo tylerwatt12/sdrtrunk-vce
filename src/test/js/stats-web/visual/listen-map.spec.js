@@ -96,7 +96,7 @@ test('public listener sees geographic map, trail, standard icon, and selected de
   await expect(page.getByRole('link', { name: 'Map', exact: true })).toHaveClass(/active/);
   await expect(page.locator('.listen-map-viewport')).toBeVisible();
   await expect(page.locator('.listen-map-marker img')).toHaveAttribute('src',
-    '/api/v1/listen/map/icons/fire-truck');
+    '/api/v1/listen/map/icons/fire-truck?v=2');
   await expect(page.locator('.listen-map-trails path')).toHaveCount(1);
   await expect(page.locator('.listen-map-details')).toContainText('Engine 4');
   await expect(page.locator('.listen-map-details')).toContainText('County P25');
@@ -146,7 +146,7 @@ test('delayed first locations keep both startup views bounded and unchanged refr
   await page.setViewportSize({ width: 1280, height: 900 });
   const tileRequests = await openMap(page, true, snapshot, { waitForInitialTiles: true });
   await expect(page.locator('.listen-map-marker img')).toHaveAttribute('src',
-    '/api/v1/listen/map/icons/fire-truck');
+    '/api/v1/listen/map/icons/fire-truck?v=2');
   const tileImages = page.locator('.listen-map-tiles img');
   await expect.poll(() => tileImages.evaluateAll(images =>
     images.length > 0 && images.every(image => image.complete && image.naturalWidth > 0))).toBe(true);
