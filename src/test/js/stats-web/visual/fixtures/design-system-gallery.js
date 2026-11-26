@@ -484,7 +484,7 @@ if (view === 'radio-directory') {
     }))
   }));
   const source = await fetch('/assets/app.js').then(response => response.text());
-  const names = ['uiPill', 'uiStatus', 'radioDirectoryCompare', 'radioDirectoryField',
+  const names = ['uiPill', 'uiStatus', 'channelProcessingPresentation', 'radioDirectoryCompare', 'radioDirectoryField',
     'radioDirectoryLiveLink', 'radioDirectoryReading', 'radioDirectorySiteRow',
     'radioDirectorySystemCard', 'radioDirectoryCardSection'];
   const functions = names.map(name => {
