@@ -158,6 +158,12 @@ async function expandCopyComparison(dialog) {
   if (!await group.evaluate((element) => element.open)) await group.locator('summary').click();
 }
 
+async function expectAutomaticQualityComparison(dialog) {
+  await expect(dialog.locator('.call-matching-comparison-table tbody tr')).toHaveCount(17);
+  const order = dialog.getByRole('rowheader', { name: 'Audio preference order', exact: true }).locator('..');
+  await expect(order.locator('td')).toHaveText(['Automatic quality', 'Automatic quality']);
+}
+
 test('matching status keeps wrapped labels and counter values aligned', async ({ page }, testInfo) => {
   await openApp(page);
   const status = page.locator('.call-matching-status-content');
@@ -261,7 +267,7 @@ test('administrator sees only confirmed duplicates and compares receiver copies'
   await expect(dialog).toContainText('27101');
   await expect(dialog).toContainText('1204185');
   await expect(dialog.locator('.call-matching-comparison-summary .ui-fact-row')).toHaveCount(14);
-  await expect(dialog.locator('.call-matching-comparison-table tbody tr')).toHaveCount(16);
+  await expectAutomaticQualityComparison(dialog);
   await expect(dialog.locator('.call-matching-comparison-table thead th.ui-data-table-selected-column'))
     .toHaveCount(1);
   await page.keyboard.press('Escape');
@@ -682,7 +688,7 @@ test('cursor summaries retain history, fetch comparison on demand, and stop hidd
   }
   await expect(dialog.locator('.call-matching-comparison')).toBeVisible();
   await expandCopyComparison(dialog);
-  await expect(dialog.locator('.call-matching-comparison-table tbody tr')).toHaveCount(16);
+  await expectAutomaticQualityComparison(dialog);
   await expect(dialog).toContainText('Elyria');
   await expect(dialog.locator('.call-matching-comparison-host')).toHaveAttribute('aria-busy', 'false');
   await expect(dialog.locator('.ui-feedback-loading')).toHaveCount(0);
@@ -769,7 +775,7 @@ test('paused history keeps paging, displayed fields, and copy comparison usable'
   const dialog = page.getByRole('dialog', { name: 'Matched call details' });
   await expect(dialog).toContainText('Cuyahoga Simulcast');
   await expandCopyComparison(dialog);
-  await expect(dialog.locator('.call-matching-comparison-table tbody tr')).toHaveCount(16);
+  await expectAutomaticQualityComparison(dialog);
   await page.keyboard.press('Escape');
   await expect(compare).toBeFocused();
   await expect(pager).toContainText('Page 2 of 3');

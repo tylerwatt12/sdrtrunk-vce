@@ -117,34 +117,50 @@ for (const operation of ['add', 'remove']) {
 }
 
 for (const action of ['START', 'STOP']) {
-  test(`100-channel ${action.toLowerCase()} leaves filtering, pagination and navigation responsive`, async ({ page }) => {
+  test(`100-channel ${action.toLowerCase()} leaves filtering and keyboard navigation responsive`, async ({ page }) => {
     const fixture = await installSiteStyleApplication(page);
     const channels = Array.from({ length: 100 }, (_, index) => ({
       configuration_id: `11111111-1111-4111-8111-${String(index).padStart(12, '0')}`,
       protocol: 'NBFM', protocol_id: 'nbfm', protocol_label: 'NBFM', channel_kind: 'CONVENTIONAL',
-      name: `County channel ${String(index + 1).padStart(3, '0')}`, system: 'County', site: '',
+      name: `County channel ${String(index + 1).padStart(3, '0')}`,
+      system: index < 20 ? 'Priority region' : 'County', site: '',
       frequencies_hz: [150000000 + index * 12500], processing_state: 'STOPPED', editable: true
     }));
     await page.route('**/api/v1/admin/channels', route => route.fulfill({ json: { data: { revision: 1, channels } } }));
     const held = await heldWrite(page, '**/api/v1/admin/channels/actions');
     await page.goto('/app.html?view=channel-setup');
-    await expect(page.locator('.channel-catalog-table tbody tr[data-id]')).toHaveCount(20);
+    const rows = page.locator('.channel-catalog-table tbody tr[data-id]');
+    await expect(rows).toHaveCount(100);
+    expect(await rows.evaluateAll(elements => elements.map(element => element.dataset.id)))
+      .toEqual(channels.map(channel => channel.configuration_id));
+    await expect(page.getByRole('navigation', { name: 'Channel pages', exact: true })).toHaveCount(0);
     await startHeartbeat(page);
     await page.getByRole('checkbox', { name: 'Select all matching channels', exact: true }).check();
     await page.locator('.channel-selection-bar').getByRole('button', { name: action === 'START' ? 'Start' : 'Stop', exact: true }).click();
     await expect(page.locator('.channel-admin-status')).toHaveText(`${action === 'START' ? 'Starting' : 'Stopping'} 100 channels…`);
-    await page.getByRole('searchbox', { name: 'Search channels, systems, protocols, frequencies, or alias lists' }).fill('County channel 0');
-    const next = page.getByRole('button', { name: 'Next', exact: true });
-    await next.focus();
-    await next.press('Enter');
-    await expect(page.locator('.channel-catalog-table tbody tr[data-id]')).toHaveCount(20);
+    const search = page.getByRole('searchbox', {
+      name: 'Search channels, systems, protocols, frequencies, or alias lists' });
+    await search.fill('Priority region');
+    await expect(rows).toHaveCount(20);
+    expect(await rows.evaluateAll(elements => elements.map(element => element.dataset.id)))
+      .toEqual(channels.slice(0, 20).map(channel => channel.configuration_id));
+    await search.press('ControlOrMeta+A');
+    await search.press('Backspace');
+    await expect(rows).toHaveCount(100);
+    await search.fill('Priority region');
+    await expect(rows).toHaveCount(20);
     await expect(page.locator('.channel-edit-name').first()).toBeDisabled();
-    await page.locator('a[data-view="aliases"]').evaluate(element => element.click());
+    await page.locator('.primary-nav [data-nav-group="configuration"] > summary').focus();
+    const aliases = page.locator('a[data-view="aliases"]');
+    await expect(aliases).toBeVisible();
+    await aliases.focus();
+    await expect(aliases).toBeFocused();
+    await aliases.press('Enter');
     await expect(page.locator('.alias-editor-workspace')).toBeVisible();
     await expectResponsive(page);
     expect(held.writes).toHaveLength(1);
     expect(held.writes[0]).toMatchObject({ action, revision: 1 });
-    expect(held.writes[0].configuration_ids).toHaveLength(100);
+    expect(held.writes[0].configuration_ids).toEqual(channels.map(channel => channel.configuration_id));
     held.release();
     await expect(page.locator('.alias-editor-workspace')).toBeVisible();
     expect(fixture.pageErrors).toEqual([]);
