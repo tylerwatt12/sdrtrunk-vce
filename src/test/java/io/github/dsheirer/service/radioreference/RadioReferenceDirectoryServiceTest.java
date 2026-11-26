@@ -613,8 +613,9 @@ class RadioReferenceDirectoryServiceTest
     {
         FakeGateway gateway = populatedGateway();
         gateway.blockSites(false);
+        // Keep the detail fixture saturated for the entire independent 500 ms directory-response check.
         try(RadioReferenceDirectoryService service = new RadioReferenceDirectoryService(new FakeFactory(gateway),
-            1, 1, Duration.ofMillis(250), Duration.ofMillis(100), CLOCK))
+            1, 1, Duration.ofSeconds(5), Duration.ofMillis(100), CLOCK))
         {
             service.login("user", "secret".toCharArray());
             ExecutorService callers = Executors.newFixedThreadPool(2);
@@ -630,7 +631,12 @@ class RadioReferenceDirectoryServiceTest
                     assertEquals(2, service.states(1, "", 10).items().size());
                     assertFalse(service.countries("", 10).items().isEmpty());
                 });
-                assertEquals(1, service.runtimeStatus().activeRequests());
+                // A completed directory Future can return before its worker becomes idle. Check the blocked
+                // detail work directly instead of sampling the approximate combined executor active count.
+                assertFalse(active.isDone(), "the active detail request must remain blocked until release");
+                assertFalse(waiting.isDone(), "the queued detail request must remain pending");
+                assertEquals(1, gateway.detailSiteCalls.get(), "queued detail work must not reach the gateway");
+                assertEquals(1, service.runtimeStatus().waitingRequests());
                 gateway.releaseSites.countDown();
                 active.get(1, TimeUnit.SECONDS);
                 waiting.get(1, TimeUnit.SECONDS);
