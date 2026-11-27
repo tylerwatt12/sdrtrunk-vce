@@ -20,6 +20,7 @@
 package io.github.dsheirer.health;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -70,6 +71,43 @@ public class HealthMonitorTest
         HealthMonitor monitor = collectingMonitor(channel, true);
         assertNull(monitor.getHealth().totals(0).syncLossSym());
     }
+
+    @Test
+    void delayed_control_messages_use_arrival_freshness_and_sync_loss_advances_decoder_time()
+    {
+        Channel channel = new Channel("P25 control with delayed samples");
+        channel.setDecodeConfiguration(new DecodeConfigP25Phase2());
+        HealthMonitor monitor = collectingMonitor(channel, true);
+        ChannelHealth health = monitor.getHealth();
+        health.started(4_000);
+        try
+        {
+            MacMessage first = new MacMessage(0, DataUnitID.UNSCRAMBLED_LCCH,
+                new CorrectedBinaryMessage(320), 1_000, null);
+            first.setValid(true);
+            monitor.receive(first, 4_000);
+            assertTrue(health.totals(4_000).locked(), "Three seconds of sample delay must not hide fresh decoding");
+
+            monitor.receive(new SyncLossMessage(3_001, 96, Protocol.APCO25), 6_001);
+            assertFalse(health.totals(6_001).locked(),
+                "Fresh sync-loss delivery still advances beyond the last good control unit");
+            assertEquals(48, health.totals(6_001).syncLossSym());
+
+            MacMessage recovered = new MacMessage(0, DataUnitID.UNSCRAMBLED_LCCH,
+                new CorrectedBinaryMessage(320), 4_000, null);
+            recovered.setValid(true);
+            monitor.receive(recovered, 7_000);
+            assertTrue(health.totals(7_000).locked());
+            assertEquals(2, health.totals(7_000).good());
+            assertFalse(health.totals(9_001).locked(), "Silence still expires after two seconds");
+        }
+        finally
+        {
+            health.stopped(9_001);
+            HealthRegistry.getInstance().retire(channel);
+        }
+    }
+
     @Test
     void dmr_reports_csbks_only_and_keeps_raw_integrity_separate_from_ignore_crc()
     {
