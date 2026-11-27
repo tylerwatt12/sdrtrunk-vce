@@ -25,6 +25,7 @@ import io.github.dsheirer.source.config.SourceConfigTunerMultipleFrequency;
 import io.github.dsheirer.source.tuner.Tuner;
 import io.github.dsheirer.source.tuner.TunerClass;
 import io.github.dsheirer.source.tuner.TunerController;
+import io.github.dsheirer.source.tuner.manager.ChannelSourceManager;
 import io.github.dsheirer.source.tuner.manager.DiscoveredTuner;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
 import java.util.ArrayList;
@@ -66,7 +67,7 @@ public class HealthRegistry
     private final Object mRegistrationLock = new Object();
     private final Map<String,Double> mTunerSeconds = new HashMap<>();
     private final HealthHistory mHistory = new HealthHistory();
-    private TunerManager mTunerManager;
+    private Supplier<List<DiscoveredTuner>> mAvailableTuners;
     private Supplier<List<Channel>> mConfiguredChannelsSupplier;
     private ScheduledFuture<?> mSnapshotFuture;
     private int mUnscopedReaders;
@@ -85,6 +86,12 @@ public class HealthRegistry
     {
     }
 
+    /** Worker-side inventory injection avoids constructing hardware/persistence owners in snapshot checks. */
+    HealthRegistry(Supplier<List<DiscoveredTuner>> availableTuners)
+    {
+        mAvailableTuners = availableTuners;
+    }
+
     public static HealthRegistry getInstance()
     {
         return INSTANCE;
@@ -95,7 +102,7 @@ public class HealthRegistry
      */
     public synchronized void setTunerManager(TunerManager tunerManager)
     {
-        mTunerManager = tunerManager;
+        mAvailableTuners = tunerManager != null ? tunerManager::getAvailableTuners : null;
     }
 
     /** Worker-side saved configuration view, used to release removed/replaced runtime registrations. */
@@ -258,9 +265,14 @@ public class HealthRegistry
      */
     synchronized void snapshot()
     {
+        snapshot(System.currentTimeMillis());
+    }
+
+    /** Explicit sampling time keeps elapsed-time and lifecycle checks independent of scheduler timing. */
+    synchronized void snapshot(long now)
+    {
         try
         {
-            long now = System.currentTimeMillis();
             List<ChannelHealth.Totals> channels = new ArrayList<>();
             if(mConfiguredChannelsSupplier != null)
             {
@@ -293,33 +305,41 @@ public class HealthRegistry
     }
 
     /**
-     * Tuners in use: name, kind, seconds running since the start, and frequency error left after correction.
+     * Tuners: name, kind, seconds with channels since the start, and frequency error left after correction.
      */
     private List<HealthSnapshot.RadioTotals> radios(long now)
     {
         List<HealthSnapshot.RadioTotals> radios = new ArrayList<>();
 
-        if(mTunerManager == null)
+        if(mAvailableTuners == null)
         {
             return radios;
         }
 
         double elapsed = mLastSnapshot > 0 ? Math.min(now - mLastSnapshot, MAX_SNAPSHOT_GAP_MS) / 1000.0 : 0.0;
 
-        for(DiscoveredTuner discovered: mTunerManager.getAvailableTuners())
+        for(DiscoveredTuner discovered: mAvailableTuners.get())
         {
-            if(!discovered.hasTuner())
+            try
             {
-                continue;
-            }
+                //Capture once: shutdown can clear the discovered tuner's runtime between observer reads.
+                Tuner tuner = discovered.getTuner();
+                if(tuner == null) continue;
 
-            Tuner tuner = discovered.getTuner();
-            TunerController controller = tuner.getTunerController();
-            String name = tuner.getPreferredName();
-            double seconds = mTunerSeconds.merge(name, elapsed, Double::sum);
-            Double ppm = controller != null ? ppm(controller.getMeasuredFrequencyError(), controller.getFrequency()) :
-                null;
-            radios.add(new HealthSnapshot.RadioTotals(name, kind(tuner.getTunerClass()), seconds, ppm));
+                ChannelSourceManager sources = tuner.getChannelSourceManager();
+                boolean inUse = sources != null && sources.getTunerChannelCount() > 0;
+                TunerController controller = tuner.getTunerController();
+                String name = tuner.getPreferredName();
+                String kind = kind(tuner.getTunerClass());
+                Double ppm = controller != null ?
+                    ppm(controller.getMeasuredFrequencyError(), controller.getFrequency()) : null;
+                double seconds = mTunerSeconds.merge(name, inUse ? elapsed : 0.0, Double::sum);
+                radios.add(new HealthSnapshot.RadioTotals(name, kind, seconds, ppm));
+            }
+            catch(RuntimeException exception)
+            {
+                LOGGER.debug("Node health: tuner left out of this snapshot", exception);
+            }
         }
 
         return radios;

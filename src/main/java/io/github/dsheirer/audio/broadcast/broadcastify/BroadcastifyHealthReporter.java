@@ -86,6 +86,16 @@ public class BroadcastifyHealthReporter
     /** The nodes reporting, by health report address and system ID. */
     private static final Map<String,BroadcastifyHealthReporter> NODES = new HashMap<>();
 
+    /** Reused across nodes and destination restarts; created only when the first node joins. */
+    private static class ReportingClient
+    {
+        private static final HttpClient CLIENT = HttpClient.newBuilder()
+            .version(HttpClient.Version.HTTP_2)
+            .followRedirects(HttpClient.Redirect.NORMAL)
+            .connectTimeout(Duration.ofSeconds(20))
+            .build();
+    }
+
     /**
      * A destination uploading as the node.
      */
@@ -101,6 +111,7 @@ public class BroadcastifyHealthReporter
     private volatile NodeReporter mReporter;
     private volatile List<Destination> mDestinationSnapshot = List.of();
     private volatile long mStartedAt = Long.MIN_VALUE;
+    private volatile boolean mStopped;
     private ScheduledFuture<?> mFuture;
     private boolean mToldKeys;
     private boolean mToldNotServing;
@@ -148,11 +159,8 @@ public class BroadcastifyHealthReporter
         {
             int systemId = configuration.getSystemID();
             BroadcastifyHealthReporter node = NODES.computeIfAbsent(key(url, systemId), key ->
-                new BroadcastifyHealthReporter(url, systemId, HttpClient.newBuilder()
-                    .version(HttpClient.Version.HTTP_2)
-                    .followRedirects(HttpClient.Redirect.NORMAL)
-                    .connectTimeout(Duration.ofSeconds(20))
-                    .build(), new NodeReporter(String.valueOf(systemId))));
+                new BroadcastifyHealthReporter(url, systemId, ReportingClient.CLIENT,
+                    new NodeReporter(String.valueOf(systemId))));
             node.add(configuration, aliasModel);
             node.start();
             return node;
@@ -248,6 +256,7 @@ public class BroadcastifyHealthReporter
 
     private synchronized void stop()
     {
+        mStopped = true;
         if(mFuture != null)
         {
             mFuture.cancel(true);
@@ -342,6 +351,8 @@ public class BroadcastifyHealthReporter
      */
     void check(HealthHistory history)
     {
+        if(mStopped) return;
+
         try
         {
             NodeReporter reporter = mReporter;
@@ -434,6 +445,8 @@ public class BroadcastifyHealthReporter
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofByteArray(payload))
                 .build();
+            //A scheduled check can finish constructing its report after its last destination has left.
+            if(mStopped || reporter != mReporter) return;
             response = mHttpClient.send(request, HttpResponse.BodyHandlers.limiting(
                 HttpResponse.BodyHandlers.ofString(), MAX_ANSWER_BYTES));
         }
@@ -444,9 +457,13 @@ public class BroadcastifyHealthReporter
         }
         catch(Exception e)
         {
-            unreachable(reporter, now, e.getClass().getSimpleName());
+            if(!mStopped && reporter == mReporter)
+                unreachable(reporter, now, e.getClass().getSimpleName());
             return;
         }
+
+        //Cancellation can race a completed response; an old request must not change the current schedule.
+        if(mStopped || reporter != mReporter) return;
 
         int status = response.statusCode();
         String body = response.body() != null ? response.body().trim() : "";

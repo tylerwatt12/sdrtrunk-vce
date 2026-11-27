@@ -57,11 +57,13 @@ class DMRTrafficChannelManagerCallOutcomeTest
         private DMRTrafficChannelManager mManager;
         private boolean mNoTuner;
         private int mRequests;
+        private Channel mLastChannel;
 
         @Subscribe
         public void start(ChannelStartProcessingRequest request)
         {
             mRequests++;
+            mLastChannel = request.getChannel();
 
             if(mNoTuner)
             {
@@ -142,6 +144,25 @@ class DMRTrafficChannelManagerCallOutcomeTest
         assertEquals(1, site.calls().getStarted());
         assertEquals(1, site.calls().get(CallOutcome.NO_SOURCE), "rejected while it was requested");
         assertEquals(0, site.calls().get(CallOutcome.RECORDED));
+    }
+
+    @Test
+    void a_rejected_call_leaves_the_other_timeslots_completed_call_recorded()
+    {
+        Site site = site("DMR rejected after recorded sister timeslot", 2, false);
+        site.grant(1, 2, FREQUENCY_1, 92, 1_000);
+        site.manager().getChannelEventListener().receive(new ChannelEvent(site.starter().mLastChannel,
+            ChannelEvent.Event.NOTIFICATION_PROCESSING_STOP));
+        assertEquals(1, site.calls().get(CallOutcome.RECORDED));
+
+        site.starter().mNoTuner = true;
+        site.grant(1, 1, FREQUENCY_1, 91, 10_000);
+        site.manager().reset();
+        assertEquals(2, site.starter().mRequests);
+        assertEquals(2, site.calls().getStarted());
+        assertEquals(1, site.calls().get(CallOutcome.RECORDED), "the earlier completed timeslot stays recorded");
+        assertEquals(1, site.calls().get(CallOutcome.NO_SOURCE), "only the newly rejected call has no tuner");
+        assertEquals(0, site.calls().totals().losses());
     }
 
     @Test

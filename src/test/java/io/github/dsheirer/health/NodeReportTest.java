@@ -101,6 +101,31 @@ public class NodeReportTest
     }
 
     @Test
+    void interrupted_conventional_transmission_keeps_open_time_without_an_extra_completed_call()
+    {
+        ChannelHealth fm = new ChannelHealth(ChannelHealthTest.info(104, "fm"));
+        fm.setFrequency(155_520_000);
+        fm.started(SINCE);
+        HealthSnapshot before = snapshot(SINCE, fm);
+        fm.opened(SINCE + 1_000);
+        fm.closed(SINCE + 2_000);
+        fm.opened(SINCE + 3_000);
+        fm.deliveredSamples(5_000, 1_000);
+        fm.stopped(SINCE + 5_000);
+
+        JsonObject report = NodeReport.build(new NodeReporter.Window(before, snapshot(SINCE + 6_000, fm), false, 0),
+            node(), "test", info -> true);
+        JsonObject channel = report.getAsJsonArray("channels").get(0).getAsJsonObject();
+        assertEquals(java.util.Set.of("hz", "mode", "name", "heardS", "opens", "openS", "calls"),
+            channel.keySet(), "the existing conventional report contract is unchanged");
+        assertEquals(2, channel.get("opens").getAsLong());
+        assertEquals(1, channel.get("calls").getAsLong());
+        assertEquals(3.0, channel.get("openS").getAsDouble());
+        assertEquals(5.0, channel.get("heardS").getAsDouble());
+        assertFalse(report.has("sites"));
+    }
+
+    @Test
     void a_report_is_what_changed_for_the_nodes_channels_alone()
     {
         HealthSnapshot[] s = twoSnapshots();

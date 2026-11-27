@@ -95,8 +95,32 @@ public class ChannelHealthTest
 
         health.stopped(13_000);
         totals = health.totals(20_000);
-        assertEquals(2, totals.closes(), "stopping closes an open channel");
+        assertEquals(1, totals.closes(), "stopping cuts off an open transmission without completing it");
+        assertEquals(6_000, totals.openMs(), "the interrupted transmission still counts up to the stop");
         assertEquals(13_000, totals.runningMs(), "not running after it stopped");
+    }
+
+    @Test
+    void interrupted_transmission_is_not_completed_by_late_close_or_repeated_stop()
+    {
+        ChannelHealth health = new ChannelHealth(info(20, "fm"));
+        health.started(0);
+        health.opened(1_000);
+        health.stopped(4_000);
+        health.closed(4_500); //A queued close after shutdown must not complete the interrupted transmission.
+        health.stopped(5_000);
+        assertEquals(0, health.totals(5_000).closes());
+        assertEquals(3_000, health.totals(5_000).openMs());
+
+        health.started(6_000);
+        health.opened(6_500);
+        health.closed(8_000);
+        health.stopped(9_000);
+        ChannelHealth.Totals totals = health.totals(10_000);
+        assertEquals(2, totals.opens());
+        assertEquals(1, totals.closes(), "only the transmission completed after restart counts");
+        assertEquals(4_500, totals.openMs());
+        assertEquals(7_000, totals.runningMs());
     }
 
     @Test
@@ -354,7 +378,7 @@ public class ChannelHealthTest
         assertEquals(200, recovered.lockedMs());
         assertEquals(300, recovered.runningMs());
         assertEquals(200, recovered.openMs());
-        assertEquals(1, recovered.closes());
+        assertEquals(0, recovered.closes(), "the interrupted transmission remains incomplete after timing recovers");
     }
 
     @Test

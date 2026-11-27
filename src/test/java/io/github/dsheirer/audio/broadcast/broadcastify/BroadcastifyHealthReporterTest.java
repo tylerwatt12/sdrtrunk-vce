@@ -54,6 +54,12 @@ import java.net.http.HttpClient;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
@@ -79,6 +85,8 @@ public class BroadcastifyHealthReporterTest
     private final AtomicInteger mStatus = new AtomicInteger(200);
     private final AtomicReference<String> mAnswer = new AtomicReference<>("{\"ok\":true,\"nextS\":300}");
     private final AtomicReference<String> mRetryAfter = new AtomicReference<>();
+    private final AtomicReference<CountDownLatch> mResponseGate = new AtomicReference<>();
+    private final CountDownLatch mRequestArrived = new CountDownLatch(1);
 
     @BeforeEach
     void serve() throws Exception
@@ -89,6 +97,25 @@ public class BroadcastifyHealthReporterTest
             synchronized(mReceived)
             {
                 mReceived.add(JsonParser.parseString(body).getAsJsonObject());
+            }
+            mRequestArrived.countDown();
+            CountDownLatch responseGate = mResponseGate.get();
+            if(responseGate != null)
+            {
+                try
+                {
+                    if(!responseGate.await(5, TimeUnit.SECONDS))
+                    {
+                        exchange.close();
+                        return;
+                    }
+                }
+                catch(InterruptedException e)
+                {
+                    Thread.currentThread().interrupt();
+                    exchange.close();
+                    return;
+                }
             }
             if(mRetryAfter.get() != null)
             {
@@ -550,7 +577,7 @@ public class BroadcastifyHealthReporterTest
     }
 
     @Test
-    void destinations_share_their_systems_reporter_while_any_of_them_runs()
+    void destinations_share_their_systems_reporter_while_any_of_them_runs() throws Exception
     {
         BroadcastifyCallConfiguration downtown = configuration();
         BroadcastifyCallConfiguration county = countyCalls();
@@ -565,6 +592,9 @@ public class BroadcastifyHealthReporterTest
         {
             assertSame(first, second, "one system: one reporter");
             assertNotSame(first, other, "another system: its own");
+            var client = BroadcastifyHealthReporter.class.getDeclaredField("mHttpClient");
+            client.setAccessible(true);
+            assertSame(client.get(first), client.get(other), "different nodes share the HTTP client");
             NodeReporter schedule = first.getSchedule();
 
             //The Downtown destination restarts while the County one goes on: the same reporter and schedule.
@@ -577,6 +607,7 @@ public class BroadcastifyHealthReporterTest
             first.leave(county);
             BroadcastifyHealthReporter again = BroadcastifyHealthReporter.join(downtown, aliases());
             assertNotSame(first, again);
+            assertSame(client.get(first), client.get(again), "rejoining does not create another HTTP client");
             again.leave(downtown);
         }
         finally
@@ -621,6 +652,96 @@ public class BroadcastifyHealthReporterTest
         mResponseTime.set(responseAt);
         node.check(history);
         assertEquals(responseAt + 60_000, schedule.getNextAt());
+    }
+
+    @Test
+    void a_check_stopped_while_constructing_its_report_does_not_send() throws Exception
+    {
+        CountDownLatch constructing = new CountDownLatch(1);
+        CountDownLatch resume = new CountDownLatch(1);
+        AtomicBoolean pause = new AtomicBoolean();
+        BroadcastifyCallConfiguration configuration = configure(new BroadcastifyCallConfiguration()
+        {
+            @Override
+            public String getApiKey()
+            {
+                if(pause.get())
+                {
+                    constructing.countDown();
+                    try
+                    {
+                        if(!resume.await(5, TimeUnit.SECONDS)) throw new IllegalStateException("report not resumed");
+                    }
+                    catch(InterruptedException e)
+                    {
+                        Thread.currentThread().interrupt();
+                        throw new IllegalStateException(e);
+                    }
+                }
+                return super.getApiKey();
+            }
+        });
+        BroadcastifyHealthReporter node = reporter(configuration, schedule(97));
+        pause.set(true);
+        try(ExecutorService worker = Executors.newSingleThreadExecutor())
+        {
+            Future<?> check = worker.submit(() -> node.check(history()));
+            try
+            {
+                assertTrue(constructing.await(5, TimeUnit.SECONDS));
+                node.leave(configuration);
+            }
+            finally
+            {
+                resume.countDown();
+            }
+            check.get(5, TimeUnit.SECONDS);
+            assertTrue(mReceived.isEmpty(), "the stale check must stop before HTTP dispatch");
+            node.check(history());
+            assertTrue(mReceived.isEmpty(), "a stopped node remains stopped");
+        }
+    }
+
+    @Test
+    void stopping_does_not_wait_for_a_response_and_the_old_response_is_ignored() throws Exception
+    {
+        CountDownLatch releaseResponse = new CountDownLatch(1);
+        mResponseGate.set(releaseResponse);
+        mStatus.set(403);
+        NodeReporter oldSchedule = schedule(98);
+        BroadcastifyCallConfiguration configuration = configuration();
+        BroadcastifyHealthReporter old = reporter(configuration, oldSchedule);
+        try(ExecutorService workers = Executors.newFixedThreadPool(2))
+        {
+            Future<?> check = workers.submit(() -> old.check(history()));
+            try
+            {
+                assertTrue(mRequestArrived.await(5, TimeUnit.SECONDS));
+                Future<?> stop = workers.submit(() -> old.leave(configuration));
+                stop.get(1, TimeUnit.SECONDS);
+                assertFalse(check.isDone(), "the server still holds the dispatched request");
+
+                BroadcastifyHealthReporter rejoined = BroadcastifyHealthReporter.join(configuration, aliases());
+                try
+                {
+                    assertNotSame(old, rejoined);
+                    NodeReporter newSchedule = rejoined.getSchedule();
+                    releaseResponse.countDown();
+                    check.get(5, TimeUnit.SECONDS);
+                    assertFalse(oldSchedule.isStopped(), "the stopped reporter ignores the old refusal");
+                    assertSame(newSchedule, rejoined.getSchedule());
+                    assertFalse(newSchedule.isStopped(), "the new node is unaffected by the old response");
+                }
+                finally
+                {
+                    rejoined.leave(configuration);
+                }
+            }
+            finally
+            {
+                releaseResponse.countDown();
+            }
+        }
     }
 
     @Test

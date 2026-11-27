@@ -223,7 +223,8 @@ public class ChannelHealth
                 mRunningMs.addAndGet(Math.max(0, now - since));
             }
             finishLock(now, -mCollectionEpoch.get() - 1);
-            finishOpen(now, true, -mCollectionEpoch.get() - 2);
+            //Stopping cuts off an open transmission; its duration counts, but it did not complete.
+            finishOpen(now, false, -mCollectionEpoch.get() - 2);
         }
         finally
         {

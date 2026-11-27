@@ -298,8 +298,13 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
         mWuidConfigurationId = parentChannel.getConfigurationId();
         mGrantAllocationEnabled = !(parentChannel.getSourceConfiguration() instanceof SourceConfigRemote);
         //A mirrored channel is measured by its sender. It must not enter this node's reporting scope or windows.
-        mHealth = mGrantAllocationEnabled ? HealthRegistry.getInstance().channel(parentChannel) : null;
-        mCallTally = mGrantAllocationEnabled ? HealthRegistry.getInstance().calls(parentChannel) : null;
+        //Conventional P25 also owns a private manager for voice identity and lifecycle, but its sample/squelch
+        //monitor supplies conventional coverage instead of trunked grant totals.
+        boolean reportsTrunkedCalls = mGrantAllocationEnabled &&
+            (parentChannel.getDecodeConfiguration() instanceof DecodeConfigP25Phase1 ||
+                parentChannel.getDecodeConfiguration() instanceof DecodeConfigP25Phase2);
+        mHealth = reportsTrunkedCalls ? HealthRegistry.getInstance().channel(parentChannel) : null;
+        mCallTally = reportsTrunkedCalls ? HealthRegistry.getInstance().calls(parentChannel) : null;
         mVoiceDecryptionModuleLoaded = Objects.requireNonNull(voiceDecryptionModuleLoaded);
         mBandplanOverrideRegistry = bandplanOverrideRegistry != null ? bandplanOverrideRegistry :
             P25BandplanOverrideRegistry.empty();
@@ -2770,7 +2775,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
 
     /**
      * Calls this control channel announced and what became of each, for node health reports, or null when it doesn't
-     * start traffic channels itself (a remote mirror: the node that does counts them).
+     * report trunked grants (a conventional decoder, or a remote mirror whose sender counts them).
      */
     private CallTally calls()
     {

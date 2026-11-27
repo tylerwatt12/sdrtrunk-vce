@@ -3,7 +3,11 @@ package io.github.dsheirer.health;
 
 import com.google.gson.JsonObject;
 import io.github.dsheirer.controller.channel.Channel;
+import io.github.dsheirer.module.decode.p25.P25TrafficChannelManager;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Conventional;
+import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
+import io.github.dsheirer.module.decode.p25.phase1.P25P1DecoderState;
+import io.github.dsheirer.module.decode.p25.phase2.DecodeConfigP25Phase2;
 import io.github.dsheirer.sample.complex.ComplexSamples;
 import io.github.dsheirer.source.SourceEvent;
 import io.github.dsheirer.source.config.SourceConfigTuner;
@@ -102,30 +106,89 @@ class NodeHealthReportingRegressionTest
     }
 
     @Test
-    void explicit_conventional_p25_configuration_reports_delivered_samples_without_trunked_calls()
+    void actual_conventional_p25_decoder_reports_delivered_samples_without_trunked_calls()
     {
         Channel configured = new Channel("Conventional P25");
         configured.setDecodeConfiguration(new DecodeConfigP25Conventional());
         SourceConfigTuner source = new SourceConfigTuner();
         source.setFrequency(155_520_000);
         configured.setSourceConfiguration(source);
-        HealthMonitor monitor = new HealthMonitor(configured);
-        ChannelHealth health = monitor.getHealth();
-        health.setCollecting(true, START);
-        health.started(START);
-        monitor.getSourceEventListener().receive(SourceEvent.sampleRateChange(1_000));
-        HealthSnapshot before = snapshot(health, START + 1000);
-        monitor.getComplexSamplesListener().receive(new ComplexSamples(new float[2000], new float[2000], START + 1000));
+        try
+        {
+            //DecoderFactory supplies no shared manager for conventional P25; the state creates its private one.
+            new P25P1DecoderState(configured, null);
+            HealthMonitor monitor = new HealthMonitor(configured);
+            ChannelHealth health = monitor.getHealth();
+            health.setCollecting(true, START);
+            health.started(START);
+            monitor.getSourceEventListener().receive(SourceEvent.sampleRateChange(1_000));
+            HealthSnapshot before = snapshot(health, START + 1000);
+            monitor.getComplexSamplesListener().receive(new ComplexSamples(new float[2000], new float[2000], START + 1000));
 
-        JsonObject report = build(before, snapshot(health, START + 3000));
-        assertNotNull(report, "The explicit conventional P25 decoder must be included in health coverage");
-        assertFalse(report.has("sites"), "A conventional decoder must not invent trunked-site call totals");
-        JsonObject channel = report.getAsJsonArray("channels").get(0).getAsJsonObject();
-        assertEquals("p25", channel.get("mode").getAsString());
-        assertEquals(155_520_000, channel.get("hz").getAsLong());
-        assertEquals(2.0, channel.get("heardS").getAsDouble());
-        assertNull(health.totals(START + 3000).calls());
-        HealthRegistry.getInstance().retire(configured);
+            JsonObject report = build(before, snapshot(health, START + 3000));
+            assertNotNull(report, "The actual conventional P25 decoder must be included in health coverage");
+            assertFalse(report.has("sites"), "A conventional decoder must not invent trunked-site call totals");
+            JsonObject channel = report.getAsJsonArray("channels").get(0).getAsJsonObject();
+            assertEquals("p25", channel.get("mode").getAsString());
+            assertEquals(155_520_000, channel.get("hz").getAsLong());
+            assertEquals(2.0, channel.get("heardS").getAsDouble());
+            assertFalse(health.countsCalls());
+            assertNull(health.totals(START + 3000).calls());
+        }
+        finally
+        {
+            HealthRegistry.getInstance().retire(configured);
+        }
+    }
+
+    @Test
+    void actual_trunked_p25_managers_report_deaf_sites_before_the_first_grant()
+    {
+        for(boolean phase2: List.of(false, true))
+        {
+            Channel configured = new Channel("Deaf P25 " + (phase2 ? "Phase 2" : "Phase 1"));
+            if(phase2)
+            {
+                DecodeConfigP25Phase2 configuration = new DecodeConfigP25Phase2();
+                configuration.setTrafficChannelPoolSize(0);
+                configured.setDecodeConfiguration(configuration);
+            }
+            else
+            {
+                DecodeConfigP25Phase1 configuration = new DecodeConfigP25Phase1();
+                configuration.setTrafficChannelPoolSize(0);
+                configured.setDecodeConfiguration(configuration);
+            }
+            SourceConfigTuner source = new SourceConfigTuner();
+            source.setFrequency(851_000_000);
+            configured.setSourceConfiguration(source);
+            P25TrafficChannelManager manager = new P25TrafficChannelManager(configured);
+            try
+            {
+                ChannelHealth health = HealthRegistry.getInstance().existingChannel(configured);
+                assertNotNull(health, "A trunked manager establishes coverage during construction");
+                HealthMonitor monitor = new HealthMonitor(configured);
+                assertSame(health, monitor.getHealth(), "The normal monitor shares the manager's startup coverage");
+                health.setCollecting(true, START);
+                health.started(START);
+                HealthSnapshot before = snapshot(health, START + 1000);
+                JsonObject report = build(before, snapshot(health, START + 10_000));
+                assertNotNull(report, "A site with no decoded grants must still report its deaf control channel");
+                assertFalse(report.has("channels"));
+                JsonObject site = report.getAsJsonArray("sites").get(0).getAsJsonObject();
+                assertEquals("p25", site.get("protocol").getAsString());
+                assertEquals(0, site.getAsJsonObject("cc").get("good").getAsLong());
+                assertEquals(0, site.getAsJsonObject("cc").get("bad").getAsLong());
+                assertEquals(0, site.getAsJsonObject("calls").get("started").getAsLong());
+                assertEquals(0, site.getAsJsonObject("calls").get("recorded").getAsLong());
+                assertTrue(health.countsCalls());
+            }
+            finally
+            {
+                manager.stop();
+                HealthRegistry.getInstance().retire(configured);
+            }
+        }
     }
 
     @Test
