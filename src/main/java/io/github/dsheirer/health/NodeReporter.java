@@ -396,22 +396,26 @@ public class NodeReporter
         mBackoff = null;
         long end = Math.max(mDeliveredTo[0], completedAt);
 
-        if(nextS != null && Double.isFinite(nextS))
+        boolean interval = nextS != null && Double.isFinite(nextS);
+
+        if(interval)
         {
             mInterval = Math.max(MIN_INTERVAL_MS, Math.min(MAX_INTERVAL_MS, (long)(nextS * 1000)));
         }
 
         if(flushed())
         {
-            //Sent between slots: the next keeps to the node's slot.
+            //Sent between slots, for a restart: the next keeps to the node's slot.
             aim(mSlot != null ? mSlot : end + mInterval, end + MIN_INTERVAL_MS);
-            return;
         }
-
-        //The next slot is this one's plus the interval, not this report's end (or receipt) plus the interval: sends
-        //are moved by jitter and made late by the time they wait for, and counting from the end would add both to
-        //every one, so reports would drift later and later.
-        advance(end + MIN_INTERVAL_MS);
+        else if(interval)
+        {
+            aim(end + mInterval, end + MIN_INTERVAL_MS);
+        }
+        else
+        {
+            advance(end + MIN_INTERVAL_MS);
+        }
     }
 
     /**
