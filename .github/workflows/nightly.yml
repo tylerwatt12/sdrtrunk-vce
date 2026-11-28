@@ -122,7 +122,7 @@ jobs:
       - name: Build and verify all six packages
         run: >-
           ./gradlew --configuration-cache clean runtimeZipAll
-          -PprojectVersion=nightly -PupdateTrack=nightly -PupdateBuild=${UPDATE_BUILD}
+          -PprojectVersion=nightly -PupdateTrack=nightly -PupdateBuild=${UPDATE_BUILD} -PbuildCommit=${GITHUB_SHA:0:7}
           -PradioSystemCatalogFile="${{ runner.temp }}/radio-system-catalog/dsdplus.networks"
       - name: Record the exact candidate and file checksums
         shell: bash
