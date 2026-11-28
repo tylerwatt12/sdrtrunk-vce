@@ -248,10 +248,70 @@ class NodeHealthReportingRegressionTest
         reporter.delivered(null);
         HealthSnapshot newlyEnabledSource = snapshot(health, START + 310_000);
         history.add(newlyEnabledSource);
-        reporter.beginCollected(newlyEnabledSource);
+        reporter.restarted(history, newlyEnabledSource, false);
         history.add(snapshot(health, START + 600_000));
         assertEquals(newlyEnabledSource.timeMs(), reporter.window(history).startMs());
         assertTrue(reporter.window(history).gap());
     }
 
+    /**
+     * A channel re-created when it restarts (a new channel ID for the same saved channel) starts being measured afresh
+     * partway through a window.  What was measured before it is sent at once, in a report ending at the last snapshot
+     * before the restart, and the next window follows on from there without a gap, the new channel counted from its
+     * own start.  Nothing measured is dropped.
+     */
+    @Test
+    void a_channel_recreated_mid_window_sends_what_came_before_and_carries_on_without_a_gap()
+    {
+        ChannelHealth old = site();
+        HealthHistory history = new HealthHistory();
+        HealthSnapshot first = snapshot(old, START + 1000);
+        HealthSnapshot delivered = snapshot(old, START + 300_000);
+        history.add(first);
+        history.add(delivered);
+        NodeReporter reporter = new NodeReporter(5);
+        reporter.begin(first);
+        reporter.isDue(delivered);
+        assertNotNull(reporter.window(history));
+        reporter.delivered(null);
+
+        old.getCalls().count(CallOutcome.RECORDED);
+        HealthSnapshot beforeRestart = snapshot(old, START + 390_000);
+        history.add(beforeRestart);
+
+        ChannelHealth.ChannelInfo again = new ChannelHealth.ChannelInfo(202, ChannelHealthTest.configurationId(101), 1,
+            "Channel 101", "System", "Site 101", "List", "p25", 4800);
+        ChannelHealth recreated = new ChannelHealth(again, false);
+        recreated.setFrequency(851_000_000);
+        recreated.setCallsCounted();
+        recreated.setCollecting(true, START + 400_000);
+        recreated.started(START + 400_000);
+        HealthSnapshot restart = snapshot(recreated, START + 400_000);
+        history.add(restart);
+
+        reporter.restarted(history, restart, true);
+        assertTrue(reporter.isDue(restart), "what came before the restart goes now");
+        NodeReporter.Window flush = reporter.window(history);
+        assertEquals(delivered.timeMs(), flush.startMs());
+        assertEquals(beforeRestart.timeMs(), flush.now().timeMs());
+        assertFalse(flush.gap());
+        assertFalse(NodeReport.incomplete(flush, info -> true));
+        JsonObject flushed = NodeReport.build(flush, new JsonObject(), "test", info -> true);
+        assertEquals(1, flushed.getAsJsonArray("sites").get(0).getAsJsonObject().getAsJsonObject("calls")
+            .get("recorded").getAsInt());
+        reporter.delivered(null);
+        assertTrue(reporter.getNextAt() >= beforeRestart.timeMs() + NodeReporter.MIN_INTERVAL_MS);
+
+        reporter.restarted(history, restart, true); //Seen again on the next check: already handled
+        recreated.getCalls().count(CallOutcome.RECORDED);
+        HealthSnapshot later = snapshot(recreated, START + 600_000);
+        history.add(later);
+        NodeReporter.Window next = reporter.window(history);
+        assertEquals(beforeRestart.timeMs(), next.startMs(), "follows on from the report before");
+        assertFalse(next.gap());
+        assertFalse(NodeReport.incomplete(next, info -> true), "the new channel counts from its own start");
+        JsonObject report = NodeReport.build(next, new JsonObject(), "test", info -> true);
+        assertEquals(1, report.getAsJsonArray("sites").get(0).getAsJsonObject().getAsJsonObject("calls")
+            .get("recorded").getAsInt());
+    }
 }

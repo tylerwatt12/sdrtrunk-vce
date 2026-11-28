@@ -374,6 +374,29 @@ public class BroadcastifyHealthReporter
                 reporter.beginCollected(history.atOrAfter(collectedSince));
             }
 
+            //A channel feeding the node started being measured since the last report (restarted, or added).
+            Long deliveredTo = reporter.getDeliveredTo();
+
+            if(deliveredTo != null)
+            {
+                long restartedAt = Long.MIN_VALUE;
+                boolean fresh = true;
+
+                for(ChannelHealth.Totals totals: now.channels())
+                {
+                    if(totals.collecting() && totals.collectionSinceMs() > deliveredTo && feeds(totals.info()))
+                    {
+                        restartedAt = Math.max(restartedAt, totals.collectionSinceMs());
+                        fresh &= totals.collectionEpoch() <= 1;
+                    }
+                }
+
+                if(restartedAt != Long.MIN_VALUE)
+                {
+                    reporter.restarted(history, history.atOrAfter(restartedAt), fresh);
+                }
+            }
+
             if(reporter.isStopped())
             {
                 return;

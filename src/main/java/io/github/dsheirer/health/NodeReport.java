@@ -192,7 +192,10 @@ public class NodeReport
                 return true;
             }
             ChannelHealth.Totals baseline = window.base() != null ? window.base().channel(current.info().channelId()) : null;
-            if(feeds.test(current.info()) && current.collecting() &&
+            //A channel first measured during the window (added, or re-created when it restarted) counts from its own
+            //start: its totals hold nothing from before, so none of the window's earlier time is claimed for it.
+            boolean fresh = baseline == null && current.collectionEpoch() <= 1;
+            if(feeds.test(current.info()) && current.collecting() && !fresh &&
                 ((baseline != null && baseline.collectionEpoch() != current.collectionEpoch()) ||
                     window.startMs() < current.collectionSinceMs()))
             {
@@ -213,7 +216,8 @@ public class NodeReport
                     }
                 }
             }
-            if(feeds.test(current.info()) && window.base() != null && current.info().configurationId() != null)
+            if(feeds.test(current.info()) && !fresh && window.base() != null &&
+                current.info().configurationId() != null)
             {
                 for(ChannelHealth.Totals before: window.base().channels())
                 {
