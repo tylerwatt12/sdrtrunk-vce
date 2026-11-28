@@ -411,7 +411,7 @@ public class BroadcastifyHealthReporter
             JsonObject node = new JsonObject();
             node.addProperty("systemId", mSystemId);
             node.addProperty("apiKey", destinations.getFirst().configuration().getApiKey());
-            JsonObject report = NodeReport.build(window, node, ApplicationInfo.getVersion(),
+            JsonObject report = NodeReport.build(window, node, ApplicationInfo.getReportVersion(),
                 info -> feeding.contains(info.channelId()));
 
             if(report != null)

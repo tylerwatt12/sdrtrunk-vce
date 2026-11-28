@@ -20,6 +20,7 @@ public final class ApplicationInfo
     private static final String BUILD_TIMESTAMP = "Build-Timestamp";
     private static final String UPDATE_TRACK = "Update-Track";
     private static final String UPDATE_BUILD = "Update-Build";
+    private static final String BUILD_COMMIT = "Build-Commit";
     private static final Manifest MANIFEST = manifest();
     private static final String DISPLAY_NAME = createDisplayName();
 
@@ -50,6 +51,50 @@ public final class ApplicationInfo
     public static String getUpdateBuild()
     {
         return manifestValue(UPDATE_BUILD);
+    }
+
+    /**
+     * The commit this build was made from (a nightly's), or null when not known.
+     */
+    public static String getBuildCommit()
+    {
+        return manifestValue(BUILD_COMMIT);
+    }
+
+    /**
+     * The version as reports to services give it: a release's number, or for a nightly, which build:
+     * nightly-20261128-4a00249 (its build date and commit), so a service can tell one nightly from another.
+     */
+    public static String getReportVersion()
+    {
+        return reportVersion(getVersion(), getBuildTimestamp(), getBuildCommit());
+    }
+
+    /**
+     * @param version from the manifest (nightly for a nightly)
+     * @param buildTimestamp from the manifest, starting yyyy-MM-dd, or null
+     * @param commit the build's commit, or null or blank
+     */
+    static String reportVersion(String version, String buildTimestamp, String commit)
+    {
+        if(version == null || !version.contains("nightly"))
+        {
+            return version;
+        }
+
+        StringBuilder which = new StringBuilder(version);
+
+        if(buildTimestamp != null && buildTimestamp.matches("\\d{4}-\\d{2}-\\d{2}.*"))
+        {
+            which.append('-').append(buildTimestamp.substring(0, 10).replace("-", ""));
+        }
+
+        if(commit != null && commit.matches("[0-9a-f]{7,40}"))
+        {
+            which.append('-').append(commit, 0, 7);
+        }
+
+        return which.toString();
     }
 
     private static String createDisplayName()
