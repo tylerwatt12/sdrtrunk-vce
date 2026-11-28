@@ -206,7 +206,7 @@ public class HealthMonitor extends Module implements IMessageListener, ISquelchS
         }
         if(message instanceof TSBKMessage tsbk)
         {
-            mHealth.control(epoch, "p25", tsbk.isValid(), tsbk.getTimestamp());
+            mHealth.control(epoch, "p25", tsbk.isValid(), tsbk.getTimestamp(), System.currentTimeMillis());
 
             if(tsbk.isValid())
             {
@@ -221,7 +221,7 @@ public class HealthMonitor extends Module implements IMessageListener, ISquelchS
             if(key != mLastLcchKey)
             {
                 mLastLcchKey = key;
-                mHealth.control(epoch, "p25", mac.isValid(), mac.getTimestamp());
+                mHealth.control(epoch, "p25", mac.isValid(), mac.getTimestamp(), System.currentTimeMillis());
             }
         }
         else if(mDecoderType == DecoderType.DMR && message instanceof CSBKMessage data)
@@ -229,16 +229,17 @@ public class HealthMonitor extends Module implements IMessageListener, ISquelchS
             //Only CSBK control units belong in this count, not voice/data/idle bursts. The operator's Ignore CRC
             //setting does not change the raw integrity measurement sent to the provider.
             boolean valid = data.getSlotType() != null && data.getSlotType().isValid() && data.isValid();
-            mHealth.control(epoch, "dmr", valid, data.getTimestamp());
+            mHealth.control(epoch, "dmr", valid, data.getTimestamp(), System.currentTimeMillis());
         }
         else if(mDecoderType == DecoderType.NXDN && message instanceof NXDNMessage nxdn &&
             nxdn.isRfFrameQualityCarrier() && isOutboundCac(nxdn.getLICH()))
         {
-            mHealth.control(epoch, "nxdn", nxdn.isRfFrameValid(), nxdn.getTimestamp());
+            mHealth.control(epoch, "nxdn", nxdn.isRfFrameValid(), nxdn.getTimestamp(), System.currentTimeMillis());
         }
         else if(message instanceof SyncLossMessage syncLoss && mProtocol != null)
         {
-            mHealth.syncLoss(epoch, Math.max(0, syncLoss.getBitsProcessed()) / BITS_PER_SYMBOL);
+            mHealth.syncLoss(epoch, Math.max(0, syncLoss.getBitsProcessed()) / BITS_PER_SYMBOL,
+                syncLoss.getTimestamp(), System.currentTimeMillis());
         }
     }
 

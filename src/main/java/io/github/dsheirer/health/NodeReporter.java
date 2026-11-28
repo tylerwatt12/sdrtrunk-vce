@@ -90,6 +90,12 @@ public class NodeReporter
     private volatile boolean mStopped;
     private boolean mCollectionGap;
     private boolean mCollectionBaseline;
+    /** The latest collection restart handled, Unix milliseconds. */
+    private long mRestartHandled = Long.MIN_VALUE;
+    /** A report due now, ending at the last snapshot before a channel's collection restarted. */
+    private HealthSnapshot mFlushTo;
+    /** Where the window after that report starts, with gap, when a channel's time went unmeasured; or null. */
+    private HealthSnapshot mResumeAt;
 
     /**
      * @param key something of the node's own (its ID), to spread nodes that start together
@@ -145,13 +151,52 @@ public class NodeReporter
                 if(mNextAt != null) mNextAt = Math.max(mNextAt, first.timeMs() + FIRST_AFTER_MS);
             }
         }
-        else if(mDeliveredTo[1] == first.sinceMs() && first.timeMs() > mDeliveredTo[0])
+        //After a report, a channel measured afresh is restarted()'s: what was measured before is sent, not dropped.
+    }
+
+    /**
+     * A channel feeding the node started being measured at a snapshot after the last report's end (it restarted, or
+     * was added).  What was measured before is sent now, in a report ending at the snapshot before, rather than
+     * dropped.  The window after it follows on without a gap when the restarted channels are counted from their own
+     * start (fresh); otherwise it starts where they were measured again, with gap.
+     * @param history the snapshots
+     * @param first the snapshot the channels' measurement started at
+     * @param fresh true when every restarted channel's totals count only from its start (a new channel, or a channel
+     *              re-created when it restarted), so none of its time is claimed from before
+     */
+    public void restarted(HealthHistory history, HealthSnapshot first, boolean fresh)
+    {
+        if(first == null || mDeliveredTo == null || mDeliveredTo[1] != first.sinceMs() ||
+            first.timeMs() <= mDeliveredTo[0] || first.timeMs() <= mRestartHandled || mFlushTo != null)
         {
-            //A newly observed source/epoch cannot claim the time before its activation as a quiet interval.
-            mDeliveredTo = new long[]{first.timeMs(), first.sinceMs()};
-            mBuilt = null;
+            return;
+        }
+
+        mRestartHandled = first.timeMs();
+        HealthSnapshot before = history.before(first.timeMs());
+        HealthSnapshot resume = fresh ? null : first;
+
+        if(before != null && before.timeMs() > mDeliveredTo[0])
+        {
+            mFlushTo = before;
+            mResumeAt = resume;
+            mNextAt = mNextAt != null ? Math.min(mNextAt, first.timeMs()) : first.timeMs();
+        }
+        else if(resume != null)
+        {
+            mDeliveredTo = new long[]{resume.timeMs(), resume.sinceMs()};
             mCollectionGap = true;
         }
+
+        mBuilt = null;
+    }
+
+    /**
+     * The end of the last report delivered, Unix milliseconds, or null.
+     */
+    public Long getDeliveredTo()
+    {
+        return mDeliveredTo != null ? mDeliveredTo[0] : null;
     }
 
     /**
@@ -216,6 +261,8 @@ public class NodeReporter
             mDeliveredTo = null;
             mSeq = 0;
             mFirst = now;
+            mFlushTo = null;
+            mResumeAt = null;
         }
 
         if(mFirst == null)
@@ -248,7 +295,7 @@ public class NodeReporter
      */
     public Window window(HealthHistory history)
     {
-        HealthSnapshot now = history.latest();
+        HealthSnapshot now = mFlushTo != null ? mFlushTo : history.latest();
 
         if(now == null)
         {
@@ -313,6 +360,14 @@ public class NodeReporter
     {
         mDeliveredTo = new long[]{now.timeMs(), now.sinceMs()};
         mBuilt = null;
+
+        if(flushed())
+        {
+            mCollectionGap = true;
+            aim(mSlot != null ? mSlot : now.timeMs() + mInterval, now.timeMs() + 1000);
+            return;
+        }
+
         mCollectionGap = true;
         advance(now.timeMs() + 1000);
     }
@@ -344,12 +399,42 @@ public class NodeReporter
         if(nextS != null && Double.isFinite(nextS))
         {
             mInterval = Math.max(MIN_INTERVAL_MS, Math.min(MAX_INTERVAL_MS, (long)(nextS * 1000)));
-            aim(end + mInterval, end + MIN_INTERVAL_MS);
         }
-        else
+
+        if(flushed())
         {
-            advance(end + MIN_INTERVAL_MS);
+            //Sent between slots: the next keeps to the node's slot.
+            aim(mSlot != null ? mSlot : end + mInterval, end + MIN_INTERVAL_MS);
+            return;
         }
+
+        //The next slot is this one's plus the interval, not this report's end (or receipt) plus the interval: sends
+        //are moved by jitter and made late by the time they wait for, and counting from the end would add both to
+        //every one, so reports would drift later and later.
+        advance(end + MIN_INTERVAL_MS);
+    }
+
+    /**
+     * After the report sent for a restart: on from its end, or where the restarted channels were measured again.
+     * @return true when the report delivered was one
+     */
+    private boolean flushed()
+    {
+        if(mFlushTo == null || mDeliveredTo[0] != mFlushTo.timeMs())
+        {
+            return false;
+        }
+
+        mFlushTo = null;
+
+        if(mResumeAt != null)
+        {
+            mDeliveredTo = new long[]{mResumeAt.timeMs(), mResumeAt.sinceMs()};
+            mCollectionGap = true;
+            mResumeAt = null;
+        }
+
+        return true;
     }
 
     /**
@@ -386,7 +471,15 @@ public class NodeReporter
                 mSeq++;
                 mCollectionGap = false;
                 mDeliveredTo = mBuilt != null ? mBuilt : new long[]{now.timeMs(), now.sinceMs()};
-                advance(responseAt + 1000);
+
+                if(flushed())
+                {
+                    aim(mSlot != null ? mSlot : responseAt + mInterval, responseAt + MIN_INTERVAL_MS);
+                }
+                else
+                {
+                    advance(responseAt + 1000);
+                }
             }
             case UNREACHABLE -> advance(responseAt + 1000);
         }

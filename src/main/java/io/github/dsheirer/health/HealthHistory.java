@@ -74,6 +74,26 @@ public class HealthHistory
     }
 
     /**
+     * The last snapshot before a time, or null.
+     */
+    public synchronized HealthSnapshot before(long timeMs)
+    {
+        HealthSnapshot last = null;
+
+        for(HealthSnapshot snapshot: mSnapshots)
+        {
+            if(snapshot.timeMs() >= timeMs)
+            {
+                break;
+            }
+
+            last = snapshot;
+        }
+
+        return last;
+    }
+
+    /**
      * The first snapshot at or after a time, or null.  A window that ended at a snapshot's time starts the next
      * window at exactly that snapshot.
      */

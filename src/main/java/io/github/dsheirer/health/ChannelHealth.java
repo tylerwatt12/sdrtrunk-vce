@@ -40,6 +40,8 @@ public class ChannelHealth
 {
     /** A control channel counts as locked until this long after its last good message. */
     public static final long LOCK_HOLD_MS = 2000;
+    /** A decoder that has said nothing (no control unit, no sync loss) for this long isn't locked. */
+    public static final long SILENT_MS = 10_000;
     private static final int UNKNOWN_IDENTITY = Integer.MIN_VALUE;
     private static final String[] IDENTITY_NAMES =
         {"wacn", "sysId", "rfss", "site", "nac", "network", "colorCode", "system", "ran"};
@@ -63,6 +65,10 @@ public class ChannelHealth
     private volatile boolean mSyncLossMeasured;
     private final AtomicLong mLockedMs = new AtomicLong();
     private final AtomicLong mLastGood = new AtomicLong();
+    /** The decoder's latest control unit or sync loss, on its messages' clock. */
+    private final AtomicLong mLastHeard = new AtomicLong();
+    /** When the decoder last said anything, Unix milliseconds. */
+    private final AtomicLong mLastHeardAt = new AtomicLong();
     private final AtomicLong mRunningMs = new AtomicLong();
     private final AtomicLong mRunningSince = new AtomicLong(-1);
     private final AtomicLong mOpens = new AtomicLong();
@@ -271,10 +277,21 @@ public class ChannelHealth
 
     void control(long epoch, String protocol, boolean valid, long timestamp)
     {
+        control(epoch, protocol, valid, timestamp, timestamp);
+    }
+
+    /**
+     * @param timestamp of the unit: when its samples were received, which falls behind the time it's decoded by
+     *                  however long the samples waited to be processed
+     * @param arrivedAt when the decoder gave it, Unix milliseconds
+     */
+    void control(long epoch, String protocol, boolean valid, long timestamp, long arrivedAt)
+    {
         if(!beginMeasurement(epoch)) return;
         try
         {
             mProtocol = protocol;
+            heard(timestamp, arrivedAt);
             if(valid)
             {
                 mGood.incrementAndGet();
@@ -333,6 +350,32 @@ public class ChannelHealth
         {
             endTimingUpdate();
         }
+    }
+
+    /**
+     * The decoder went without frame sync.
+     * @param timestamp of the sync loss message, on the decoder's clock
+     * @param arrivedAt when the decoder gave it, Unix milliseconds
+     */
+    void syncLoss(long epoch, long symbols, long timestamp, long arrivedAt)
+    {
+        if(!beginMeasurement(epoch)) return;
+        try
+        {
+            heard(timestamp, arrivedAt);
+            if(symbols > 0) mSyncLossSym.addAndGet(symbols);
+        }
+        finally
+        {
+            endTimingUpdate();
+        }
+    }
+
+    /** One decoder thread writes these: no retry loop on the measurement path. */
+    private void heard(long timestamp, long arrivedAt)
+    {
+        if(timestamp > mLastHeard.get()) mLastHeard.set(timestamp);
+        if(arrivedAt > mLastHeardAt.get()) mLastHeardAt.set(arrivedAt);
     }
 
     /** Fixed identity fields only: never grow a map or copy a collection on a decoder callback. */
@@ -438,6 +481,8 @@ public class ChannelHealth
                 continue;
             }
             long lastGood = mLastGood.get();
+            long lastHeard = mLastHeard.get();
+            long lastHeardAt = mLastHeardAt.get();
             long locked = mLockedMs.get();
             long runningSince = mRunningSince.get();
             long running = mRunningMs.get();
@@ -455,8 +500,10 @@ public class ChannelHealth
             }
             running += runningSince >= 0 ? Math.max(0, now - runningSince) : 0;
             open += openedAt >= 0 ? Math.max(0, now - openedAt) : 0;
-            boolean lockedNow = runningSince >= 0 && lastGood > 0 && now >= lastGood &&
-                now - lastGood <= LOCK_HOLD_MS;
+            //Locked now: the decoder's latest word came within 2 s of a good unit, on its messages' own clock (they
+            //run behind this one by however long samples wait to be processed), and it's still saying something.
+            boolean lockedNow = runningSince >= 0 && lastGood > 0 && lastHeard - lastGood <= LOCK_HOLD_MS &&
+                now - lastHeardAt <= SILENT_MS;
             TimingTotals observed = new TimingTotals(now, locked, lockedNow, running, opens, closes, open, true);
             TimingTotals previous = mPublishedTiming.get();
             if(now >= previous.observedAt() && mPublishedTiming.compareAndSet(previous, observed))
@@ -567,8 +614,8 @@ public class ChannelHealth
      * @param syncLossSym symbols the control channel's decoder went through without frame sync, or null when its
      *                    decoder doesn't say
      * @param lockedMs milliseconds with a good control message within the last 2 s
-     * @param locked true when there was a good control message within the last 2 s at this moment: false while the
-     *               channel hunts for its control channel
+     * @param locked true when the decoder's latest control unit (or sync loss) came within 2 s of a good one and it
+     *               said something within the last 10 s: false while the channel hunts for its control channel
      * @param calls announced, and their outcomes, or null when nothing counts them
      * @param runningMs milliseconds the channel was processing while collection was requested
      * @param opens squelch openings
